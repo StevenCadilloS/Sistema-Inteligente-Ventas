@@ -1,0 +1,45 @@
+name: Fetch FER-2013 emotion model
+
+on:
+  push:
+    branches:
+      - feature/emotion-detector
+    paths:
+      - .github/workflows/fetch-emotion-model.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-model:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout emotion branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/emotion-detector
+
+      - name: Download verified TFLite model
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          curl --location --fail --retry 3 \
+            --output app/src/main/assets/emotion_model.tflite \
+            https://huggingface.co/maftuh-main/meme-emotion-detector/resolve/main/model.tflite
+          echo "2f7681b40c9ac41508aef807edf1a1f77a8ff340c4d39e66ec7f4c8842092162  app/src/main/assets/emotion_model.tflite" | sha256sum --check
+
+      - name: Commit model to branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/assets/emotion_model.tflite
+          if git diff --cached --quiet; then
+            echo "Model already present; nothing to commit."
+            exit 0
+          fi
+          git commit -m "Agrega modelo TFLite FER-2013"
+          git push origin HEAD:feature/emotion-detector
