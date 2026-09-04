@@ -5,36 +5,53 @@ Esta carpeta contiene la captura y análisis inicial del contexto del usuario.
 ## Archivos
 
 ### `CameraManager.kt`
-Responsable de la cámara y de entregar frames mediante CameraX.
+Responsable de controlar la cámara frontal y entregar frames en tiempo real mediante CameraX.
 
-> Este archivo no fue modificado en la rama `feature/emotion-detector`.
+**Qué se implementó:**
+- Verificación de permisos de cámara en runtime
+- Solicitud de permisos con `ActivityResultContracts`
+- Inicialización de CameraX con cámara frontal (`DEFAULT_FRONT_CAMERA`)
+- Configuración de `ImageAnalysis` con estrategia `KEEP_ONLY_LATEST`
+- Resolución objetivo: 640x480
+- Callback `onFrameCaptured` que entrega cada `ImageProxy` al caller
+- Liberación de recursos con `stopCamera()` y `release()`
+- Executor de un solo hilo para análisis de frames
+
+**Flujo:**
+```text
+CameraManager.startCamera()
+        ↓
+CameraX ImageAnalysis
+        ↓
+ImageProxy (frame)
+        ↓
+EmotionDetector.detectEmotion()
+```
 
 ### `EmotionDetector.kt`
 Responsable de detectar el rostro y clasificar la expresión facial.
 
-## Qué se implementó en `EmotionDetector.kt`
-
-- Recepción de frames de CameraX mediante `ImageProxy`.
-- Detección de rostros usando Google ML Kit Face Detection.
-- Selección del rostro principal cuando aparecen varias caras.
-- Corrección de orientación del frame según `rotationDegrees`.
-- Recorte seguro de la región facial con un pequeño margen.
-- Preprocesamiento de la cara a `48 x 48` píxeles en escala de grises.
-- Normalización de píxeles a valores entre `0` y `1`.
-- Carga y ejecución del modelo TensorFlow Lite `emotion_model.tflite`.
-- Clasificación basada en FER-2013.
-- Conversión de las clases del modelo a las emociones utilizadas por el proyecto:
+**Qué se implementó:**
+- Recepción de frames de CameraX mediante `ImageProxy`
+- Detección de rostros usando Google ML Kit Face Detection
+- Selección del rostro principal cuando aparecen varias caras
+- Corrección de orientación del frame según `rotationDegrees`
+- Recorte seguro de la región facial con un pequeño margen
+- Preprocesamiento de la cara a `48 x 48` píxeles en escala de grises
+- Normalización de píxeles a valores entre `0` y `1`
+- Carga y ejecución del modelo TensorFlow Lite `emotion_model.tflite`
+- Clasificación basada en FER-2013
+- Conversión de las clases del modelo a las emociones del proyecto:
   - `feliz`
   - `triste`
   - `sorpresa`
   - `neutral`
   - `enojo`
-- Manejo del caso `no_face` cuando ML Kit no encuentra un rostro.
-- Devolución de un `EmotionResult` con emoción y nivel de confianza.
-- Liberación de recursos de ML Kit, TensorFlow Lite y bitmaps cuando corresponde.
+- Manejo del caso `no_face` cuando ML Kit no encuentra un rostro
+- Devolución de un `EmotionResult` con emoción y nivel de confianza
+- Liberación de recursos de ML Kit, TensorFlow Lite y bitmaps
 
-## Flujo
-
+**Flujo:**
 ```text
 CameraManager
      ↓
