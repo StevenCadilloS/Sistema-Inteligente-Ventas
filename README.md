@@ -94,56 +94,48 @@ CONTEXTO → PROCESAMIENTO → DECISIÓN → ADAPTACIÓN
 ## Estructura del Proyecto
 
 ```
-app/src/main/
+app/src/main/java/com/tuapp/tiendaadaptativa/
 │
-├── assets/
-│   ├── emotion_model.tflite          # Modelo FER-2013 para clasificación facial
-│   └── README.md                     # Especificación y procedencia del modelo
+├── data/                              # CAPA DE DATOS
+│   ├── database/
+│   │   ├── AppDatabase.kt            # Configuración Room/SQLite
+│   │   └── dao/
+│   │       ├── UserDao.kt            # Consultas de usuarios
+│   │       ├── ProductDao.kt         # Consultas de productos
+│   │       ├── OfferDao.kt           # Consultas de ofertas
+│   │       └── EmotionDao.kt         # Consultas de historial
+│   ├── models/
+│   │   ├── User.kt                   # Modelo de usuario
+│   │   ├── Product.kt                # Modelo de producto
+│   │   ├── Offer.kt                  # Modelo de oferta adaptativa
+│   │   └── EmotionHistory.kt         # Modelo de historial
+│   └── repositories/
+│       ├── UserRepository.kt         # Lógica de acceso a usuarios
+│       └── ProductRepository.kt      # Lógica de acceso a productos/ofertas
 │
-└── java/com/tuapp/tiendaadaptativa/
-    │
-    ├── data/                         # CAPA DE DATOS
-    │   ├── database/
-    │   │   ├── AppDatabase.kt       # Configuración Room/SQLite
-    │   │   └── dao/
-    │   │       ├── UserDao.kt       # Consultas de usuarios
-    │   │       ├── ProductDao.kt    # Consultas de productos
-    │   │       ├── OfferDao.kt      # Consultas de ofertas
-    │   │       └── EmotionDao.kt    # Consultas de historial
-    │   ├── models/
-    │   │   ├── User.kt              # Modelo de usuario
-    │   │   ├── Product.kt           # Modelo de producto
-    │   │   ├── Offer.kt             # Modelo de oferta adaptativa
-    │   │   └── EmotionHistory.kt    # Modelo de historial
-    │   └── repositories/
-    │       ├── UserRepository.kt    # Lógica de acceso a usuarios
-    │       └── ProductRepository.kt # Lógica de acceso a productos/ofertas
-    │
-    ├── context/                      # FASE 1: CAPTURA DEL CONTEXTO
-    │   ├── CameraManager.kt          # Control de cámara y permisos
-    │   ├── EmotionDetector.kt        # ML Kit + recorte + clasificación
-    │   ├── EmotionLabels.kt          # Etiquetas normalizadas del pipeline
-    │   └── TfliteEmotionClassifier.kt # Preprocesamiento + inferencia TFLite
-    │
-    ├── processing/                   # FASE 2: PROCESAMIENTO
-    │   └── EmotionProcessor.kt       # Filtro de estabilidad (N frames)
-    │
-    ├── decision/                     # FASE 3: DECISIÓN
-    │   ├── AdaptationEngine.kt       # Motor de reglas de adaptación
-    │   └── learning/
-    │       └── BanditOptimizer.kt    # Aprendizaje Multi-Armed Bandit
-    │
-    ├── ui/                           # CAPA DE PRESENTACIÓN
-    │   ├── MainActivity.kt           # Registro / Login de usuario
-    │   ├── ProductDetailActivity.kt  # Pantalla principal adaptativa
-    │   ├── HistoryActivity.kt        # Historial de interacciones
-    │   ├── components/
-    │   │   └── DynamicOfferCard.kt   # Tarjeta de oferta reactiva
-    │   └── theme/
-    │       └── Theme.kt              # Tema visual adaptativo
-    │
-    └── di/                           # INYECCIÓN DE DEPENDENCIAS
-        └── AppModule.kt              # Módulo de configuración
+├── context/                          # FASE 1: CAPTURA DEL CONTEXTO
+│   ├── CameraManager.kt             # Control de cámara y permisos
+│   └── EmotionDetector.kt           # Detección facial + clasificación
+│
+├── processing/                       # FASE 2: PROCESAMIENTO
+│   └── EmotionProcessor.kt          # Filtro de estabilidad (N frames)
+│
+├── decision/                         # FASE 3: DECISIÓN
+│   ├── AdaptationEngine.kt          # Motor de reglas de adaptación
+│   └── learning/
+│       └── BanditOptimizer.kt       # Aprendizaje Multi-Armed Bandit
+│
+├── ui/                               # CAPA DE PRESENTACIÓN
+│   ├── MainActivity.kt              # Registro / Login de usuario
+│   ├── ProductDetailActivity.kt     # Pantalla principal adaptativa
+│   ├── HistoryActivity.kt           # Historial de interacciones
+│   ├── components/
+│   │   └── DynamicOfferCard.kt      # Tarjeta de oferta reactiva
+│   └── theme/
+│       └── Theme.kt                 # Tema visual adaptativo
+│
+└── di/                               # INYECCIÓN DE DEPENDENCIAS
+    └── AppModule.kt                  # Módulo de configuración
 ```
 
 ---
@@ -154,8 +146,6 @@ app/src/main/
 |-----------------------|-----------------|
 | **Captura del contexto** | `context/CameraManager.kt` |
 | **Detección de emoción** | `context/EmotionDetector.kt` |
-| **Clasificación TFLite** | `context/TfliteEmotionClassifier.kt` |
-| **Etiquetas de emoción** | `context/EmotionLabels.kt` |
 | **Procesamiento** | `processing/EmotionProcessor.kt` |
 | **Decisión** | `decision/AdaptationEngine.kt` |
 | **Aprendizaje** | `decision/learning/BanditOptimizer.kt` |
@@ -167,95 +157,24 @@ app/src/main/
 
 ## Estado del módulo de detección de emociones
 
-> Implementación desarrollada en la rama `feature/emotion-detector`.
+La rama `feature/emotion-detector` mantiene la estructura original del proyecto y concentra la implementación en los archivos ya definidos para las fases de contexto y procesamiento.
 
-El módulo de contexto encargado del reconocimiento de expresiones faciales ya cuenta con la implementación principal y con un modelo TensorFlow Lite incluido localmente en la aplicación.
+| Archivo | Implementación |
+|---------|----------------|
+| `context/EmotionDetector.kt` | Detección de rostro con ML Kit, recorte facial, preprocesamiento 48×48 en escala de grises, inferencia TensorFlow Lite y generación de `EmotionResult` |
+| `processing/EmotionProcessor.kt` | Buffer de 10 frames, confirmación de emoción estable y cálculo de confianza promedio |
 
-### Flujo del detector
-
-```
-ImageProxy (CameraX)
-        ↓
-Google ML Kit Face Detection
-        ↓
-¿Se detectó un rostro?
-   ├── No → EmotionResult("no_face", 0.0)
-   └── Sí
-        ↓
-Seleccionar rostro principal
-        ↓
-Recortar región facial
-        ↓
-48 × 48 en escala de grises
-        ↓
-TensorFlow Lite / FER-2013
-        ↓
-EmotionResult(emotion, confidence)
-```
-
-### Archivos implementados
-
-| Archivo | Responsabilidad | Estado |
-|---------|-----------------|--------|
-| `context/EmotionDetector.kt` | Coordina ML Kit, selección y recorte del rostro e invoca el clasificador | ✅ Implementado |
-| `context/TfliteEmotionClassifier.kt` | Preprocesa la cara, ejecuta TensorFlow Lite y obtiene emoción/confianza | ✅ Implementado |
-| `context/EmotionLabels.kt` | Centraliza las etiquetas que consume el pipeline | ✅ Implementado |
-| `assets/emotion_model.tflite` | Modelo entrenado para clasificación de expresiones | ✅ Incluido |
-| `processing/EmotionProcessor.kt` | Estabilización de la emoción durante varios frames | ⏳ Módulo independiente del detector |
-| `context/CameraManager.kt` | Provee los frames desde CameraX | ⏳ Integración pendiente |
-
-### Modelo TensorFlow Lite
-
-El archivo utilizado es:
+El modelo utilizado por `EmotionDetector.kt` se incluye como recurso Android en:
 
 ```text
 app/src/main/assets/emotion_model.tflite
 ```
 
-Características esperadas por el clasificador:
+`assets` almacena únicamente el archivo del modelo y no agrega una nueva capa ni modifica la organización de paquetes Java/Kotlin mostrada arriba.
 
-- Entrada facial: `48 × 48`
-- Escala de grises
-- Tipo de entrada: `Float32`
-- Normalización: valores de píxel a `[0, 1]`
-- Dataset/base de clasificación: FER-2013
-- Salida: 7 clases
+El modelo utiliza siete clases FER-2013 (`angry`, `disgust`, `fear`, `happy`, `sad`, `surprise`, `neutral`) y `EmotionDetector.kt` las adapta a las emociones utilizadas por el proyecto: `enojo`, `feliz`, `triste`, `sorpresa` y `neutral`. Cuando ML Kit no encuentra un rostro, devuelve `no_face`.
 
-Orden interno de clases:
-
-```text
-0 angry
-1 disgust
-2 fear
-3 happy
-4 sad
-5 surprise
-6 neutral
-```
-
-El pipeline de negocio utiliza cinco emociones, por lo que se aplica el siguiente adaptador:
-
-| Clase FER-2013 | Emoción del sistema |
-|----------------|---------------------|
-| angry | enojo |
-| disgust | enojo |
-| fear | neutral |
-| happy | feliz |
-| sad | triste |
-| surprise | sorpresa |
-| neutral | neutral |
-
-`no_face` no es una clase del modelo. Se devuelve cuando ML Kit no detecta ningún rostro en el frame.
-
-### Estado actual
-
-La lógica principal del detector y el modelo están incluidos. La prueba de extremo a extremo queda pendiente hasta disponer del proyecto Android compilable y conectar:
-
-```text
-CameraManager → EmotionDetector → EmotionProcessor
-```
-
-Esto permitirá validar en un dispositivo Android la cámara frontal, orientación del frame, latencia de inferencia y estabilidad de las predicciones.
+La integración y prueba completa en un dispositivo Android queda pendiente de contar con la configuración Gradle/Manifest necesaria para compilar el proyecto completo.
 
 ---
 
@@ -321,7 +240,6 @@ git clone https://github.com/tu-usuario/sistema-inteligente-ventas.git
 | Permiso | Razón |
 |---------|-------|
 | `CAMERA` | Capturar video para detectar emociones |
-| `INTERNET` | No es necesario para cargar el detector; `emotion_model.tflite` está incluido en `assets` |
 
 ---
 
@@ -367,7 +285,7 @@ adb logcat | grep "EmotionDetector"
 ## Créditos
 
 - **Dataset de emociones**: [FER-2013](https://www.kaggle.com/datasets/msambare/fer2013) (Facial Expression Recognition)
-- **Modelo TensorFlow Lite utilizado en `feature/emotion-detector`**: [maftuh-main/meme-emotion-detector](https://huggingface.co/maftuh-main/meme-emotion-detector) — licencia MIT
+- **Modelo TensorFlow Lite**: `maftuh-main/meme-emotion-detector` (MIT)
 - **Modelo de detección facial**: Google ML Kit
 - **Algoritmo de aprendizaje**: Multi-Armed Bandit con UCB1
 
