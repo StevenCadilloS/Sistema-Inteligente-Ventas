@@ -10,34 +10,35 @@ import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import org.tensorflow.lite.Interpreter
 import java.io.Closeable
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.roundToInt
 
 /**
- * CAPTURA DE CONTEXTO - EMOCIONES FACIALES
- * Fase 1 del Pipeline: CONTEXTO
+ * CONTEXTO - DETECCION Y CLASIFICACION DE EXPRESIONES FACIALES
+ * Fase 1 del pipeline adaptativo.
  *
- * Responsabilidad:
- * - Recibir frames de CameraManager mediante CameraX.
- * - Detectar rostros con Google ML Kit Face Detection.
- * - Seleccionar y recortar el rostro principal.
- * - Clasificar la expresión con TensorFlow Lite (FER-2013).
- * - Devolver emoción y confianza como EmotionResult.
+ * Responsabilidades:
+ * - Recibir frames producidos por CameraManager/CameraX.
+ * - Detectar el rostro principal con Google ML Kit.
+ * - Recortar la region facial.
+ * - Preparar la imagen a 48x48 en escala de grises.
+ * - Ejecutar el modelo FER-2013 con TensorFlow Lite.
+ * - Devolver un EmotionResult crudo para EmotionProcessor.
  *
  * Flujo:
- * Frame -> ML Kit -> rostro -> TFLite -> EmotionResult
- *
- * EmotionProcessor recibe después este resultado crudo y se encarga
- * de estabilizarlo entre varios frames.
+ * CameraManager -> EmotionDetector -> EmotionProcessor
  */
-class EmotionDetector(
-    context: Context,
-    private val classifier: TfliteEmotionClassifier = TfliteEmotionClassifier(context)
-) : Closeable {
+class EmotionDetector(context: Context) : Closeable {
 
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
+    private val classifier = TfliteClassifier(context)
 
     private val faceDetector: FaceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
@@ -48,10 +49,8 @@ class EmotionDetector(
     )
 
     /**
-     * Procesa un frame de CameraX de manera asíncrona.
-     *
-     * Esta función consume el ImageProxy y garantiza su cierre al terminar,
-     * incluso cuando ML Kit o TensorFlow Lite producen un error.
+     * Procesa un frame de CameraX de forma asincrona.
+     * El ImageProxy se cierra siempre al finalizar el procesamiento.
      */
     fun detectEmotion(
         frame: ImageProxy,
@@ -84,18 +83,24 @@ class EmotionDetector(
                         rotationDegrees = rotationDegrees
                     )
 
-                    val faceBitmap = extractFaceFromFrame(
-                        frameBitmap = uprightFrame,
-                        face = mainFace
-                    )
+                    try {
+                        val faceBitmap = extractFaceFromFrame(
+                            frameBitmap = uprightFrame,
+                            face = mainFace
+                        )
 
-                    val result = classifier.classify(faceBitmap)
-                    onResult(result)
-
-                    if (faceBitmap !== uprightFrame) {
-                        faceBitmap.recycle()
+                        try {
+                            onResult(classifier.classify(faceBitmap))
+                        } finally {
+                            if (!faceBitmap.isRecycled) {
+                                faceBitmap.recycle()
+                            }
+                        }
+                    } finally {
+                        if (!uprightFrame.isRecycled) {
+                            uprightFrame.recycle()
+                        }
                     }
-                    uprightFrame.recycle()
                 } catch (error: Throwable) {
                     onError(error)
                 } finally {
@@ -112,8 +117,7 @@ class EmotionDetector(
     }
 
     /**
-     * Si aparecen varias personas se usa el rostro de mayor área, que suele
-     * corresponder al usuario que está frente a la cámara del celular.
+     * Si aparecen varios rostros, usa el de mayor area como rostro principal.
      */
     private fun selectMainFace(faces: List<Face>): Face? =
         faces.maxByOrNull { face ->
@@ -121,8 +125,7 @@ class EmotionDetector(
         }
 
     /**
-     * Recorta únicamente la región de la cara y conserva un pequeño margen
-     * alrededor para no perder frente, mandíbula y mejillas.
+     * Recorta la cara conservando un pequeno margen alrededor.
      */
     private fun extractFaceFromFrame(
         frameBitmap: Bitmap,
@@ -140,7 +143,7 @@ class EmotionDetector(
         )
 
         require(safeRect.width() > 0 && safeRect.height() > 0) {
-            "ML Kit devolvió una región facial inválida: $safeRect"
+            "ML Kit devolvio una region facial invalida: $safeRect"
         }
 
         return Bitmap.createBitmap(
@@ -152,13 +155,8 @@ class EmotionDetector(
         )
     }
 
-    private fun rotateBitmap(
-        bitmap: Bitmap,
-        rotationDegrees: Int
-    ): Bitmap {
-        if (rotationDegrees == 0) {
-            return bitmap
-        }
+    private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        if (rotationDegrees == 0) return bitmap
 
         val matrix = Matrix().apply {
             postRotate(rotationDegrees.toFloat())
@@ -174,7 +172,7 @@ class EmotionDetector(
             true
         )
 
-        if (rotated !== bitmap) {
+        if (rotated !== bitmap && !bitmap.isRecycled) {
             bitmap.recycle()
         }
 
@@ -187,21 +185,188 @@ class EmotionDetector(
         worker.shutdown()
     }
 
+    /**
+     * Clasificador TFLite encapsulado dentro de EmotionDetector para mantener
+     * la estructura original del proyecto sin crear clases/archivos adicionales.
+     */
+    private class TfliteClassifier(context: Context) : Closeable {
+
+        private val interpreter: Interpreter
+
+        init {
+            val modelBuffer = loadModel(context)
+            val options = Interpreter.Options().apply {
+                setNumThreads(2)
+            }
+
+            interpreter = Interpreter(modelBuffer, options)
+
+            require(interpreter.getInputTensor(0).numElements() == INPUT_SIZE * INPUT_SIZE) {
+                "El modelo debe recibir una imagen de $INPUT_SIZE x $INPUT_SIZE."
+            }
+            require(interpreter.getOutputTensor(0).numElements() == FER_CLASS_COUNT) {
+                "El modelo debe devolver $FER_CLASS_COUNT clases FER-2013."
+            }
+        }
+
+        @Synchronized
+        fun classify(faceBitmap: Bitmap): EmotionResult {
+            require(faceBitmap.width > 0 && faceBitmap.height > 0) {
+                "El rostro recibido esta vacio."
+            }
+
+            val input = preprocess(faceBitmap)
+            val rawOutput = Array(1) { FloatArray(FER_CLASS_COUNT) }
+            interpreter.run(input, rawOutput)
+
+            val probabilities = toProbabilities(rawOutput[0])
+            val bestIndex = probabilities.indices.maxByOrNull { probabilities[it] }
+                ?: return EmotionResult(EmotionResult.NEUTRAL, 0f)
+
+            return EmotionResult(
+                emotion = mapFerClass(bestIndex),
+                confidence = probabilities[bestIndex].coerceIn(0f, 1f)
+            )
+        }
+
+        /**
+         * Convierte el rostro a 48x48 grayscale y normaliza los pixeles a [0, 1].
+         */
+        private fun preprocess(bitmap: Bitmap): ByteBuffer {
+            val scaled = Bitmap.createScaledBitmap(
+                bitmap,
+                INPUT_SIZE,
+                INPUT_SIZE,
+                true
+            )
+
+            try {
+                val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
+                scaled.getPixels(
+                    pixels,
+                    0,
+                    INPUT_SIZE,
+                    0,
+                    0,
+                    INPUT_SIZE,
+                    INPUT_SIZE
+                )
+
+                val buffer = ByteBuffer
+                    .allocateDirect(INPUT_SIZE * INPUT_SIZE * FLOAT_BYTES)
+                    .order(ByteOrder.nativeOrder())
+
+                pixels.forEach { pixel ->
+                    val red = (pixel shr 16) and 0xFF
+                    val green = (pixel shr 8) and 0xFF
+                    val blue = pixel and 0xFF
+
+                    val gray = (
+                        RED_WEIGHT * red +
+                            GREEN_WEIGHT * green +
+                            BLUE_WEIGHT * blue
+                        ) / 255f
+
+                    buffer.putFloat(gray)
+                }
+
+                buffer.rewind()
+                return buffer
+            } finally {
+                if (scaled !== bitmap && !scaled.isRecycled) {
+                    scaled.recycle()
+                }
+            }
+        }
+
+        /**
+         * Conserva probabilidades si el modelo ya aplica Softmax; de lo
+         * contrario convierte logits a probabilidades con Softmax estable.
+         */
+        private fun toProbabilities(values: FloatArray): FloatArray {
+            val sum = values.sum()
+            val alreadyProbabilities =
+                values.all { it in 0f..1f } &&
+                    abs(sum - 1f) <= PROBABILITY_EPSILON
+
+            if (alreadyProbabilities) return values.copyOf()
+
+            val max = values.maxOrNull() ?: 0f
+            val exponentials = DoubleArray(values.size) { index ->
+                exp((values[index] - max).toDouble())
+            }
+            val denominator = exponentials.sum().takeIf { it > 0.0 } ?: 1.0
+
+            return FloatArray(values.size) { index ->
+                (exponentials[index] / denominator).toFloat()
+            }
+        }
+
+        /**
+         * Orden FER-2013 del modelo:
+         * angry, disgust, fear, happy, sad, surprise, neutral.
+         *
+         * El pipeline del proyecto usa cinco emociones de negocio.
+         */
+        private fun mapFerClass(index: Int): String = when (index) {
+            0 -> EmotionResult.ANGRY      // angry
+            1 -> EmotionResult.ANGRY      // disgust
+            2 -> EmotionResult.NEUTRAL    // fear: no existe regla propia en el proyecto
+            3 -> EmotionResult.HAPPY
+            4 -> EmotionResult.SAD
+            5 -> EmotionResult.SURPRISE
+            6 -> EmotionResult.NEUTRAL
+            else -> EmotionResult.NEUTRAL
+        }
+
+        private fun loadModel(context: Context): ByteBuffer {
+            val bytes = context.assets.open(MODEL_ASSET).use { stream ->
+                stream.readBytes()
+            }
+
+            require(bytes.isNotEmpty()) {
+                "El modelo TFLite '$MODEL_ASSET' esta vacio."
+            }
+
+            return ByteBuffer
+                .allocateDirect(bytes.size)
+                .order(ByteOrder.nativeOrder())
+                .apply {
+                    put(bytes)
+                    rewind()
+                }
+        }
+
+        override fun close() {
+            interpreter.close()
+        }
+    }
+
     private companion object {
         const val FACE_PADDING_RATIO = 0.12f
+
+        const val MODEL_ASSET = "emotion_model.tflite"
+        const val INPUT_SIZE = 48
+        const val FER_CLASS_COUNT = 7
+        const val FLOAT_BYTES = 4
+
+        const val RED_WEIGHT = 0.299f
+        const val GREEN_WEIGHT = 0.587f
+        const val BLUE_WEIGHT = 0.114f
+        const val PROBABILITY_EPSILON = 0.05f
     }
 }
 
 /**
- * Resultado crudo de la fase CONTEXTO.
+ * Resultado crudo producido por la fase CONTEXTO.
  */
 data class EmotionResult(
     val emotion: String,
     val confidence: Float
 ) {
     init {
-        require(emotion in EmotionLabels.supported) {
-            "Emoción no soportada por el pipeline: $emotion"
+        require(emotion in SUPPORTED) {
+            "Emocion no soportada por el pipeline: $emotion"
         }
         require(confidence in 0f..1f) {
             "La confianza debe estar entre 0.0 y 1.0"
@@ -209,8 +374,24 @@ data class EmotionResult(
     }
 
     companion object {
+        const val SAD = "triste"
+        const val HAPPY = "feliz"
+        const val SURPRISE = "sorpresa"
+        const val NEUTRAL = "neutral"
+        const val ANGRY = "enojo"
+        const val NO_FACE = "no_face"
+
+        private val SUPPORTED = setOf(
+            SAD,
+            HAPPY,
+            SURPRISE,
+            NEUTRAL,
+            ANGRY,
+            NO_FACE
+        )
+
         fun noFace(): EmotionResult = EmotionResult(
-            emotion = EmotionLabels.NO_FACE,
+            emotion = NO_FACE,
             confidence = 0f
         )
     }
