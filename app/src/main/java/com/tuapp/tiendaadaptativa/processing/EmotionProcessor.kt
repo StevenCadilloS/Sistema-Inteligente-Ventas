@@ -1,44 +1,121 @@
 package com.tuapp.tiendaadaptativa.processing
 
-///**
-// * PROCESAMIENTO - FILTRO DE ESTABILIDAD DE EMOCIONES
-// * Fase 2 del Pipeline: PROCESAMIENTO
-// * Responsabilidad:
-// * - Recibir emociones crudas del EmotionDetector (puede ser inestable)
-// * - Aplicar filtro de estabilidad: exigir que la emoción se sostenga
-// *   por N frames consecutivos antes de confirmarla (ej: 10 frames ≈ 330ms)
-// * - Evitar falsos positivos causados por:
-// *   · Parpadeos
-// *   · Movimientos bruscos de la cabeza
-// *   · Cambios de iluminación momentáneos
-// * - Calcular confianza promedio de los últimos N frames
-// * - Devolver emoción "estable" o "inestable"
-// *
-// * Flujo:
-// *   EmotionResult crudo → Buffer de N frames → Filtro → ProcessedEmotion
-// */
-class EmotionProcessor {
-    // TODO: private val buffer = mutableListOf<EmotionResult>()  // Últimos N frames
-    // TODO: private val stabilityThreshold = 10  // Frames mínimos para confirmar emoción
-    // TODO: private var currentStableEmotion: String = "neutral"
-    // TODO: fun process(rawEmotion: EmotionResult): ProcessedEmotion
-    //       -> Agrega emoción al buffer
-    //       -> Verifica si la emoción es estable (misma emoción en N frames)
-    //       -> Si es estable: retorna emoción confirmada
-    //       -> Si no: retorna última emoción estable conocida
-    // TODO: private fun isStable(): Boolean
-    //       -> Verifica que las últimas N entradas del buffer sean la misma emoción
-    // TODO: private fun getAverageConfidence(): Float
-    //       -> Promedio de confianza de las últimas N entradas
-    // TODO: fun reset()
-    //       -> Limpia el buffer (se llama cuando cambia de pantalla o de producto)
+import com.tuapp.tiendaadaptativa.context.EmotionResult
+import java.util.ArrayDeque
+
+/**
+ * PROCESAMIENTO - FILTRO DE ESTABILIDAD DE EMOCIONES
+ * Fase 2 del pipeline adaptativo.
+ *
+ * Responsabilidades:
+ * - Recibir emociones crudas provenientes de EmotionDetector.
+ * - Mantener una ventana de N frames.
+ * - Confirmar una emocion solo si se repite durante N frames consecutivos.
+ * - Calcular la confianza promedio de la emocion estable.
+ * - Conservar la ultima emocion estable mientras la lectura aun oscila.
+ *
+ * Flujo:
+ * EmotionResult -> buffer de N frames -> ProcessedEmotion
+ */
+class EmotionProcessor(
+    private val stabilityThreshold: Int = DEFAULT_STABILITY_THRESHOLD
+) {
+
+    private val buffer = ArrayDeque<EmotionResult>()
+
+    private var currentStableEmotion: String = EmotionResult.NEUTRAL
+    private var currentStableConfidence: Float = 0f
+
+    init {
+        require(stabilityThreshold > 0) {
+            "El numero de frames para estabilizar debe ser mayor que cero."
+        }
+    }
+
+    /**
+     * Agrega una lectura cruda y determina si ya existe una emocion estable.
+     *
+     * `no_face` no se confirma como emocion. Cuando no hay rostro, se limpia
+     * la ventana para evitar mezclar frames anteriores con una lectura nueva.
+     */
+    @Synchronized
+    fun process(rawEmotion: EmotionResult): ProcessedEmotion {
+        if (rawEmotion.emotion == EmotionResult.NO_FACE) {
+            buffer.clear()
+            return ProcessedEmotion(
+                emotion = currentStableEmotion,
+                confidence = 0f,
+                isStable = false
+            )
+        }
+
+        buffer.addLast(rawEmotion)
+
+        while (buffer.size > stabilityThreshold) {
+            buffer.removeFirst()
+        }
+
+        val stable = isStable()
+
+        if (stable) {
+            currentStableEmotion = rawEmotion.emotion
+            currentStableConfidence = getAverageConfidence()
+        }
+
+        return ProcessedEmotion(
+            emotion = currentStableEmotion,
+            confidence = if (stable) {
+                currentStableConfidence
+            } else {
+                currentStableConfidence.coerceIn(0f, 1f)
+            },
+            isStable = stable
+        )
+    }
+
+    /**
+     * Una lectura se considera estable solo cuando la ventana esta completa
+     * y todos los frames contienen la misma emocion.
+     */
+    private fun isStable(): Boolean {
+        if (buffer.size < stabilityThreshold) return false
+
+        val firstEmotion = buffer.firstOrNull()?.emotion ?: return false
+        return buffer.all { result -> result.emotion == firstEmotion }
+    }
+
+    /**
+     * Confianza promedio de los frames presentes en la ventana.
+     */
+    private fun getAverageConfidence(): Float {
+        if (buffer.isEmpty()) return 0f
+
+        val sum = buffer.sumOf { result -> result.confidence.toDouble() }
+        return (sum / buffer.size)
+            .toFloat()
+            .coerceIn(0f, 1f)
+    }
+
+    /**
+     * Reinicia el filtro, por ejemplo al cambiar de pantalla o producto.
+     */
+    @Synchronized
+    fun reset() {
+        buffer.clear()
+        currentStableEmotion = EmotionResult.NEUTRAL
+        currentStableConfidence = 0f
+    }
+
+    companion object {
+        const val DEFAULT_STABILITY_THRESHOLD = 10
+    }
 }
 
-///**
-// * Emoción procesada y estabilizada
-// */
+/**
+ * Emocion procesada y estabilizada por la fase 2.
+ */
 data class ProcessedEmotion(
-    val emotion: String,        // Emoción confirmada o última estable
-    val confidence: Float,      // Confianza promedio
-    val isStable: Boolean       // true si se confirmó, false si aún oscila
+    val emotion: String,
+    val confidence: Float,
+    val isStable: Boolean
 )
