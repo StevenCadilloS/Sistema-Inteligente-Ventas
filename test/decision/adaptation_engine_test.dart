@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tienda_adaptativa/data/database/app_database.dart';
 import 'package:tienda_adaptativa/decision/adaptation_engine.dart';
+import 'package:tienda_adaptativa/decision/learning/bandit_optimizer.dart';
 
 /// Prueba de humo de la fase 05 (docs/PLAN_ELVIS.md - el rubro de 8 puntos
 /// del taller): valida que cada emocion produce una oferta distinta y que
@@ -15,7 +16,7 @@ void main() {
   setUp(() async {
     db = AppDatabase.forTesting(NativeDatabase.memory());
     await db.customSelect('SELECT 1').getSingle(); // dispara onCreate/seed
-    engine = AdaptationEngine(db);
+    engine = AdaptationEngine(db, BanditOptimizer(db));
 
     await db.into(db.clientes).insert(ClientesCompanion.insert(
           codCliente: codCliente,

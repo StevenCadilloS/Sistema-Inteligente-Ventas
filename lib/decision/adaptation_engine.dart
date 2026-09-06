@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../data/database/app_database.dart';
+import 'learning/bandit_optimizer.dart';
 
 /// Oferta concreta resultante de una decision de adaptacion: que producto,
 /// a que precio, con que estrategia y con que texto persuasivo.
@@ -31,13 +32,12 @@ class Oferta {
 ///   neutral  -> producto mas mostrado (oferta estandar del catalogo)
 ///   enojo    -> cambia de categoria + el mas economico de esa categoria
 ///
-/// La seleccion de estrategia (candidata con menos veces aplicada) es un
-/// heuristico de exploracion temporal: la fase 06 la reemplaza por el score
-/// UCB1 sobre `estrategias.ventasGeneradas` / `totalVecesAplicada`.
+/// La seleccion de estrategia la hace [BanditOptimizer] (fase 06, UCB1).
 class AdaptationEngine {
-  AdaptationEngine(this._db);
+  AdaptationEngine(this._db, this._bandit);
 
   final AppDatabase _db;
+  final BanditOptimizer _bandit;
 
   static const _canal = 'A'; // app movil (vs 'W' web)
   static const _tipoTransaccion = 'TRX0001';
@@ -53,7 +53,7 @@ class AdaptationEngine {
     final regla = _reglaPara(gesto.nombreGesto);
 
     final producto = await _productoPara(regla, codCliente);
-    final estrategia = await _estrategiaCandidata();
+    final estrategia = await _bandit.seleccionarEstrategia();
     final idProcesoPersuasion = await _siguienteIdProcesoPersuasion();
 
     await _db.into(_db.interacciones).insert(InteraccionesCompanion.insert(
@@ -153,17 +153,6 @@ class AdaptationEngine {
     final otraCategoria =
         activos.where((p) => p.tipoProducto != ultimaCategoria);
     return otraCategoria.isNotEmpty ? otraCategoria.first : activos.first;
-  }
-
-  /// Placeholder de exploracion (fase 06 lo reemplaza por UCB1): la
-  /// estrategia activa que menos veces se ha aplicado, para que todas se
-  /// prueben antes de que el aprendizaje empiece a favorecer una.
-  Future<Estrategia?> _estrategiaCandidata() {
-    return (_db.select(_db.estrategias)
-          ..where((e) => e.activo.equals(true))
-          ..orderBy([(e) => OrderingTerm.asc(e.totalVecesAplicada)])
-          ..limit(1))
-        .getSingleOrNull();
   }
 
   String _textoPara(_TipoRegla regla, Producto producto) {
