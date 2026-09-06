@@ -161,10 +161,11 @@ En la primera versión de este documento reporté que "faltaban los diagramas de
 
 ## 5. Preguntas que necesitan tu decisión
 
-1. **`cant_lecturas` vs `cant_entradas`**: la aritmética y los diagramas apoyan `cant_lecturas`, pero semánticamente el batch cuenta *procesos de persuasión distintos por cliente* — ¿el nombre que quieres es `cant_lecturas`, `cant_entradas`, o algo como `cant_sesiones`?
-2. **KPI de ventas por día**: ¿te quedas con el pipeline de `Primer KPI.png` o el de `Tercer KPI.png`?
-3. **`cierres_venta` en MAESTRA-PRODUCTOS**: la RL 53 lo exige, pero no aparece en ningún diagrama batch que lo actualice. ¿Se mantiene o se elimina (y se corrige la RL a 49)?
-4. **Alcance en Android**: ¿la app implementa solo el módulo online (registro de interacciones y ventas) o también el batch de KPIs?
+1. ~~**`cant_lecturas` vs `cant_entradas`**~~ → **Decidido: `cant_lecturas`.** Cuadra con la RL 68 del Módulo Online (autoritativo) y con el nombre ya usado en los diagramas batch. (2026-09-05)
+2. ~~**KPI de ventas por día**~~ → **Decidido: `Tercer KPI.png`.** Su fórmula (ventas/total_ventas × día) coincide con el título del indicador y con `MODELO_ANDROID_ROOM.md §4` KPI4; `Primer KPI.png` en realidad mide tasa de cierre por día (otra métrica), no distribución. (2026-09-05)
+3. ~~**`cierres_venta` en MAESTRA-PRODUCTOS**~~ → **Decidido: se mantiene.** La RL 53 solo cuadra con este campo incluido (el Módulo Online lo omitió por error en su lista de campos, pese a declarar RL 53). Se mantiene el proceso batch, añadiendo `cierres_venta` como un `COUNT` más sobre `bitacora_detalle_venta`, junto a `total_vendidos`. (2026-09-05)
+4. ~~**Alcance en Android**~~ → **Decidido: ambos.** Módulo online primero (fases 1-6, es lo que puntúa en el taller); batch + 4 KPIs como fase 7, no bloqueante, reaprovechando el SQL ya escrito en `MODELO_ANDROID_ROOM.md`. (2026-09-06)
+5. ~~**`drift` vs `sqflite`**~~ → **Decidido: `drift`.** Traduce 1 a 1 lo ya diseñado en `MODELO_ANDROID_ROOM.md` (entidades tipadas, DAOs por codegen, vistas, migraciones), sin el mapeo manual `Map<String, dynamic>` de `sqflite`. (2026-09-06)
 
 ---
 

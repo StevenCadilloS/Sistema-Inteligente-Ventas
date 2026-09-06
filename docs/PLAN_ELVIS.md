@@ -65,37 +65,39 @@ No se pierde el trabajo: el SQL de los 4 KPIs y de los 4 procesos batch es SQLit
 
 ---
 
-## 2. Decisiones a cerrar
+## 2. Decisiones — todas cerradas (2026-09-06)
 
-| # | Pregunta | Nota |
+| # | Pregunta | Decisión |
 |---|---|---|
-| **D1** | ¿`cant_lecturas`, `cant_entradas` o `cant_sesiones`? | La aritmética y los diagramas batch apoyan `cant_lecturas`; semánticamente cuenta *procesos de persuasión distintos por cliente*. |
-| **D2** | ¿Qué pipeline usa el KPI de ventas por día? | Dos diagramas para el mismo indicador (`Primer KPI.png` vs `Tercer KPI.png`, hallazgo D3). Solo uno entra. |
-| **D3** | ¿`cierres_venta` se queda en MAESTRA-PRODUCTOS? | La RL 53 lo exige, pero ningún diagrama batch lo actualiza. Si se queda, hay que escribir el proceso que lo mantiene; si se va, la RL baja a 49. |
-| **D4** | ¿Solo módulo online, o también batch + KPIs? | Bloquea las fases 6–7. **Con la rúbrica en la mano: el batch vale 0 puntos del taller.** |
-| **D5** | ¿`drift` o `sqflite`? | Nueva, sale del cambio a Flutter. Bloquea todo lo demás. |
+| **D1** | ¿`cant_lecturas`, `cant_entradas` o `cant_sesiones`? | **`cant_lecturas`** — cuadra con la RL 68 del Módulo Online (autoritativo) y con los diagramas batch. |
+| **D2** | ¿Qué pipeline usa el KPI de ventas por día? | **`Tercer KPI.png`** — su fórmula coincide con el título del indicador y con `MODELO_ANDROID_ROOM.md §4` KPI4. `Primer KPI.png` medía otra cosa (tasa de cierre por día). |
+| **D3** | ¿`cierres_venta` se queda en MAESTRA-PRODUCTOS? | **Se mantiene** — la RL 53 solo cuadra con este campo incluido; se agrega al batch existente como un `COUNT` más. |
+| **D4** | ¿Solo módulo online, o también batch + KPIs? | **Ambos** — módulo online primero (fases 1–6, lo que puntúa), batch como fase 7 no bloqueante. |
+| **D5** | ¿`drift` o `sqflite`? | **`drift`** — traduce 1 a 1 el diseño de `MODELO_ANDROID_ROOM.md` sin mapeo manual. |
 
-D1–D4 vienen de `ESQUEMA_CORREGIDO.md §5`. Las respuestas se escriben ahí mismo, no en un chat.
+Respuestas también escritas en `ESQUEMA_CORREGIDO.md §5`. La Fase 01 del plan queda completa.
 
 ---
 
 ## 3. Las fases
 
-### 01 · Cerrar las cinco decisiones
-*Sin dependencias.* D5 conviene consultarla con Steven — él consume lo que devuelvan las consultas.
-**Entregable:** §5 del documento con las 5 respuestas fechadas.
+### 01 · Cerrar las cinco decisiones — ✅ hecho (2026-09-06)
+**Entregable:** §5 del documento con las 5 respuestas fechadas. Ver sección 2 arriba.
 
-### 02 · El esquema, en Dart
-*Requiere D1 · D3 · D5.*
-- Las **11 tablas**: 4 catálogos (`tipo_cliente`, `tipo_producto`, `gestos`, `tipo_transaccion`), 3 maestras (clientes, productos, estrategias), 3 bitácoras (interacciones, ventas, detalle_venta) y la vista `v_cierres_por_tipo_producto` que reemplaza el grupo repetitivo (C10/G8).
-- Los índices de §2.5: los de FK más los de `idProcesoPersuasion`, `codCliente`, `codEstrategia`, `timestamp`.
-- Semilla de los 4 catálogos **antes** de cualquier bitácora, o las FK revientan.
-- Decidir qué pasa con los stubs de `app/src/main/.../data/` — sus modelos (`User`, `Product`, `Offer`, `EmotionHistory`) no son los del esquema corregido. Lo natural es descartarlos.
+### 02 · El esquema, en Dart — ✅ hecho y probado (2026-09-06)
+*Requeria D1 · D3 · D5.*
+- Proyecto Flutter inicializado (`flutter create`), Kotlin real de `app/` movido a `android/app/src/main/kotlin/...` (paquete `com.tuapp.tienda_adaptativa`); los stubs vacios de `data/`, `decision/`, `di/`, `ui/` se descartaron — ahora se escriben en Dart.
+- **10 tablas** + 1 vista en `lib/data/database/tables.dart`: 4 catálogos, 3 maestras, 3 bitácoras, `v_cierres_por_tipo_producto` (reemplaza el grupo repetitivo C10/G8) en `queries.drift`.
+- Índices de §2.5 (FK + `idProcesoPersuasion`, `codCliente`, `codEstrategia`, `timestamp`).
+- `AppDatabase.seedCatalogos()` corre dentro de `MigrationStrategy.onCreate`, antes de cualquier bitácora.
+- `PRAGMA foreign_keys = ON` en cada conexión (trampa #1 — SQLite no lo activa solo).
+- Fechas/horas como `INTEGER` epoch millis explícito (no `DateTimeColumn` de drift), para que coincida exacto con el SQL de los KPIs.
+- **Probado de punta a punta** en `test/data/database/app_database_test.dart` (3 tests, todos pasan): siembra de catálogos, ciclo interacción→venta→detalle con FK activas, la vista de la consulta crítica, los 4 KPIs, y el batch (`cierresVenta`, `totalVendidos`, `montoTotalCentavos`).
 
-**Entregable:** base creada desde cero en un emulador, catálogos poblados, FK activas.
+**Entregable:** ✅ `flutter test test/data/database/` en verde.
 
 ### 03 · Datos de prueba y verificación contra el papel
-*Requiere 02.* Cargar el Primer y Segundo Caso de `TABLAS.docx`, correr las consultas y comparar con lo que el ejercicio ya calculó a mano.
+*Requiere 02 (listo).* Cargar el Primer y Segundo Caso de `TABLAS.docx` (los reales, no los sintéticos de la prueba de humo) y comparar contra lo que el ejercicio ya calculó a mano.
 **Entregable:** criterio de aceptación real — si los números coinciden, la traducción quedó bien.
 
 ### 04 · Autenticación
