@@ -1,0 +1,141 @@
+-- Consultas SQL crudas del esquema. Traducidas 1 a 1 de
+-- docs/MODELO_ANDROID_ROOM.md §4 y §5, con las decisiones D1-D4 de
+-- docs/ESQUEMA_CORREGIDO.md §5 ya aplicadas. Todos los campos de fecha
+-- son epoch millis (ver tables.dart), por eso `timestamp / 1000`.
+
+import 'tables.dart';
+
+-- ─────────────── VISTA (C10/G8) ───────────────
+-- Reemplaza el grupo repetitivo ventas(1-99) del diseño original.
+-- Una fila por venta-producto en vez de un registro con 99 ocurrencias.
+CREATE VIEW v_cierres_por_tipo_producto AS
+SELECT
+  p.tipo_producto AS tipoProducto,
+  tp.nombre_tipo_producto AS nombreTipoProducto,
+  c.cod_cliente AS codCliente,
+  c.nombre || ' ' || c.apellido AS cliente,
+  p.cod_lote_producto AS codLoteProducto,
+  p.nombre_producto AS nombreProducto,
+  d.cantidad AS cantidad,
+  d.precio_unitario_centavos * d.cantidad AS importeCentavos,
+  e.cod_estrategia AS codEstrategia,
+  e.nombre_estrategia AS nombreEstrategia,
+  v.timestamp AS timestamp
+FROM detalle_venta d
+INNER JOIN ventas v ON v.id = d.venta_id
+INNER JOIN productos p ON p.cod_lote_producto = d.cod_lote_producto
+LEFT JOIN tipos_producto tp ON tp.tipo_producto = p.tipo_producto
+INNER JOIN clientes c ON c.cod_cliente = v.cod_cliente
+LEFT JOIN estrategias e ON e.cod_estrategia = v.cod_estrategia;
+
+-- ─────────────── KPI 1 — % de cierre de ventas por mes ───────────────
+kpi1CierreVentasPorMes:
+WITH intentos AS (
+    SELECT strftime('%Y-%m', timestamp / 1000, 'unixepoch') AS mes,
+           COUNT(DISTINCT id_proceso_persuasion) AS n
+    FROM interacciones GROUP BY mes
+),
+cierres AS (
+    SELECT strftime('%Y-%m', timestamp / 1000, 'unixepoch') AS mes,
+           COUNT(DISTINCT id_proceso_persuasion) AS n
+    FROM ventas GROUP BY mes
+)
+SELECT i.mes AS mes,
+       COALESCE(c.n, 0) AS cierres,
+       i.n AS intentos,
+       ROUND(100.0 * COALESCE(c.n, 0) / i.n, 2) AS porcentaje
+FROM intentos i LEFT JOIN cierres c ON c.mes = i.mes
+ORDER BY i.mes;
+
+-- ─────────────── KPI 2 — % de ventas sin producto alternativo ───────────────
+-- De los procesos que terminaron en venta, cuantos mostraron un solo producto.
+-- Nota: esta consulta es la prueba de por que G1 era bloqueante - sin
+-- id_proceso_persuasion en ambas tablas, el IN (...) no tendria por donde enlazar.
+kpi2VentasSinProductoAlternativo:
+WITH productos_por_proceso AS (
+    SELECT id_proceso_persuasion AS pid,
+           COUNT(DISTINCT cod_lote_producto) AS n_prod
+    FROM interacciones
+    WHERE cod_lote_producto IS NOT NULL
+    GROUP BY id_proceso_persuasion
+)
+SELECT ROUND(100.0 * SUM(CASE WHEN p.n_prod = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS porcentaje
+FROM productos_por_proceso p
+WHERE p.pid IN (SELECT DISTINCT id_proceso_persuasion FROM ventas);
+
+-- ─────────────── KPI 3 — % de efectividad de estrategias por tipo de cliente ───
+kpi3EfectividadEstrategiaPorTipoCliente:
+SELECT cl.tipo_cliente AS tipoCliente,
+       e.cod_estrategia AS codEstrategia,
+       e.nombre_estrategia AS nombreEstrategia,
+       COUNT(DISTINCT v.id_proceso_persuasion) AS ventasGeneradas,
+       COUNT(DISTINCT i.id_proceso_persuasion) AS vecesAplicada,
+       ROUND(100.0 * COUNT(DISTINCT v.id_proceso_persuasion)
+             / NULLIF(COUNT(DISTINCT i.id_proceso_persuasion), 0), 2) AS efectividad
+FROM interacciones i
+JOIN clientes cl ON cl.cod_cliente = i.cod_cliente
+JOIN estrategias e ON e.cod_estrategia = i.cod_estrategia
+LEFT JOIN ventas v ON v.id_proceso_persuasion = i.id_proceso_persuasion
+                   AND v.cod_estrategia = i.cod_estrategia
+GROUP BY cl.tipo_cliente, e.cod_estrategia
+ORDER BY cl.tipo_cliente, efectividad DESC;
+
+-- ─────────────── KPI 4 — % de ventas por dia de la semana ───────────────
+-- Decision D2: pipeline de Tercer KPI.png (distribucion, no tasa de cierre).
+-- 0 = domingo ... 6 = sabado.
+kpi4VentasPorDiaSemana:
+SELECT CAST(strftime('%w', timestamp / 1000, 'unixepoch') AS INTEGER) AS diaSemana,
+       COUNT(*) AS ventas,
+       ROUND(100.0 * COUNT(*) / (SELECT COUNT(*) FROM ventas), 2) AS porcentaje
+FROM ventas
+GROUP BY diaSemana ORDER BY diaSemana;
+
+-- ─────────────── BATCH (fase 7, no bloqueante — decision D4) ───────────────
+-- Los 4 procesos se ejecutan juntos en una sola transaccion
+-- (AppDatabase.transaction en Dart), nunca por separado (Consideraciones.docx).
+
+-- D1: corregido - agrupa por cod_estrategia, no por cod_cliente (el diagrama
+-- original decia cod_cliente, era un error).
+batchActualizarTotalVecesAplicada:
+UPDATE estrategias SET total_veces_aplicada = (
+    SELECT COUNT(*) FROM interacciones i
+    WHERE i.cod_estrategia = estrategias.cod_estrategia
+);
+
+batchActualizarVentasGeneradas:
+UPDATE estrategias SET ventas_generadas = (
+    SELECT COUNT(*) FROM ventas v
+    WHERE v.cod_estrategia = estrategias.cod_estrategia
+);
+
+-- D1: cant_lecturas = procesos de persuasion distintos por cliente.
+batchActualizarCantLecturas:
+UPDATE clientes SET cant_lecturas = (
+    SELECT COUNT(DISTINCT i.id_proceso_persuasion) FROM interacciones i
+    WHERE i.cod_cliente = clientes.cod_cliente
+);
+
+batchActualizarTotalesCliente:
+UPDATE clientes SET
+    total_compras = (SELECT COUNT(*) FROM ventas v
+                      WHERE v.cod_cliente = clientes.cod_cliente),
+    monto_total_centavos = (
+        SELECT COALESCE(SUM(d.cantidad * d.precio_unitario_centavos), 0)
+        FROM ventas v
+        JOIN detalle_venta d ON d.venta_id = v.id
+        WHERE v.cod_cliente = clientes.cod_cliente),
+    ultima_visita = (SELECT MAX(v.timestamp) FROM ventas v
+                      WHERE v.cod_cliente = clientes.cod_cliente);
+
+-- D3: cierres_venta se mantiene en productos (mismo COUNT que total_vendidos).
+batchActualizarCierresVenta:
+UPDATE productos SET cierres_venta = (
+    SELECT COUNT(*) FROM detalle_venta d
+    WHERE d.cod_lote_producto = productos.cod_lote_producto
+);
+
+batchActualizarTotalVendidos:
+UPDATE productos SET total_vendidos = (
+    SELECT COUNT(*) FROM detalle_venta d
+    WHERE d.cod_lote_producto = productos.cod_lote_producto
+);
