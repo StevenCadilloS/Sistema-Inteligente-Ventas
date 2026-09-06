@@ -75,13 +75,15 @@ class AppDatabase extends _$AppDatabase {
         ],
       );
 
+      // El aceptar/rechazar NO va aqui: se infiere de si existe una fila en
+      // `ventas` con el mismo idProcesoPersuasion (asi lo usa el KPI 2). El
+      // taxonomia original de tipo_transaccion (G4) no llego completa a
+      // TABLAS.docx; se deja un unico tipo para el modulo online por ahora.
       b.insertAll(
         tiposTransaccion,
         [
           TiposTransaccionCompanion.insert(
-              codTransaccion: 'TRX0001', tipoTrx: 'oferta_aceptada'),
-          TiposTransaccionCompanion.insert(
-              codTransaccion: 'TRX0002', tipoTrx: 'oferta_rechazada'),
+              codTransaccion: 'TRX0001', tipoTrx: 'oferta_adaptativa'),
         ],
       );
     });
