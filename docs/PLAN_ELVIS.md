@@ -183,5 +183,26 @@ Si algo de esto bloquea, el arreglo es acordar la firma correspondiente, no impl
 
 ---
 
+## 8. Auditoría post-cierre (2026-09-06)
+
+Con las 7 fases cerradas, se corrió `/code-review` (nivel alto, diff completo `arbol1` vs `main`) buscando correctitud, redundancia, escalabilidad y robustez. 8 hallazgos, los 8 corregidos y con test de regresión:
+
+| # | Hallazgo | Corrección |
+|---|---|---|
+| 1 | KPI2 podía devolver `NULL` (crash) con la BD vacía | `COALESCE(..., 0.0)` en la consulta |
+| 2 | UCB1 contaba filas crudas de `interacciones`, no procesos distintos | `COUNT(DISTINCT id_proceso_persuasion)`, igual que KPI3/batch |
+| 3 | Condición de carrera en `_siguiente*()` (leer máximo + insertar sin transacción) | Todo el ciclo leer+insertar envuelto en `db.transaction()` (4 sitios) |
+| 4 | `decidirOferta` crasheaba con gestos no catalogados (real: `G0000008` en Fase 03) | `getSingleOrNull()` + fallback a regla `neutral` |
+| 5 | Fallback de "enojo" sin historial no caía al más económico si tenía categoría nula | Corto-circuito explícito cuando no hay historial |
+| 6 | `AppDatabase.forTesting` no activaba `PRAGMA foreign_keys = ON` | Movido a `MigrationStrategy.beforeOpen` (corre en toda conexión) |
+| 7 | UCB1 hacía 2N consultas secuenciales por estrategia (N+1) | 2 consultas agrupadas (`GROUP BY codEstrategia`) |
+| 8 | Nada de lo construido estaba conectado a `main.dart`; el cierre diario nunca se ejecutaría | `main()` llama a `programarCierreDiario()` al arrancar |
+
+De paso, escribiendo el test del hallazgo #2 con datos realistas (un proceso con varias filas, como en Fase 03) se encontró un noveno bug: `registrarRespuesta` usaba `.getSingle()` asumiendo una sola fila por proceso — corregido tomando la última por `timestamp`.
+
+6 tests nuevos de regresión. Ver commits de auditoría para el detalle.
+
+---
+
 *Fuentes: `Taller 01.pdf` (rúbrica), `ESQUEMA_CORREGIDO.md` (G1–G9, C1–C11), `MODELO_ANDROID_ROOM.md` (entidades, KPIs, batch) y el esqueleto Kotlin en `app/src/main/`.*
 *`PLAN_TALLER01.md` quedó fuera: describe una carpeta `android/` que no existe en el repo y una ruta nativa que el equipo descartó.*

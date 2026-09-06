@@ -1,4 +1,4 @@
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tienda_adaptativa/data/database/app_database.dart';
@@ -94,6 +94,27 @@ void main() {
     expect(oferta.producto.codLoteProducto, 'P0000003');
   });
 
+  test(
+      'gesto no catalogado (ej. G0000008 de casos_reales_test.dart) cae a '
+      'neutral en vez de crashear', () async {
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente,
+      codGesto: 'G0000008', // fuera de las 5 emociones basicas sembradas
+      nivelDeInteres: 50,
+    );
+
+    // neutral -> el mas mostrado, igual que con G0000004.
+    expect(oferta.producto.codLoteProducto, 'P0000003');
+
+    // Sin fila en Gestos no se puede guardar el codigo (rompe la FK): la
+    // interaccion queda registrada igual, solo con codGesto en null.
+    final fila = await (db.select(db.interacciones)
+          ..where((i) =>
+              i.idProcesoPersuasion.equals(oferta.idProcesoPersuasion)))
+        .getSingle();
+    expect(fila.codGesto, isNull);
+  });
+
   test('enojo -> cambia de categoria respecto al ultimo producto mostrado',
       () async {
     // Primero se le muestra un producto de la categoria Audio (feliz).
@@ -110,6 +131,25 @@ void main() {
       nivelDeInteres: 70,
     );
     expect(oferta.producto.tipoProducto, 'T00002');
+  });
+
+  test(
+      'enojo sin historial cae al mas economico aunque no tenga categoria '
+      'asignada (C6: tipoProducto es nullable)', () async {
+    await db.into(db.productos).insert(ProductosCompanion.insert(
+          codLoteProducto: 'P0000004',
+          nombreProducto: 'Producto sin categoria',
+          precioUnitarioCentavos: 100, // el mas barato del catalogo
+          fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+        ));
+
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente, // sin interacciones previas en este test
+      codGesto: 'G0000005', // enojo
+      nivelDeInteres: 70,
+    );
+
+    expect(oferta.producto.codLoteProducto, 'P0000004');
   });
 
   test('cada decision registra una fila en interacciones con FK completas',

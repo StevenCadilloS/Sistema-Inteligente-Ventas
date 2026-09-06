@@ -1,6 +1,20 @@
 import 'package:flutter/material.dart';
 
-void main() {
+import 'data/batch/cierre_diario_scheduler.dart';
+
+// NOTA: las pantallas de abajo (MyApp/MyHomePage) siguen siendo la
+// plantilla de `flutter create` - conectarlas a ClienteRepository /
+// AdaptationEngine / BanditOptimizer es trabajo de UI (Steven, frontend),
+// no de este tramo. Lo que SI corresponde a este tramo es que el cierre
+// diario (docs/PLAN_ELVIS.md fase 07) realmente se dispare al arrancar la
+// app: estaba implementado y probado, pero nada lo llamaba.
+Future<void> main() async {
+  // Requerido por plugins con platform channels (workmanager,
+  // shared_preferences) antes de cualquier llamada previa a runApp.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await programarCierreDiario();
+
   runApp(const MyApp());
 }
 

@@ -47,27 +47,44 @@ class AdaptationEngine {
     required String codGesto,
     required int nivelDeInteres,
   }) async {
+    // getSingleOrNull, no getSingle: los datos historicos reales tienen
+    // codigos de gesto fuera de las 5 emociones basicas sembradas (ver
+    // test/data/database/casos_reales_test.dart, gesto G0000008). Un
+    // gesto sin catalogar cae a la regla neutral en vez de tumbar el
+    // pipeline de decision.
     final gesto = await (_db.select(_db.gestos)
           ..where((g) => g.codGesto.equals(codGesto)))
-        .getSingle();
-    final regla = _reglaPara(gesto.nombreGesto);
+        .getSingleOrNull();
+    final regla = gesto == null ? _TipoRegla.neutral : _reglaPara(gesto.nombreGesto);
+    // Sin fila en Gestos no se puede guardar codGesto (rompe la FK); se
+    // registra la interaccion igual, solo sin ese dato.
+    final codGestoValido = gesto == null ? null : codGesto;
 
     final producto = await _productoPara(regla, codCliente);
     final estrategia = await _bandit.seleccionarEstrategia();
-    final idProcesoPersuasion = await _siguienteIdProcesoPersuasion();
 
-    await _db.into(_db.interacciones).insert(InteraccionesCompanion.insert(
-          canal: _canal,
-          correlativo: await _siguienteCorrelativo(),
-          idProcesoPersuasion: idProcesoPersuasion,
-          codCliente: codCliente,
-          codEstrategia: Value(estrategia?.codEstrategia),
-          codGesto: Value(codGesto),
-          codLoteProducto: Value(producto.codLoteProducto),
-          tipoTransaccion: _tipoTransaccion,
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-          nivelDeInteres: nivelDeInteres,
-        ));
+    // El calculo del siguiente correlativo/idProcesoPersuasion (leer el
+    // maximo actual) y el insert que los consume van en UNA transaccion:
+    // sueltos, dos llamadas concurrentes podrian leer el mismo maximo y
+    // chocar contra el UNIQUE(canal, correlativo) al insertar.
+    late final String idProcesoPersuasion;
+    await _db.transaction(() async {
+      idProcesoPersuasion = await _siguienteIdProcesoPersuasion();
+      final correlativo = await _siguienteCorrelativo();
+
+      await _db.into(_db.interacciones).insert(InteraccionesCompanion.insert(
+            canal: _canal,
+            correlativo: correlativo,
+            idProcesoPersuasion: idProcesoPersuasion,
+            codCliente: codCliente,
+            codEstrategia: Value(estrategia?.codEstrategia),
+            codGesto: Value(codGestoValido),
+            codLoteProducto: Value(producto.codLoteProducto),
+            tipoTransaccion: _tipoTransaccion,
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+            nivelDeInteres: nivelDeInteres,
+          ));
+    });
 
     return Oferta(
       idProcesoPersuasion: idProcesoPersuasion,
@@ -143,12 +160,16 @@ class AdaptationEngine {
         .getSingleOrNull();
 
     final ultimoCod = ultima?.codLoteProducto;
+    if (ultimoCod == null) {
+      // Sin historial: cae directo al mas economico (activos ya viene
+      // ordenado asc por precio), sin pasar por el filtro de categoria.
+      return activos.first;
+    }
+
     final coincidencias =
         activos.where((p) => p.codLoteProducto == ultimoCod);
     final ultimaCategoria =
-        ultimoCod == null || coincidencias.isEmpty
-            ? null
-            : coincidencias.first.tipoProducto;
+        coincidencias.isEmpty ? null : coincidencias.first.tipoProducto;
 
     final otraCategoria =
         activos.where((p) => p.tipoProducto != ultimaCategoria);

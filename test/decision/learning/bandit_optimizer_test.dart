@@ -18,15 +18,21 @@ void main() {
     required String codEstrategia,
     String codLoteProducto = 'P0000001',
   }) async {
+    correlativo++;
     await db.into(db.interacciones).insert(InteraccionesCompanion.insert(
           canal: 'A',
-          correlativo: ++correlativo,
+          correlativo: correlativo,
           idProcesoPersuasion: idProcesoPersuasion,
           codCliente: codCliente,
           codEstrategia: Value(codEstrategia),
           codLoteProducto: Value(codLoteProducto),
           tipoTransaccion: 'TRX0001',
-          timestamp: DateTime.now().millisecondsSinceEpoch,
+          // Estrictamente creciente por llamada, no DateTime.now(): varias
+          // llamadas seguidas pueden caer en el mismo milisegundo y
+          // volver no determinista el ORDER BY timestamp DESC de
+          // registrarRespuesta.
+          timestamp:
+              DateTime.now().millisecondsSinceEpoch + correlativo,
           nivelDeInteres: 70,
         ));
   }
@@ -69,6 +75,36 @@ void main() {
     final elegida = await bandit.seleccionarEstrategia();
 
     expect(elegida?.codEstrategia, 'E0000002');
+  });
+
+  test(
+      'un proceso con varias filas para la misma estrategia cuenta como 1 '
+      'intento, no como una fila por intento', () async {
+    // E0000001: UN solo proceso (como I0000013 en
+    // test/data/database/casos_reales_test.dart, Segundo Caso, que
+    // muestra la misma estrategia en mas de una interaccion), que SI
+    // cierra en venta -> conversion real del 100%.
+    for (var i = 0; i < 4; i++) {
+      await registrarInteraccion(
+          idProcesoPersuasion: 'PP00000001', codEstrategia: 'E0000001');
+    }
+    await bandit.registrarRespuesta(
+        idProcesoPersuasion: 'PP00000001', aceptada: true);
+
+    // E0000002: un proceso distinto, que NO cierra en venta.
+    await registrarInteraccion(
+        idProcesoPersuasion: 'PP00000002', codEstrategia: 'E0000002');
+    await bandit.registrarRespuesta(
+        idProcesoPersuasion: 'PP00000002', aceptada: false);
+
+    // Contando filas crudas, E0000001 tendria 4 intentos y una tasa de
+    // conversion diluida a 25%, perdiendo frente a E0000002 (0 exitos pero
+    // "menos intentos") por el termino de exploracion de UCB1. Contando
+    // procesos distintos (correcto), E0000001 tiene 100% de conversion en
+    // su unico proceso y debe ganar.
+    final elegida = await bandit.seleccionarEstrategia();
+
+    expect(elegida?.codEstrategia, 'E0000001');
   });
 
   test(
