@@ -27,14 +27,20 @@ class ClienteRepository {
     required String apellido,
     String? tipoCliente,
   }) async {
-    final codCliente = await _siguienteCodCliente();
-    await _db.into(_db.clientes).insert(ClientesCompanion.insert(
-          codCliente: codCliente,
-          nombre: nombre,
-          apellido: apellido,
-          tipoCliente: Value(tipoCliente),
-          fechaIngreso: DateTime.now().millisecondsSinceEpoch,
-        ));
+    // Leer el ultimo codCliente e insertar van en una transaccion: sueltos,
+    // dos registros concurrentes podrian generar el mismo codigo y chocar
+    // contra la primary key.
+    late final String codCliente;
+    await _db.transaction(() async {
+      codCliente = await _siguienteCodCliente();
+      await _db.into(_db.clientes).insert(ClientesCompanion.insert(
+            codCliente: codCliente,
+            nombre: nombre,
+            apellido: apellido,
+            tipoCliente: Value(tipoCliente),
+            fechaIngreso: DateTime.now().millisecondsSinceEpoch,
+          ));
+    });
     await iniciarSesion(codCliente);
     return codCliente;
   }

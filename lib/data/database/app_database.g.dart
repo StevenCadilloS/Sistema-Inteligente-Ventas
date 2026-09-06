@@ -4934,7 +4934,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Selectable<double> kpi2VentasSinProductoAlternativo() {
     return customSelect(
-      'WITH productos_por_proceso AS (SELECT id_proceso_persuasion AS pid, COUNT(DISTINCT cod_lote_producto) AS n_prod FROM interacciones WHERE cod_lote_producto IS NOT NULL GROUP BY id_proceso_persuasion) SELECT ROUND(100.0 * SUM(CASE WHEN p.n_prod = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS porcentaje FROM productos_por_proceso AS p WHERE p.pid IN (SELECT DISTINCT id_proceso_persuasion FROM ventas)',
+      'WITH productos_por_proceso AS (SELECT id_proceso_persuasion AS pid, COUNT(DISTINCT cod_lote_producto) AS n_prod FROM interacciones WHERE cod_lote_producto IS NOT NULL GROUP BY id_proceso_persuasion) SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN p.n_prod = 1 THEN 1 ELSE 0 END) / COUNT(*), 2), 0.0) AS porcentaje FROM productos_por_proceso AS p WHERE p.pid IN (SELECT DISTINCT id_proceso_persuasion FROM ventas)',
       variables: [],
       readsFrom: {this.interacciones, this.ventas},
     ).map((QueryRow row) => row.read<double>('porcentaje'));

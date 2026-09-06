@@ -29,26 +29,22 @@ class BanditOptimizer {
         .get();
     if (activas.isEmpty) return null;
 
-    final intentos = <String, int>{};
-    final exitos = <String, int>{};
-    var totalIntentos = 0;
-
-    for (final estrategia in activas) {
-      final n = await _contarIntentos(estrategia.codEstrategia);
-      intentos[estrategia.codEstrategia] = n;
-      exitos[estrategia.codEstrategia] =
-          await _contarExitos(estrategia.codEstrategia);
-      totalIntentos += n;
-    }
+    // 2 consultas agrupadas (no 2 por estrategia): esto corre en cada
+    // decidirOferta, y N+1 aqui escala mal segun crece el catalogo de
+    // estrategias.
+    final intentos = await _intentosPorEstrategia();
+    final exitos = await _exitosPorEstrategia();
+    final totalIntentos = activas.fold<int>(
+        0, (suma, e) => suma + (intentos[e.codEstrategia] ?? 0));
 
     final sinProbar =
-        activas.where((e) => intentos[e.codEstrategia] == 0);
+        activas.where((e) => (intentos[e.codEstrategia] ?? 0) == 0);
     if (sinProbar.isNotEmpty) return sinProbar.first;
 
     return activas.reduce((mejor, actual) {
-      final scoreMejor = _ucb1(
-          exitos[mejor.codEstrategia]!, intentos[mejor.codEstrategia]!, totalIntentos);
-      final scoreActual = _ucb1(exitos[actual.codEstrategia]!,
+      final scoreMejor = _ucb1(exitos[mejor.codEstrategia] ?? 0,
+          intentos[mejor.codEstrategia]!, totalIntentos);
+      final scoreActual = _ucb1(exitos[actual.codEstrategia] ?? 0,
           intentos[actual.codEstrategia]!, totalIntentos);
       return scoreActual > scoreMejor ? actual : mejor;
     });
@@ -64,8 +60,14 @@ class BanditOptimizer {
   }) async {
     if (!aceptada) return;
 
+    // Un proceso puede tener mas de una fila (varios productos/estrategias
+    // mostrados en la misma sesion - ver test/data/database/
+    // casos_reales_test.dart, Segundo Caso). La ultima es la que cierra:
+    // en los datos reales su timestamp coincide con el de la venta.
     final interaccion = await (_db.select(_db.interacciones)
-          ..where((i) => i.idProcesoPersuasion.equals(idProcesoPersuasion)))
+          ..where((i) => i.idProcesoPersuasion.equals(idProcesoPersuasion))
+          ..orderBy([(i) => OrderingTerm.desc(i.timestamp)])
+          ..limit(1))
         .getSingle();
 
     final codLoteProducto = interaccion.codLoteProducto;
@@ -77,22 +79,27 @@ class BanditOptimizer {
           ..where((p) => p.codLoteProducto.equals(codLoteProducto)))
         .getSingle();
 
-    final ventaId = await _db.into(_db.ventas).insert(VentasCompanion.insert(
-          canal: interaccion.canal,
-          correlativo: await _siguienteCorrelativoVenta(interaccion.canal),
-          idProcesoPersuasion: idProcesoPersuasion,
-          codCliente: interaccion.codCliente,
-          codEstrategia: Value(interaccion.codEstrategia),
-          tipoTransaccion: interaccion.tipoTransaccion,
-          timestamp: DateTime.now().millisecondsSinceEpoch,
-        ));
+    // Leer el ultimo correlativo del canal e insertar la venta van en una
+    // transaccion: sueltos, dos respuestas concurrentes podrian generar el
+    // mismo correlativo y chocar contra UNIQUE(canal, correlativo).
+    await _db.transaction(() async {
+      final ventaId = await _db.into(_db.ventas).insert(VentasCompanion.insert(
+            canal: interaccion.canal,
+            correlativo: await _siguienteCorrelativoVenta(interaccion.canal),
+            idProcesoPersuasion: idProcesoPersuasion,
+            codCliente: interaccion.codCliente,
+            codEstrategia: Value(interaccion.codEstrategia),
+            tipoTransaccion: interaccion.tipoTransaccion,
+            timestamp: DateTime.now().millisecondsSinceEpoch,
+          ));
 
-    await _db.into(_db.detalleVenta).insert(DetalleVentaCompanion.insert(
-          ventaId: ventaId,
-          codLoteProducto: producto.codLoteProducto,
-          cantidad: 1,
-          precioUnitarioCentavos: producto.precioUnitarioCentavos, // snapshot
-        ));
+      await _db.into(_db.detalleVenta).insert(DetalleVentaCompanion.insert(
+            ventaId: ventaId,
+            codLoteProducto: producto.codLoteProducto,
+            cantidad: 1,
+            precioUnitarioCentavos: producto.precioUnitarioCentavos, // snapshot
+          ));
+    });
   }
 
   /// score = exitos/intentos + sqrt(2 * ln(N) / intentos)
@@ -101,22 +108,36 @@ class BanditOptimizer {
         math.sqrt(2 * math.log(totalIntentos) / intentos);
   }
 
-  Future<int> _contarIntentos(String codEstrategia) async {
-    final total = _db.interacciones.id.count();
-    final fila = await (_db.selectOnly(_db.interacciones)
-          ..addColumns([total])
-          ..where(_db.interacciones.codEstrategia.equals(codEstrategia)))
-        .getSingle();
-    return fila.read(total) ?? 0;
+  // Una consulta con GROUP BY para TODAS las estrategias a la vez, no una
+  // consulta por estrategia. COUNT(DISTINCT id_proceso_persuasion), no
+  // COUNT(*): un mismo proceso puede mostrar la misma estrategia en mas de
+  // una interaccion (ver test/data/database/casos_reales_test.dart,
+  // Segundo Caso), y contar filas crudas infla "intentos" frente a como lo
+  // miden KPI3 y el batch.
+  Future<Map<String, int>> _intentosPorEstrategia() async {
+    final total = _db.interacciones.idProcesoPersuasion.count(distinct: true);
+    final codEstrategia = _db.interacciones.codEstrategia;
+    final filas = await (_db.selectOnly(_db.interacciones)
+          ..addColumns([codEstrategia, total])
+          ..where(codEstrategia.isNotNull())
+          ..groupBy([codEstrategia]))
+        .get();
+    return {
+      for (final fila in filas) fila.read(codEstrategia)!: fila.read(total) ?? 0,
+    };
   }
 
-  Future<int> _contarExitos(String codEstrategia) async {
-    final total = _db.ventas.id.count();
-    final fila = await (_db.selectOnly(_db.ventas)
-          ..addColumns([total])
-          ..where(_db.ventas.codEstrategia.equals(codEstrategia)))
-        .getSingle();
-    return fila.read(total) ?? 0;
+  Future<Map<String, int>> _exitosPorEstrategia() async {
+    final total = _db.ventas.idProcesoPersuasion.count(distinct: true);
+    final codEstrategia = _db.ventas.codEstrategia;
+    final filas = await (_db.selectOnly(_db.ventas)
+          ..addColumns([codEstrategia, total])
+          ..where(codEstrategia.isNotNull())
+          ..groupBy([codEstrategia]))
+        .get();
+    return {
+      for (final fila in filas) fila.read(codEstrategia)!: fila.read(total) ?? 0,
+    };
   }
 
   Future<int> _siguienteCorrelativoVenta(String canal) async {

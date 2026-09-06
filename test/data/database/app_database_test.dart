@@ -27,6 +27,33 @@ void main() {
     expect(await db.select(db.tiposTransaccion).get(), hasLength(1));
   });
 
+  test('KPI2 no crashea con la base vacia (COUNT(*)=0 -> NULL en SQL)',
+      () async {
+    final kpi2 = await db.kpi2VentasSinProductoAlternativo().getSingle();
+    expect(kpi2, 0.0);
+  });
+
+  test('las FK realmente rechazan un codCliente que no existe', () async {
+    // Prueba que PRAGMA foreign_keys=ON esta activo de verdad en
+    // AppDatabase.forTesting (via MigrationStrategy.beforeOpen), no solo
+    // que el flujo con datos validos funciona.
+    await db.into(db.tiposTransaccion).insert(TiposTransaccionCompanion.insert(
+        codTransaccion: 'TRXTEST', tipoTrx: 'test'));
+
+    expect(
+      () => db.into(db.interacciones).insert(InteraccionesCompanion.insert(
+            canal: 'A',
+            correlativo: 1,
+            idProcesoPersuasion: 'PP00000001',
+            codCliente: 'C_NO_EXISTE',
+            tipoTransaccion: 'TRXTEST',
+            timestamp: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+            nivelDeInteres: 50,
+          )),
+      throwsA(anything),
+    );
+  });
+
   test('ciclo completo: interaccion -> venta -> detalle, con FK activas',
       () async {
     await db

@@ -41,6 +41,16 @@ class AppDatabase extends _$AppDatabase {
           await m.createAll();
           await seedCatalogos();
         },
+        // beforeOpen corre para TODA conexion (produccion via
+        // _openConnection() y AppDatabase.forTesting igual) - a diferencia
+        // del `setup` de NativeDatabase, que solo aplicaba en produccion.
+        // SQLite no valida FK por defecto (a diferencia de Room); sin esto,
+        // la correccion C11 (sin centinela 00000000) queda sin efecto y
+        // los tests que dicen "con FK activas" no las tendrian activas de
+        // verdad. Ver docs/PLAN_ELVIS.md trampa #1.
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON');
+        },
       );
 
   /// Los 4 catalogos deben existir ANTES que cualquier fila de bitacora,
@@ -94,14 +104,6 @@ LazyDatabase _openConnection() {
   return LazyDatabase(() async {
     final dbFolder = await getApplicationDocumentsDirectory();
     final file = File(p.join(dbFolder.path, 'tienda_adaptativa.sqlite'));
-    return NativeDatabase.createInBackground(
-      file,
-      setup: (db) {
-        // SQLite no valida FK por defecto (a diferencia de Room). Hay que
-        // activarlo en cada conexion o la correccion C11 (sin centinela
-        // 00000000) queda sin efecto. Ver docs/PLAN_ELVIS.md trampa #1.
-        db.execute('PRAGMA foreign_keys = ON');
-      },
-    );
+    return NativeDatabase.createInBackground(file);
   });
 }

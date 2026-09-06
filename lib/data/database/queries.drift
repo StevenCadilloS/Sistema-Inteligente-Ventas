@@ -59,7 +59,9 @@ WITH productos_por_proceso AS (
     WHERE cod_lote_producto IS NOT NULL
     GROUP BY id_proceso_persuasion
 )
-SELECT ROUND(100.0 * SUM(CASE WHEN p.n_prod = 1 THEN 1 ELSE 0 END) / COUNT(*), 2) AS porcentaje
+-- COALESCE: sin ventas, COUNT(*) es 0 y la division da NULL en SQL, pero
+-- el accessor generado en Dart es non-nullable (double).
+SELECT COALESCE(ROUND(100.0 * SUM(CASE WHEN p.n_prod = 1 THEN 1 ELSE 0 END) / COUNT(*), 2), 0.0) AS porcentaje
 FROM productos_por_proceso p
 WHERE p.pid IN (SELECT DISTINCT id_proceso_persuasion FROM ventas);
 

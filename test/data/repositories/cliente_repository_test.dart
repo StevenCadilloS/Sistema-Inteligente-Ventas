@@ -33,6 +33,17 @@ void main() {
     expect(segundo, 'C0000002');
   });
 
+  test('dos registros concurrentes no chocan ni se pisan (leer+insertar es atomico)',
+      () async {
+    final codigos = await Future.wait([
+      clientes.registrar(nombre: 'Carlos', apellido: 'Ramirez'),
+      clientes.registrar(nombre: 'Ana', apellido: 'Torres'),
+    ]);
+
+    expect(codigos.toSet(), hasLength(2)); // ningun codigo repetido
+    expect(await db.select(db.clientes).get(), hasLength(2));
+  });
+
   test('iniciarSesion falla si el codCliente no existe', () async {
     expect(
       () => clientes.iniciarSesion('C9999999'),
