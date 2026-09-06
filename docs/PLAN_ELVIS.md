@@ -116,13 +116,13 @@ Respuestas también escritas en `ESQUEMA_CORREGIDO.md §5`. La Fase 01 del plan 
 
 **Entregable:** `decidirOferta(codCliente, codGesto, nivelDeInteres) → Oferta`.
 
-### 06 · Aprendizaje UCB1
-*Requiere 05.*
-- No necesita tablas nuevas: `maestra_estrategias.ventasGeneradas` y `totalVecesAplicada` **ya son** los éxitos e intentos de la fórmula.
-- `score = ventasGeneradas / totalVecesAplicada + √(2·ln N / totalVecesAplicada)`.
-- Definir de dónde salen los contadores: recalculados al vuelo (exactos) o mantenidos por el batch (rápidos de leer, desactualizados entre corridas). **No mezclar con triggers** sobre el mismo campo: se pisan.
-
-**Entregable:** `registrarRespuesta(idProcesoPersuasion, aceptada)` y selección que mejora con el uso.
+### 06 · Aprendizaje UCB1 — ✅ hecho y probado (2026-09-06)
+- `lib/decision/learning/bandit_optimizer.dart`: `seleccionarEstrategia()` y `registrarRespuesta(idProcesoPersuasion, aceptada)`.
+- **Decidido: recalculado al vuelo**, no via batch — `COUNT` en vivo sobre `interacciones`/`ventas` por estrategia en cada selección. Deliberadamente no toca `estrategias.ventasGeneradas`/`totalVecesAplicada`: esas columnas quedan exclusivas del batch (fase 07, para KPIs/presentación) y así nunca se pisan entre sí.
+- Una estrategia nunca aplicada se prioriza sobre el score (evita dividir por cero y fuerza exploración inicial).
+- `registrarRespuesta(aceptada: true)` crea la `venta` + `detalleVenta` (con snapshot del precio) que cierra el proceso; `aceptada: false` no crea nada — el rechazo se infiere de la ausencia de venta, igual que lo lee el KPI 2.
+- `AdaptationEngine` ahora recibe `BanditOptimizer` inyectado; ya no tiene su propio placeholder de estrategia.
+- 5/5 tests en verde (`test/decision/learning/bandit_optimizer_test.dart`); 20/20 en toda la suite.
 
 ### 07 · Batch y KPIs
 *Solo si D4 lo incluye. Cero puntos de rúbrica; valor de presentación.*
