@@ -100,22 +100,19 @@ Respuestas también escritas en `ESQUEMA_CORREGIDO.md §5`. La Fase 01 del plan 
 *Requiere 02 (listo).* Cargar el Primer y Segundo Caso de `TABLAS.docx` (los reales, no los sintéticos de la prueba de humo) y comparar contra lo que el ejercicio ya calculó a mano.
 **Entregable:** criterio de aceptación real — si los números coinciden, la traducción quedó bien.
 
-### 04 · Autenticación
-*Requiere 02.*
-- Registro y login contra `maestra_clientes`; definir cómo se generan los `codCliente` (formato `C0000002`) en el dispositivo.
-- C6 ya separó `nombre` y `apellido`: el formulario pide los dos.
-- `tipoCliente` es nullable pero el KPI 3 agrupa por él — decidir si se pide al registrarse o se asigna después.
-- Sesión local persistida.
+### 04 · Autenticación — ✅ hecho y probado (2026-09-06)
+- `lib/data/repositories/cliente_repository.dart`: `registrar(nombre, apellido, tipoCliente?) → codCliente` (secuencial local `C0000001`, `C0000002`...) e `iniciarSesion(codCliente)`.
+- Sesión persistida con `shared_preferences` (estado del dispositivo, no dato de negocio — no va en la BD).
+- `tipoCliente` nullable (C3): se puede registrar sin él.
+- 5/5 tests en verde (`test/data/repositories/cliente_repository_test.dart`).
 
-**Entregable:** `registrar(nombre, apellido, tipoCliente?) → codCliente` e `iniciarSesion(codCliente)`.
-
-### 05 · Motor de reglas de oferta ← *el rubro de 8 puntos*
-*Requiere 02 + contrato con Juan.*
-- Entra un gesto (emoción estable de Juan), sale una oferta concreta: estrategia, producto, precio, texto.
-- Reglas base, ya escritas en los comentarios de `AdaptationEngine.kt`: triste → sustituto más económico; sorpresa → descuento o combo; feliz → premium sin descuento; neutral → estándar; enojo → cambio de categoría con descuento agresivo.
-- Cada decisión escribe una fila en `bitacora_interacciones` con `idProcesoPersuasion`, `codGesto`, `codEstrategia`, `codLoteProducto`, `nivelDeInteres`.
-- C11: `codEstrategia` y `codLoteProducto` son nullables de verdad. Nada de centinelas `00000000`.
-- **Regla eliminatoria del taller:** la oferta debe cambiar sola al cambiar la emoción. Los botones "Me interesa / No gracias" son *retroalimentación*, no el disparador de la adaptación.
+### 05 · Motor de reglas de oferta ← *el rubro de 8 puntos* — ✅ hecho y probado (2026-09-06)
+- `lib/decision/adaptation_engine.dart`: `decidirOferta(codCliente, codGesto, nivelDeInteres) → Oferta`.
+- Reglas por gesto (consultando `gestos.nombreGesto`, no hardcodeando códigos): triste → producto más económico (sustituto); feliz → el más caro (premium); sorpresa → el menos mostrado (novedad); neutral → el más mostrado (estándar); enojo → cambia de categoría respecto al último producto mostrado a ese cliente + el más económico de esa categoría (descuento agresivo).
+- Cada decisión inserta una fila en `interacciones` con `idProcesoPersuasion` (generado aquí, C1), `codGesto`, `codEstrategia`, `codLoteProducto`, `nivelDeInteres`. C11: `codEstrategia`/`codLoteProducto` nullable, sin centinela `00000000`.
+- Selección de estrategia: la activa con menos `totalVecesAplicada` (exploración) — **placeholder explícito para la fase 06**, que lo reemplaza por el score UCB1.
+- Un `tipoTransaccion` único sembrado (`TRX0001`); el aceptar/rechazar NO vive ahí — se infiere de si existe una `venta` con el mismo `idProcesoPersuasion` (fase 06).
+- 6/6 tests en verde, incluida la regla eliminatoria del taller: mismo cliente + mismo nivel de interés, único input distinto es el gesto → la oferta cambia sola (`test/decision/adaptation_engine_test.dart`).
 
 **Entregable:** `decidirOferta(codCliente, codGesto, nivelDeInteres) → Oferta`.
 

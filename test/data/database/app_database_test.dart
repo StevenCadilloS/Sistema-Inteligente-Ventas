@@ -24,7 +24,7 @@ void main() {
   test('siembra los 4 catalogos antes que cualquier bitacora', () async {
     expect(await db.select(db.tiposCliente).get(), hasLength(3));
     expect(await db.select(db.gestos).get(), hasLength(5));
-    expect(await db.select(db.tiposTransaccion).get(), hasLength(2));
+    expect(await db.select(db.tiposTransaccion).get(), hasLength(1));
   });
 
   test('ciclo completo: interaccion -> venta -> detalle, con FK activas',
