@@ -96,9 +96,14 @@ Respuestas también escritas en `ESQUEMA_CORREGIDO.md §5`. La Fase 01 del plan 
 
 **Entregable:** ✅ `flutter test test/data/database/` en verde.
 
-### 03 · Datos de prueba y verificación contra el papel
-*Requiere 02 (listo).* Cargar el Primer y Segundo Caso de `TABLAS.docx` (los reales, no los sintéticos de la prueba de humo) y comparar contra lo que el ejercicio ya calculó a mano.
-**Entregable:** criterio de aceptación real — si los números coinciden, la traducción quedó bien.
+### 03 · Datos de prueba y verificación contra el papel — ✅ hecho y probado (2026-09-06)
+- El contenido de `TABLAS.docx` está en 21 imágenes incrustadas, no en texto (confirma el método ya usado en `ESQUEMA_CORREGIDO.md`). Se extrajeron del `.docx` y se leyeron directamente.
+- Primer Caso (cliente C0000002, 3 interacciones → 1 venta, junio 2025) y Segundo Caso (cliente C0000023, 4 interacciones → 1 venta, mayo 2025) cargados tal cual en el esquema real.
+- La vista de la consulta crítica y los 4 KPIs corren sobre los datos reales y dan resultados correctos (KPI1: 100% en ambos meses; KPI2: 50% — un caso mostró un solo producto, el otro dos).
+- **Dos hallazgos nuevos en los datos fuente** (documentados en el test, no en `ESQUEMA_CORREGIDO.md` porque son erratas puntuales de estas filas, no del diseño): el Segundo Caso repite `correlativo 0003` dos veces con distinto `tipo_transaccion` (viola UNIQUE) — se renumeró; y aparece `cod_gesto G0000008`, fuera de las 5 emociones básicas del clasificador — **señal para Juan**: los datos históricos usan más gestos que las 5 clases FER-2013 actuales.
+- Los contadores derivados (`cant_lecturas`, `monto_total`, etc.) no se verificaron: su valor "antes" depende de cientos de filas históricas que el documento omite con "...".
+
+**Entregable:** ✅ `flutter test test/data/database/casos_reales_test.dart` en verde (5/5).
 
 ### 04 · Autenticación — ✅ hecho y probado (2026-09-06)
 - `lib/data/repositories/cliente_repository.dart`: `registrar(nombre, apellido, tipoCliente?) → codCliente` (secuencial local `C0000001`, `C0000002`...) e `iniciarSesion(codCliente)`.
