@@ -129,13 +129,15 @@ Respuestas también escritas en `ESQUEMA_CORREGIDO.md §5`. La Fase 01 del plan 
 - `AdaptationEngine` ahora recibe `BanditOptimizer` inyectado; ya no tiene su propio placeholder de estrategia.
 - 5/5 tests en verde (`test/decision/learning/bandit_optimizer_test.dart`); 20/20 en toda la suite.
 
-### 07 · Batch y KPIs
-*Solo si D4 lo incluye. Cero puntos de rúbrica; valor de presentación.*
-- Los 4 procesos de actualización en **una sola transacción** — la regla que exige `Consideraciones.docx`.
-- Aplicar la corrección D1: `totalVecesAplicada` agrupa por `codEstrategia`, no por `codCliente` como decía el diagrama.
-- Los 4 KPIs ya están en SQL en §4; en Flutter el programador periódico es `workmanager`.
+### 07 · Batch y KPIs — ✅ hecho y probado (2026-09-06)
+*Cero puntos de rúbrica; valor de presentación.*
+- `lib/data/batch/batch_runner.dart`: `BatchRunner.ejecutarCierreDiario()` envuelve los 6 procesos (4 originales + `cierresVenta`/`totalVendidos` de D3) en **una sola transacción** (`db.transaction()`) — la regla de `Consideraciones.docx`.
+- D1 aplicado: `totalVecesAplicada` agrupa por `codEstrategia`, no por `codCliente`.
+- `lib/data/batch/cierre_diario_scheduler.dart`: programador periódico con `workmanager` (una vez al día). El entregable real sigue siendo `ejecutarCierreDiario()` a demanda — el scheduler solo automatiza dispararlo.
+- Independiente de la fase 06: el bandit recalcula éxitos/intentos en vivo y nunca toca estas mismas columnas.
+- 2/2 tests en verde (incluye idempotencia: correrlo dos veces da el mismo resultado); build de Android verificado con `workmanager` incluido.
 
-**Entregable:** cierre diario ejecutable a demanda para la presentación.
+**Entregable:** ✅ cierre diario ejecutable a demanda, probado.
 
 ---
 
