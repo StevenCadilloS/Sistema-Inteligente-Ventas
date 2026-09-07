@@ -201,8 +201,11 @@ class EmotionDetector(context: Context) : Closeable {
 
             interpreter = Interpreter(modelBuffer, options)
 
-            require(interpreter.getInputTensor(0).numElements() == INPUT_SIZE * INPUT_SIZE) {
-                "El modelo debe recibir una imagen de $INPUT_SIZE x $INPUT_SIZE."
+            require(
+                interpreter.getInputTensor(0).numElements() ==
+                    INPUT_SIZE * INPUT_SIZE * INPUT_CHANNELS
+            ) {
+                "El modelo debe recibir una imagen de $INPUT_SIZE x $INPUT_SIZE x $INPUT_CHANNELS."
             }
             require(interpreter.getOutputTensor(0).numElements() == FER_CLASS_COUNT) {
                 "El modelo debe devolver $FER_CLASS_COUNT clases FER-2013."
@@ -230,7 +233,11 @@ class EmotionDetector(context: Context) : Closeable {
         }
 
         /**
-         * Convierte el rostro a 48x48 grayscale y normaliza los pixeles a [0, 1].
+         * Convierte el rostro a 48x48 RGB y normaliza cada canal a [0, 1].
+         * El modelo (emotion_model.tflite) espera shape [1, 48, 48, 3], no
+         * escala de grises - verificado inspeccionando el tensor de entrada
+         * real del .tflite (input.shape=[1,48,48,3]), distinto de lo que
+         * asumia el codigo original.
          */
         private fun preprocess(bitmap: Bitmap): ByteBuffer {
             val scaled = Bitmap.createScaledBitmap(
@@ -253,7 +260,7 @@ class EmotionDetector(context: Context) : Closeable {
                 )
 
                 val buffer = ByteBuffer
-                    .allocateDirect(INPUT_SIZE * INPUT_SIZE * FLOAT_BYTES)
+                    .allocateDirect(INPUT_SIZE * INPUT_SIZE * INPUT_CHANNELS * FLOAT_BYTES)
                     .order(ByteOrder.nativeOrder())
 
                 pixels.forEach { pixel ->
@@ -261,13 +268,9 @@ class EmotionDetector(context: Context) : Closeable {
                     val green = (pixel shr 8) and 0xFF
                     val blue = pixel and 0xFF
 
-                    val gray = (
-                        RED_WEIGHT * red +
-                            GREEN_WEIGHT * green +
-                            BLUE_WEIGHT * blue
-                        ) / 255f
-
-                    buffer.putFloat(gray)
+                    buffer.putFloat(red / 255f)
+                    buffer.putFloat(green / 255f)
+                    buffer.putFloat(blue / 255f)
                 }
 
                 buffer.rewind()
@@ -347,12 +350,10 @@ class EmotionDetector(context: Context) : Closeable {
 
         const val MODEL_ASSET = "emotion_model.tflite"
         const val INPUT_SIZE = 48
+        const val INPUT_CHANNELS = 3
         const val FER_CLASS_COUNT = 7
         const val FLOAT_BYTES = 4
 
-        const val RED_WEIGHT = 0.299f
-        const val GREEN_WEIGHT = 0.587f
-        const val BLUE_WEIGHT = 0.114f
         const val PROBABILITY_EPSILON = 0.05f
     }
 }
