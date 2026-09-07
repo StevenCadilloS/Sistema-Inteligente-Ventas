@@ -31,7 +31,8 @@ class PrincipalScreen extends StatefulWidget {
   State<PrincipalScreen> createState() => _PrincipalScreenState();
 }
 
-class _PrincipalScreenState extends State<PrincipalScreen> {
+class _PrincipalScreenState extends State<PrincipalScreen>
+    with SingleTickerProviderStateMixin {
   List<Producto> _catalogo = const [];
   String? _emocionDetectada;
   double _confianza = 0;
@@ -46,6 +47,13 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
   bool _emocionCambioDurantePopup = false;
   String? _emocionAntesDelPopup;
 
+  // Carrito de elecciones
+  final List<Producto> _carrito = [];
+
+  // Producto seleccionado recientemente (para feedback visual)
+  String? _productoSeleccionadoId;
+  Timer? _seleccionTimer;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +65,7 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
   void dispose() {
     _subscription?.cancel();
     _ofertaTimer?.cancel();
+    _seleccionTimer?.cancel();
     _overlayEntry?.remove();
     super.dispose();
   }
@@ -276,41 +285,22 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
     _mostrarPopupOferta(oferta, mensaje);
   }
 
-  /// Compra de un producto que el cliente eligio del feed, no la oferta
-  /// sugerida: se registra como su propio proceso de persuasion (sin
-  /// estrategia atribuida) y se cierra como venta.
-  Future<void> _comprarEleccionLibre(Producto producto) async {
-    final codCliente = _codCliente;
-    if (codCliente == null) return;
-
-    try {
-      final idProceso = await widget.adaptationEngine.registrarEleccionLibre(
-        codCliente: codCliente,
-        producto: producto,
-        emocion: _emocionDetectada ?? 'neutral',
-        nivelDeInteres: (_confianza * 100).round(),
-      );
-      await widget.banditOptimizer
-          .registrarRespuesta(idProcesoPersuasion: idProceso, aceptada: true);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${producto.nombreProducto} agregado a tu compra'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo registrar la compra: $e')),
-        );
-      }
-    }
-  }
-
   void _abrirDetalle(Producto producto) {
+    // Feedback visual: marcar producto como seleccionado
+    setState(() {
+      _productoSeleccionadoId = producto.codLoteProducto;
+    });
+
+    // Limpiar el timer anterior y crear uno nuevo para quitar el brillo
+    _seleccionTimer?.cancel();
+    _seleccionTimer = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) {
+        setState(() {
+          _productoSeleccionadoId = null;
+        });
+      }
+    });
+
     // Generar oferta contextual para este producto
     _ofertarProducto(producto);
 
@@ -326,7 +316,41 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
         producto: producto,
         onComprar: () {
           Navigator.pop(sheetContext);
-          _comprarEleccionLibre(producto);
+          _agregarAlCarrito(producto);
+        },
+      ),
+    );
+  }
+
+  void _agregarAlCarrito(Producto producto) {
+    setState(() {
+      _carrito.add(producto);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${producto.nombreProducto} agregado al carrito'),
+        backgroundColor: AppTheme.success,
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  void _abrirCarrito() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      isScrollControlled: true,
+      builder: (sheetContext) => _CarritoCompras(
+        carrito: _carrito,
+        onEliminar: (index) {
+          Navigator.pop(sheetContext);
+          setState(() {
+            _carrito.removeAt(index);
+          });
         },
       ),
     );
@@ -436,6 +460,37 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
             detectando: detectando,
             confianza: _confianza,
           ),
+          // Carrito con badge
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.shopping_cart_outlined),
+                tooltip: 'Mi carrito',
+                onPressed: _abrirCarrito,
+              ),
+              if (_carrito.isNotEmpty)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: AppTheme.success,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '${_carrito.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Historial',
@@ -495,6 +550,8 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
                                     key: ValueKey(producto.codLoteProducto),
                                     producto: producto,
                                     destacado: index == 0 && detectando,
+                                    seleccionado:
+                                        _productoSeleccionadoId == producto.codLoteProducto,
                                     estilo: estilo,
                                     onTap: () => _abrirDetalle(producto),
                                   );
@@ -673,17 +730,41 @@ class _ProductoCard extends StatelessWidget {
     super.key,
     required this.producto,
     required this.destacado,
+    required this.seleccionado,
     required this.estilo,
     required this.onTap,
   });
 
   final Producto producto;
   final bool destacado;
+  final bool seleccionado;
   final EmotionStyle estilo;
   final VoidCallback onTap;
 
-  /// Sin imagenes en la BD, cada categoria se distingue por color e icono
-  /// derivados de su codigo — asi no se rompe si el catalogo cambia.
+  /// Mapeo de codigo de producto a ruta de imagen
+  static const Map<String, String> _imagenes = {
+    'P0000001': 'assets/products/P0000001_audifonos.jpg',
+    'P0000002': 'assets/products/P0000002_smartwatch.jpg',
+    'P0000003': 'assets/products/P0000003_parlante.jpg',
+    'P0000004': 'assets/products/P0000004_cargador.jpg',
+    'P0000005': 'assets/products/P0000005_laptop.jpg',
+    'P0000006': 'assets/products/P0000006_sartenes.jpg',
+    'P0000007': 'assets/products/P0000007_lampara.jpg',
+    'P0000008': 'assets/products/P0000008_organizador.jpg',
+    'P0000009': 'assets/products/P0000009_aspiradora.jpg',
+    'P0000010': 'assets/products/P0000010_polo.jpg',
+    'P0000011': 'assets/products/P0000011_zapatillas.jpg',
+    'P0000012': 'assets/products/P0000012_mochila.jpg',
+    'P0000013': 'assets/products/P0000013_casaca.jpg',
+    'P0000014': 'assets/products/P0000014_skincare.jpg',
+    'P0000015': 'assets/products/P0000015_secadora.jpg',
+    'P0000016': 'assets/products/P0000016_perfume.jpg',
+  };
+
+  /// Ruta de imagen del producto, o null si no tiene
+  String? get _imagen => _imagenes[producto.codLoteProducto];
+
+  /// Icono y color de categoria como fallback
   (IconData, Color) get _visualCategoria {
     const iconos = [
       Icons.devices_other,
@@ -713,57 +794,122 @@ class _ProductoCard extends StatelessWidget {
     final precio =
         (producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
 
-    return Card(
+    // Color del borde segun estado
+    final bordeColor = seleccionado
+        ? Colors.amber
+        : destacado
+            ? estilo.color
+            : AppTheme.border;
+    final bordeAncho = seleccionado ? 3.0 : destacado ? 2.0 : 1.0;
+
+    // Sombra brillante cuando esta seleccionado
+    final sombra = seleccionado
+        ? [
+            BoxShadow(
+              color: Colors.amber.withValues(alpha: 0.6),
+              blurRadius: 12,
+              spreadRadius: 2,
+            ),
+          ]
+        : null;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       margin: EdgeInsets.zero,
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: destacado ? estilo.color : AppTheme.border,
-          width: destacado ? 2 : 1,
-        ),
+        boxShadow: sombra,
       ),
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.10),
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(15),
+      child: Card(
+        margin: EdgeInsets.zero,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: bordeColor,
+            width: bordeAncho,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: seleccionado
+                      ? Colors.amber.withValues(alpha: 0.15)
+                      : color.withValues(alpha: 0.10),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(15),
+                  ),
                 ),
-              ),
-              child: Stack(
-                children: [
-                  Center(child: Icon(icono, size: 40, color: color)),
-                  if (destacado)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: estilo.color,
-                          borderRadius: BorderRadius.circular(20),
+                child: Stack(
+                  children: [
+                    // Imagen del producto o icono como fallback
+                    Center(
+                      child: _imagen != null
+                          ? ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.asset(
+                                _imagen!,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                                height: double.infinity,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return Icon(icono, size: 40, color: color);
+                                },
+                              ),
+                            )
+                          : Icon(icono, size: 40, color: color),
+                    ),
+                    if (seleccionado)
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.amber,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: const Text(
+                            'Seleccionado',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
-                        child: Text(
-                          'Para ti',
-                          style: textTheme.bodyMedium?.copyWith(
-                            color: Colors.white,
-                            fontSize: 11,
+                      )
+                    else if (destacado)
+                      Positioned(
+                        top: 8,
+                        left: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: estilo.color,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Para ti',
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: Colors.white,
+                              fontSize: 11,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
           Padding(
             padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
             child: Column(
@@ -787,6 +933,7 @@ class _ProductoCard extends StatelessWidget {
           ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -967,6 +1114,148 @@ class _PopupOferta extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Bottom sheet que muestra los productos en el carrito.
+class _CarritoCompras extends StatelessWidget {
+  const _CarritoCompras({
+    required this.carrito,
+    required this.onEliminar,
+  });
+
+  final List<Producto> carrito;
+  final Function(int) onEliminar;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    if (carrito.isEmpty) {
+      return SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.shopping_cart_outlined,
+                  size: 48, color: AppTheme.mutedText),
+              const SizedBox(height: 16),
+              Text('Tu carrito está vacío',
+                  style: textTheme.titleMedium),
+              const SizedBox(height: 8),
+              Text(
+                'Tocá un producto para agregarlo',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: AppTheme.mutedText,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Calcular total
+    final total = carrito.fold<double>(
+      0,
+      (suma, p) => suma + p.precioUnitarioCentavos / 100,
+    );
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            Row(
+              children: [
+                const Icon(Icons.shopping_cart, color: AppTheme.success),
+                const SizedBox(width: 8),
+                Text('Mi carrito', style: textTheme.titleLarge),
+                const Spacer(),
+                Text(
+                  '${carrito.length} ${carrito.length == 1 ? 'producto' : 'productos'}',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: AppTheme.mutedText,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Lista de productos
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: carrito.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final producto = carrito[index];
+                  final precio = (producto.precioUnitarioCentavos / 100)
+                      .toStringAsFixed(2);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: CircleAvatar(
+                      backgroundColor: AppTheme.success.withValues(alpha: 0.1),
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(color: AppTheme.success),
+                      ),
+                    ),
+                    title: Text(
+                      producto.nombreProducto,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'S/$precio',
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: AppTheme.success,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline,
+                              color: AppTheme.mutedText, size: 20),
+                          onPressed: () => onEliminar(index),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Total
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Total', style: textTheme.titleMedium),
+                  Text(
+                    'S/${total.toStringAsFixed(2)}',
+                    style: textTheme.headlineSmall?.copyWith(
+                      color: AppTheme.success,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
