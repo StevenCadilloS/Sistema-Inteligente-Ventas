@@ -97,16 +97,21 @@ GROUP BY diaSemana ORDER BY diaSemana;
 -- (AppDatabase.transaction en Dart), nunca por separado (Consideraciones.docx).
 
 -- D1: corregido - agrupa por cod_estrategia, no por cod_cliente (el diagrama
--- original decia cod_cliente, era un error).
+-- original decia cod_cliente, era un error). COUNT(DISTINCT
+-- id_proceso_persuasion), no COUNT(*): un mismo proceso puede mostrar la
+-- misma estrategia en mas de una interaccion (ver casos_reales_test.dart,
+-- Segundo Caso) - igual que en BanditOptimizer, ver lib/decision/learning.
 batchActualizarTotalVecesAplicada:
 UPDATE estrategias SET total_veces_aplicada = (
-    SELECT COUNT(*) FROM interacciones i
+    SELECT COUNT(DISTINCT i.id_proceso_persuasion) FROM interacciones i
     WHERE i.cod_estrategia = estrategias.cod_estrategia
 );
 
+-- DISTINCT por la misma razon y por consistencia con KPI1/KPI3, aunque hoy
+-- BanditOptimizer solo crea una venta por proceso (invariante 1:1).
 batchActualizarVentasGeneradas:
 UPDATE estrategias SET ventas_generadas = (
-    SELECT COUNT(*) FROM ventas v
+    SELECT COUNT(DISTINCT v.id_proceso_persuasion) FROM ventas v
     WHERE v.cod_estrategia = estrategias.cod_estrategia
 );
 

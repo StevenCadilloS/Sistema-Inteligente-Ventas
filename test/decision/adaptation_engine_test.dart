@@ -95,6 +95,26 @@ void main() {
   });
 
   test(
+      'cada decision incrementa totalVecesMostrado - sin esto neutral/sorpresa '
+      'nunca cambiarian de resultado', () async {
+    final antes = await (db.select(db.productos)
+          ..where((p) => p.codLoteProducto.equals('P0000001')))
+        .getSingle();
+    expect(antes.totalVecesMostrado, 0);
+
+    await engine.decidirOferta(
+      codCliente: codCliente,
+      codGesto: 'G0000001', // triste -> elige P0000001 (el mas economico)
+      nivelDeInteres: 60,
+    );
+
+    final despues = await (db.select(db.productos)
+          ..where((p) => p.codLoteProducto.equals('P0000001')))
+        .getSingle();
+    expect(despues.totalVecesMostrado, 1);
+  });
+
+  test(
       'gesto no catalogado (ej. G0000008 de casos_reales_test.dart) cae a '
       'neutral en vez de crashear', () async {
     final oferta = await engine.decidirOferta(

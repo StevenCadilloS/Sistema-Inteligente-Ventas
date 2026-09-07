@@ -108,6 +108,34 @@ void main() {
     expect(producto.totalVendidos, 1);
   });
 
+  test(
+      'totalVecesAplicada cuenta procesos distintos, no filas: un proceso '
+      'con 2 interacciones para la misma estrategia cuenta como 1',
+      () async {
+    // PP00000001 ya tiene 1 fila para E0000001 (del setUp). Se agrega una
+    // SEGUNDA fila del MISMO proceso para la MISMA estrategia.
+    await db.into(db.interacciones).insert(InteraccionesCompanion.insert(
+          canal: 'A',
+          correlativo: 3,
+          idProcesoPersuasion: 'PP00000001', // mismo proceso que ya existia
+          codCliente: 'C0000001',
+          codEstrategia: const Value('E0000001'),
+          codLoteProducto: const Value('P0000001'),
+          tipoTransaccion: 'TRX0001',
+          timestamp: DateTime(2026, 3, 1, 12).millisecondsSinceEpoch,
+          nivelDeInteres: 85,
+        ));
+
+    await batch.ejecutarCierreDiario();
+
+    final estrategia = await (db.select(db.estrategias)
+          ..where((e) => e.codEstrategia.equals('E0000001')))
+        .getSingle();
+    // Sigue siendo 2 (PP00000001 + PP00000002), no 3: la fila extra es el
+    // MISMO proceso que PP00000001, no un intento nuevo.
+    expect(estrategia.totalVecesAplicada, 2);
+  });
+
   test('es idempotente: correrlo dos veces da el mismo resultado', () async {
     await batch.ejecutarCierreDiario();
     await batch.ejecutarCierreDiario();

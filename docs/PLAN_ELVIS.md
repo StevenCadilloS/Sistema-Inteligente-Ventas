@@ -200,7 +200,16 @@ Con las 7 fases cerradas, se corrió `/code-review` (nivel alto, diff completo `
 
 De paso, escribiendo el test del hallazgo #2 con datos realistas (un proceso con varias filas, como en Fase 03) se encontró un noveno bug: `registrarRespuesta` usaba `.getSingle()` asumiendo una sola fila por proceso — corregido tomando la última por `timestamp`.
 
-6 tests nuevos de regresión. Ver commits de auditoría para el detalle.
+**Segunda pasada** (revisión manual de la capa de datos completa), 2 hallazgos más:
+
+| # | Hallazgo | Corrección |
+|---|---|---|
+| 10 | El mismo bug del #2 (contar filas en vez de procesos) también estaba en `batchActualizarTotalVecesAplicada`/`batchActualizarVentasGeneradas` (`queries.drift`) | `COUNT(DISTINCT id_proceso_persuasion)` en ambas |
+| 11 | `productos.totalVecesMostrado` nunca se incrementaba en ningún lado — las reglas `neutral`/`sorpresa` (que ordenan por esa columna) nunca cambiaban de resultado: no eran adaptativas de verdad | `AdaptationEngine.decidirOferta` la incrementa (update SQL relativo, seguro ante concurrencia) dentro de la misma transacción que registra la interacción |
+
+Nota aparte, no corregida (fuera de alcance): `productos.totalDisponible` (stock) tampoco se decrementa al vender. Nada en el pipeline actual la lee, así que no rompe nada hoy, pero quedaría pendiente si se necesita control de inventario real.
+
+8 tests nuevos de regresión en total. Ver commits de auditoría para el detalle.
 
 ---
 
