@@ -66,7 +66,11 @@ class AdaptationEngine {
     // registra la interaccion igual, solo sin ese dato.
     final codGesto = gesto?.codGesto;
 
-    final producto = await _productoPara(regla, codCliente);
+    final catalogo = await _catalogoPara(regla, codCliente);
+    if (catalogo.isEmpty) {
+      throw StateError('No hay productos activos en el catalogo.');
+    }
+    final producto = catalogo.first;
     final estrategia = await _bandit.seleccionarEstrategia();
 
     // El calculo del siguiente correlativo/idProcesoPersuasion (leer el
@@ -126,49 +130,61 @@ class AdaptationEngine {
     }
   }
 
-  Future<Producto> _productoPara(_TipoRegla regla, String codCliente) async {
+  /// Catalogo completo ordenado por la regla de la emocion: el primero es el
+  /// producto que se destaca como oferta, y el resto queda ordenado por el
+  /// mismo criterio para el feed de la tienda.
+  ///
+  /// No registra interaccion — eso lo hace [decidirOferta] con el destacado.
+  Future<List<Producto>> catalogoPara({
+    required String codCliente,
+    required String emocion,
+  }) async {
+    final gesto = await (_db.select(_db.gestos)
+          ..where((g) => g.nombreGesto.equals(emocion)))
+        .getSingleOrNull();
+    final regla =
+        gesto == null ? _TipoRegla.neutral : _reglaPara(gesto.nombreGesto);
+    return _catalogoPara(regla, codCliente);
+  }
+
+  Future<List<Producto>> _catalogoPara(
+      _TipoRegla regla, String codCliente) async {
     switch (regla) {
       case _TipoRegla.triste: // sustituto mas economico
         return (_db.select(_db.productos)
               ..where((p) => p.activo.equals(true))
-              ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)])
-              ..limit(1))
-            .getSingle();
+              ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
+            .get();
       case _TipoRegla.feliz: // premium, sin descuento
         return (_db.select(_db.productos)
               ..where((p) => p.activo.equals(true))
-              ..orderBy([(p) => OrderingTerm.desc(p.precioUnitarioCentavos)])
-              ..limit(1))
-            .getSingle();
+              ..orderBy([(p) => OrderingTerm.desc(p.precioUnitarioCentavos)]))
+            .get();
       case _TipoRegla.sorpresa: // novedad: lo menos mostrado
         return (_db.select(_db.productos)
               ..where((p) => p.activo.equals(true))
-              ..orderBy([(p) => OrderingTerm.asc(p.totalVecesMostrado)])
-              ..limit(1))
-            .getSingle();
+              ..orderBy([(p) => OrderingTerm.asc(p.totalVecesMostrado)]))
+            .get();
       case _TipoRegla.neutral: // estandar: lo mas mostrado
         return (_db.select(_db.productos)
               ..where((p) => p.activo.equals(true))
-              ..orderBy([(p) => OrderingTerm.desc(p.totalVecesMostrado)])
-              ..limit(1))
-            .getSingle();
+              ..orderBy([(p) => OrderingTerm.desc(p.totalVecesMostrado)]))
+            .get();
       case _TipoRegla.enojo: // cambia de categoria + descuento agresivo
-        return _productoOtraCategoria(codCliente);
+        return _catalogoOtraCategoria(codCliente);
     }
   }
 
-  /// Cambia de categoria respecto al ultimo producto mostrado a este
-  /// cliente, y dentro de esa categoria elige el mas economico (descuento
-  /// agresivo). Si no hay historial o no hay otra categoria disponible,
-  /// cae al mas economico del catalogo.
-  Future<Producto> _productoOtraCategoria(String codCliente) async {
+  /// Pone primero los productos de una categoria distinta a la del ultimo
+  /// producto mostrado a este cliente, cada bloque ordenado del mas economico
+  /// al mas caro (descuento agresivo). Sin historial o sin otra categoria
+  /// disponible, queda el catalogo entero por precio ascendente.
+  Future<List<Producto>> _catalogoOtraCategoria(String codCliente) async {
     final activos = await (_db.select(_db.productos)
           ..where((p) => p.activo.equals(true))
           ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
         .get();
-    if (activos.isEmpty) {
-      throw StateError('No hay productos activos en el catalogo.');
-    }
+    if (activos.isEmpty) return const [];
 
     final ultima = await (_db.select(_db.interacciones)
           ..where((i) => i.codCliente.equals(codCliente))
@@ -178,9 +194,9 @@ class AdaptationEngine {
 
     final ultimoCod = ultima?.codLoteProducto;
     if (ultimoCod == null) {
-      // Sin historial: cae directo al mas economico (activos ya viene
-      // ordenado asc por precio), sin pasar por el filtro de categoria.
-      return activos.first;
+      // Sin historial: queda el orden por precio ascendente, sin pasar por
+      // el filtro de categoria.
+      return activos;
     }
 
     final coincidencias =
@@ -188,9 +204,10 @@ class AdaptationEngine {
     final ultimaCategoria =
         coincidencias.isEmpty ? null : coincidencias.first.tipoProducto;
 
-    final otraCategoria =
-        activos.where((p) => p.tipoProducto != ultimaCategoria);
-    return otraCategoria.isNotEmpty ? otraCategoria.first : activos.first;
+    return [
+      ...activos.where((p) => p.tipoProducto != ultimaCategoria),
+      ...activos.where((p) => p.tipoProducto == ultimaCategoria),
+    ];
   }
 
   String _textoPara(_TipoRegla regla, Producto producto) {
