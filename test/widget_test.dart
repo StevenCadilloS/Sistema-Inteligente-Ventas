@@ -1,30 +1,44 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Smoke test de arranque de la app. El original de `flutter create` probaba
+// el contador de la plantilla, que ya no existe desde que main.dart quedo
+// conectado a ClienteRepository/AdaptationEngine/BanditOptimizer (commit
+// "Pantallas").
 
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:tienda_adaptativa/data/database/app_database.dart';
+import 'package:tienda_adaptativa/data/repositories/cliente_repository.dart';
+import 'package:tienda_adaptativa/decision/adaptation_engine.dart';
+import 'package:tienda_adaptativa/decision/learning/bandit_optimizer.dart';
 import 'package:tienda_adaptativa/main.dart';
+import 'package:tienda_adaptativa/services/emotion_channel.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('sin sesion activa, la app arranca en la pantalla de login',
+      (WidgetTester tester) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    await db.customSelect('SELECT 1').getSingle(); // dispara onCreate/seed
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    final clienteRepository = ClienteRepository(db, prefs);
+    final bandit = BanditOptimizer(db);
+    final adaptationEngine = AdaptationEngine(db, bandit);
+    final emotionChannel = EmotionChannel();
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    await tester.pumpWidget(MyApp(
+      db: db,
+      clienteRepository: clienteRepository,
+      adaptationEngine: adaptationEngine,
+      bandit: bandit,
+      emotionChannel: emotionChannel,
+    ));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Registrarse'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'Ingresar'), findsOneWidget);
+
+    await db.close();
   });
 }
