@@ -84,6 +84,17 @@ class AdaptationEngine {
             timestamp: DateTime.now().millisecondsSinceEpoch,
             nivelDeInteres: nivelDeInteres,
           ));
+
+      // Sin esto, "neutral" (el mas mostrado) y "sorpresa" (el menos
+      // mostrado) nunca cambiarian de resultado: nada mas escribia esta
+      // columna. Update relativo en SQL (no leer+sumar en Dart) para que
+      // sea seguro con llamadas concurrentes.
+      await _db.customUpdate(
+        'UPDATE productos SET total_veces_mostrado = total_veces_mostrado + 1 '
+        'WHERE cod_lote_producto = ?',
+        variables: [Variable<String>(producto.codLoteProducto)],
+        updates: {_db.productos},
+      );
     });
 
     return Oferta(

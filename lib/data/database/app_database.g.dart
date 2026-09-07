@@ -4979,7 +4979,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Future<int> batchActualizarTotalVecesAplicada() {
     return customUpdate(
-      'UPDATE estrategias SET total_veces_aplicada = (SELECT COUNT(*) FROM interacciones AS i WHERE i.cod_estrategia = estrategias.cod_estrategia)',
+      'UPDATE estrategias SET total_veces_aplicada = (SELECT COUNT(DISTINCT i.id_proceso_persuasion) FROM interacciones AS i WHERE i.cod_estrategia = estrategias.cod_estrategia)',
       variables: [],
       updates: {this.estrategias},
       updateKind: UpdateKind.update,
@@ -4988,7 +4988,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
 
   Future<int> batchActualizarVentasGeneradas() {
     return customUpdate(
-      'UPDATE estrategias SET ventas_generadas = (SELECT COUNT(*) FROM ventas AS v WHERE v.cod_estrategia = estrategias.cod_estrategia)',
+      'UPDATE estrategias SET ventas_generadas = (SELECT COUNT(DISTINCT v.id_proceso_persuasion) FROM ventas AS v WHERE v.cod_estrategia = estrategias.cod_estrategia)',
       variables: [],
       updates: {this.estrategias},
       updateKind: UpdateKind.update,
