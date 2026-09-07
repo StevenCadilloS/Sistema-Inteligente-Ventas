@@ -202,39 +202,23 @@ PROYECTO01/
 
 ### Steven — puente + pantallas
 
-**1. El puente (Platform Channel).** En Kotlin, `android/.../channel/EmotionChannelHandler.kt` debe envolver `CameraManager` + `EmotionDetector` + `EmotionProcessor` y enviar cada `ProcessedEmotion` estable (`isStable == true`) a Flutter por un `MethodChannel`/`EventChannel`. En Dart, `lib/services/emotion_channel.dart` recibe esos eventos.
+Guía completa, con el código del puente Kotlin↔Flutter, las 3 pantallas y una checklist antes de dar por conectado: **[docs/GUIA_STEVEN.md](docs/GUIA_STEVEN.md)**.
 
-**2. Conectar el resultado a la decisión.** Cuando llegue una emoción estable, llamar:
-
-```dart
-final oferta = await adaptationEngine.decidirOferta(
-  codCliente: clienteActivo,           // de ClienteRepository.clienteActivo()
-  emocion: procesado.emotion,          // el string tal cual llega de Kotlin: "triste", "feliz"...
-  nivelDeInteres: (procesado.confidence * 100).round(),
-);
-// oferta.texto, oferta.producto -> pintar en pantalla
-```
-
-**3. Botones "Me interesa" / "No gracias":**
+Resumen de las firmas que ya existen y están probadas:
 
 ```dart
-await banditOptimizer.registrarRespuesta(
-  idProcesoPersuasion: oferta.idProcesoPersuasion,
-  aceptada: true, // o false
-);
-```
-
-**4. Pantalla de login/registro**, contra `ClienteRepository`:
-
-```dart
-final codCliente = await clienteRepository.registrar(
-  nombre: 'Juan', apellido: 'Perez', tipoCliente: null, // opcional
-);
-// o, si ya existe sesion:
+// ClienteRepository
+final codCliente = await clienteRepository.registrar(nombre: ..., apellido: ...); // tipoCliente opcional
 final activo = clienteRepository.clienteActivo(); // null si nadie inicio sesion
-```
 
-Instanciar todo en `main.dart` (un solo `AppDatabase()`, compartido entre `ClienteRepository`, `AdaptationEngine` y `BanditOptimizer` vía constructor).
+// AdaptationEngine — "emocion" es el string tal cual llega de Kotlin ("triste", "feliz"...)
+final oferta = await adaptationEngine.decidirOferta(
+  codCliente: activo!, emocion: e.emotion, nivelDeInteres: (e.confidence * 100).round(),
+);
+
+// BanditOptimizer
+await banditOptimizer.registrarRespuesta(idProcesoPersuasion: oferta.idProcesoPersuasion, aceptada: true);
+```
 
 ### Juan — modelo de emociones
 
