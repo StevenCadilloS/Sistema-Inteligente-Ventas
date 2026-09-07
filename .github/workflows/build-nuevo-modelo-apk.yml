@@ -1,16 +1,16 @@
-name: Generar APK de steven1
+name: Generar APK de nuevo-modelo
 
 on:
   push:
     branches:
-      - steven1
+      - nuevo-modelo
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: steven1-apk
+  group: nuevo-modelo-apk
   cancel-in-progress: true
 
 jobs:
@@ -49,13 +49,13 @@ jobs:
         run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
-            dist/Sistema-Inteligente-Ventas-steven1.apk
+            dist/Sistema-Inteligente-Ventas-nuevo-modelo.apk
 
       - name: Guardar APK en la ejecución
         uses: actions/upload-artifact@v7
         with:
-          name: apk-steven1-${{ github.run_number }}
-          path: dist/Sistema-Inteligente-Ventas-steven1.apk
+          name: apk-nuevo-modelo-${{ github.run_number }}
+          path: dist/Sistema-Inteligente-Ventas-nuevo-modelo.apk
           retention-days: 14
           if-no-files-found: error
 
@@ -63,18 +63,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view steven1-latest >/dev/null 2>&1; then
-            gh release create steven1-latest \
-              --target steven1 \
-              --title "APK automática de steven1" \
-              --notes "APK instalable generada automáticamente desde la rama steven1." \
+          if ! gh release view nuevo-modelo-latest >/dev/null 2>&1; then
+            gh release create nuevo-modelo-latest \
+              --target nuevo-modelo \
+              --title "APK automática de nuevo-modelo" \
+              --notes "APK instalable generada automáticamente desde la rama nuevo-modelo." \
               --prerelease
           fi
 
-          gh release upload steven1-latest \
-            dist/Sistema-Inteligente-Ventas-steven1.apk \
+          gh release upload nuevo-modelo-latest \
+            dist/Sistema-Inteligente-Ventas-nuevo-modelo.apk \
             --clobber
 
-          gh release edit steven1-latest \
-            --title "APK automática de steven1" \
-            --notes "Última compilación correcta de steven1: $GITHUB_SHA"
+          gh release edit nuevo-modelo-latest \
+            --title "APK automática de nuevo-modelo" \
+            --notes "Última compilación correcta de nuevo-modelo: $GITHUB_SHA"
