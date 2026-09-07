@@ -33,13 +33,18 @@ class PrincipalScreen extends StatefulWidget {
 
 class _PrincipalScreenState extends State<PrincipalScreen> {
   List<Producto> _catalogo = const [];
-  Oferta? _ofertaActual;
-  // null = todavia no llego ninguna emocion estable. Distinto de 'neutral',
-  // que si es una lectura real y debe disparar una oferta.
   String? _emocionDetectada;
   double _confianza = 0;
   bool _cargando = true;
   StreamSubscription<EmocionDetectada>? _subscription;
+
+  // Timer de 10 segundos para la oferta flotante
+  Timer? _ofertaTimer;
+  int _segundosRestantes = 0;
+  bool _ofertaBloqueada = false;
+  OverlayEntry? _overlayEntry;
+  bool _emocionCambioDurantePopup = false;
+  String? _emocionAntesDelPopup;
 
   @override
   void initState() {
@@ -51,6 +56,8 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
   @override
   void dispose() {
     _subscription?.cancel();
+    _ofertaTimer?.cancel();
+    _overlayEntry?.remove();
     super.dispose();
   }
 
@@ -85,6 +92,15 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
         _confianza = emocion.confidence;
       });
 
+    // Si la oferta esta bloqueada (timer de 10 segundos activo),
+    // guardamos la emocion y verificamos si cambio.
+    if (_ofertaBloqueada) {
+      if (_emocionAntesDelPopup != null && emocion.emotion != _emocionAntesDelPopup) {
+        _emocionCambioDurantePopup = true;
+      }
+      return;
+    }
+
       // Re-decidir en cada frame estable llenaria `interacciones` de filas
       // repetidas; el feed solo reacciona cuando la emocion realmente cambia.
       if (cambioDeEmocion) {
@@ -95,29 +111,169 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
 
   Future<void> _adaptarA(EmocionDetectada emocion, String codCliente) async {
     try {
-      final oferta = await widget.adaptationEngine.decidirOferta(
-        codCliente: codCliente,
-        emocion: emocion.emotion,
-        nivelDeInteres: (emocion.confidence * 100).round(),
-      );
       final catalogo = await widget.adaptationEngine
           .catalogoPara(codCliente: codCliente, emocion: emocion.emotion);
 
       if (mounted) {
         setState(() {
-          _ofertaActual = oferta;
           _catalogo = catalogo;
         });
       }
     } catch (e) {
-      // Antes esto se perdia en silencio y la pantalla quedaba congelada
-      // sin explicacion (p.ej. catalogo vacio).
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo adaptar la oferta: $e')),
+          SnackBar(content: Text('No se pudo adaptar el catálogo: $e')),
         );
       }
     }
+  }
+
+  void _mostrarPopupOferta(Oferta oferta, String mensaje) {
+    // Remover popup anterior si existe
+    _overlayEntry?.remove();
+    _ofertaTimer?.cancel();
+
+    // Guardar la emocion actual antes de mostrar el popup
+    _emocionAntesDelPopup = _emocionDetectada;
+    _emocionCambioDurantePopup = false;
+
+    setState(() {
+      _ofertaBloqueada = true;
+      _segundosRestantes = 10;
+    });
+
+    // Crear el overlayEntry
+    _overlayEntry = OverlayEntry(
+      builder: (context) => _PopupOferta(
+        oferta: oferta,
+        mensaje: mensaje,
+        segundosRestantes: _segundosRestantes,
+        onAceptar: () {
+          _cerrarPopup();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('¡${oferta.producto.nombreProducto} agregado!'),
+              backgroundColor: AppTheme.success,
+            ),
+          );
+        },
+        onRechazar: () {
+          _cerrarPopup();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Oferta descartada')),
+          );
+        },
+        onCerrar: _cerrarPopup,
+      ),
+    );
+
+    // Insertar en el overlay
+    Overlay.of(context).insert(_overlayEntry!);
+
+    // Iniciar timer de 10 segundos
+    _ofertaTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      setState(() {
+        _segundosRestantes--;
+      });
+
+      // Actualizar el popup con los segundos restantes
+      _overlayEntry?.markNeedsBuild();
+
+      if (_segundosRestantes <= 0) {
+        _cerrarPopup();
+      }
+    });
+  }
+
+  void _cerrarPopup() {
+    _ofertaTimer?.cancel();
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    setState(() {
+      _ofertaBloqueada = false;
+    });
+
+    // Si la emocion cambio durante los 10 segundos,
+    // generar una nueva oferta con la emocion actual
+    if (_emocionCambioDurantePopup) {
+      _emocionCambioDurantePopup = false;
+      _generarOfertaPorEmocion();
+    }
+  }
+
+  /// Genera una oferta basada en la ultima emocion detectada por la camara.
+  void _generarOfertaPorEmocion() {
+    final codCliente = _codCliente;
+    if (codCliente == null) return;
+
+    final emocion = _emocionDetectada ?? 'neutral';
+
+    // Buscar un producto aleatorio del catalogo para ofrecer
+    if (_catalogo.isEmpty) return;
+
+    final producto = _catalogo.first;
+
+    // Generar tipo de oferta segun emocion
+    String tipoOferta;
+    String mensaje;
+    double? descuentoPorcentaje;
+    Producto? productoSustituto;
+
+    switch (emocion) {
+      case 'feliz':
+        tipoOferta = 'combo';
+        mensaje = '¡Veo que te gusta! Te muestro esta nueva opción:';
+        break;
+      case 'sorpresa':
+        tipoOferta = 'descuento';
+        descuentoPorcentaje = 15;
+        mensaje = '¡Nueva sorpresa! 15% de descuento en esta:';
+        break;
+      case 'triste':
+        tipoOferta = 'sustituto';
+        productoSustituto = _buscarSustituto(producto);
+        mensaje = 'Veo que cambiaste. Mirá esta alternativa:';
+        break;
+      case 'enojo':
+        tipoOferta = 'descuento';
+        descuentoPorcentaje = 25;
+        mensaje = 'Tranquilo, te ofrezco algo mejor:';
+        break;
+      default:
+        tipoOferta = 'descuento';
+        descuentoPorcentaje = 10;
+        mensaje = 'Te tengo otra oferta:';
+        break;
+    }
+
+    final precio = producto.precioUnitarioCentavos / 100;
+
+    String textoOferta;
+    if (tipoOferta == 'combo') {
+      final precio2 = (precio * 1.8).toStringAsFixed(2);
+      textoOferta = 'Lleva 2 por S/$precio2 (ahorras S/${(precio * 0.2).toStringAsFixed(2)})';
+    } else if (tipoOferta == 'sustituto' && productoSustituto != null) {
+      final precioSust = (productoSustituto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+      textoOferta = '${productoSustituto.nombreProducto} por S/$precioSust';
+    } else {
+      final precioConDescuento = (precio * (1 - (descuentoPorcentaje ?? 10) / 100)).toStringAsFixed(2);
+      textoOferta = 'S/$precioConDescuento (antes S/${precio.toStringAsFixed(2)})';
+    }
+
+    final oferta = Oferta(
+      idProcesoPersuasion: 'auto_${DateTime.now().millisecondsSinceEpoch}',
+      producto: productoSustituto ?? producto,
+      estrategia: null,
+      texto: textoOferta,
+    );
+
+    // Bloquear y mostrar el popup automaticamente
+    _mostrarPopupOferta(oferta, mensaje);
   }
 
   /// Compra de un producto que el cliente eligio del feed, no la oferta
@@ -155,6 +311,10 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
   }
 
   void _abrirDetalle(Producto producto) {
+    // Generar oferta contextual para este producto
+    _ofertarProducto(producto);
+
+    // Tambien mostrar el bottom sheet con el detalle
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -172,24 +332,93 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
     );
   }
 
-  Future<void> _registrarRespuesta(bool aceptada) async {
-    final oferta = _ofertaActual;
-    if (oferta == null) return;
+  /// Genera una oferta contextual para el producto seleccionado:
+  /// descuento, combo o sustituto, dependiendo de la emocion actual.
+  void _ofertarProducto(Producto producto) {
+    final emocion = _emocionDetectada ?? 'neutral';
+    final precio = producto.precioUnitarioCentavos / 100;
 
-    await widget.banditOptimizer.registrarRespuesta(
-      idProcesoPersuasion: oferta.idProcesoPersuasion,
-      aceptada: aceptada,
+    // Generar tipo de oferta segun emocion
+    String tipoOferta;
+    String mensaje;
+    double? descuentoPorcentaje;
+    Producto? productoSustituto;
+
+    switch (emocion) {
+      case 'feliz':
+        // Esta contento → ofrecer combo/lleva 2
+        tipoOferta = 'combo';
+        mensaje = '¡Me alegra verte así! Lleva 2 por un precio especial:';
+        break;
+      case 'sorpresa':
+        // Sorprendido → descuento exclusivo
+        tipoOferta = 'descuento';
+        descuentoPorcentaje = 15;
+        mensaje = '¡Oferta sorpresa! 15% de descuento solo para ti:';
+        break;
+      case 'triste':
+        // Triste → sustituto mas economico
+        tipoOferta = 'sustituto';
+        productoSustituto = _buscarSustituto(producto);
+        mensaje = 'Veo que no estás muy animado. Mira esta alternativa:';
+        break;
+      case 'enojo':
+        // Enojado → descuento fuerte para calmar
+        tipoOferta = 'descuento';
+        descuentoPorcentaje = 25;
+        mensaje = 'Tranquilo, te ofrezco 25% de descuento:';
+        break;
+      default:
+        // Neutral → descuento standard
+        tipoOferta = 'descuento';
+        descuentoPorcentaje = 10;
+        mensaje = 'Te tenemos una oferta especial:';
+        break;
+    }
+
+    // Construir texto de la oferta
+    String textoOferta;
+    if (tipoOferta == 'combo') {
+      final precio2 = (precio * 1.8).toStringAsFixed(2);
+      textoOferta = 'Lleva 2 por S/$precio2 (ahorras S/${(precio * 0.2).toStringAsFixed(2)})';
+    } else if (tipoOferta == 'sustituto' && productoSustituto != null) {
+      final precioSust = (productoSustituto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+      textoOferta = '${productoSustituto.nombreProducto} por S/$precioSust';
+    } else {
+      final precioConDescuento = (precio * (1 - (descuentoPorcentaje ?? 10) / 100)).toStringAsFixed(2);
+      textoOferta = 'S/$precioConDescuento (antes S/${precio.toStringAsFixed(2)})';
+    }
+
+    // Creer una oferta fake para el popup
+    final oferta = Oferta(
+      idProcesoPersuasion: 'popup_${DateTime.now().millisecondsSinceEpoch}',
+      producto: productoSustituto ?? producto,
+      estrategia: null,
+      texto: textoOferta,
     );
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(aceptada ? 'Venta registrada' : 'Oferta descartada'),
-          backgroundColor: aceptada ? AppTheme.success : AppTheme.mutedText,
-        ),
-      );
-      setState(() => _ofertaActual = null);
-    }
+    // Mostrar popup con la oferta contextual
+    _mostrarPopupOferta(oferta, mensaje);
+  }
+
+  /// Busca un sustituto mas economico en el catalogo
+  Producto? _buscarSustituto(Producto producto) {
+    // Buscar productos de la misma categoria mas baratos
+    final mismosTipos = _catalogo
+        .where((p) =>
+            p.tipoProducto == producto.tipoProducto &&
+            p.codLoteProducto != producto.codLoteProducto &&
+            p.precioUnitarioCentavos < producto.precioUnitarioCentavos)
+        .toList()
+      ..sort((a, b) => a.precioUnitarioCentavos.compareTo(b.precioUnitarioCentavos));
+
+    if (mismosTipos.isNotEmpty) return mismosTipos.first;
+
+    // Si no hay de la misma categoria, buscar el mas barato en general
+    final todosOrdenados = List<Producto>.from(_catalogo)
+      ..sort((a, b) => a.precioUnitarioCentavos.compareTo(b.precioUnitarioCentavos));
+
+    return todosOrdenados.isNotEmpty ? todosOrdenados.first : null;
   }
 
   @override
@@ -233,20 +462,9 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
                             sliver: SliverToBoxAdapter(
                               child: AnimatedSwitcher(
                                 duration: const Duration(milliseconds: 250),
-                                child: _ofertaActual == null
-                                    ? _BannerEsperando(
+                                child: _BannerEsperando(
                                         key: const ValueKey('esperando'),
                                         detectando: detectando,
-                                      )
-                                    : _OfertaDestacada(
-                                        key: ValueKey(
-                                            _ofertaActual!.idProcesoPersuasion),
-                                        oferta: _ofertaActual!,
-                                        estilo: estilo,
-                                        onAceptar: () =>
-                                            _registrarRespuesta(true),
-                                        onRechazar: () =>
-                                            _registrarRespuesta(false),
                                       ),
                               ),
                             ),
@@ -390,110 +608,6 @@ class _BannerEsperando extends StatelessWidget {
                     : 'Leyendo tu expresion con la camara frontal...',
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _OfertaDestacada extends StatelessWidget {
-  const _OfertaDestacada({
-    super.key,
-    required this.oferta,
-    required this.estilo,
-    required this.onAceptar,
-    required this.onRechazar,
-  });
-
-  final Oferta oferta;
-  final EmotionStyle estilo;
-  final VoidCallback onAceptar;
-  final VoidCallback onRechazar;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final precio =
-        (oferta.producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
-
-    return Card(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: estilo.color.withValues(alpha: 0.45)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(estilo.icon, size: 18, color: estilo.color),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Oferta para ti · ${estilo.label}',
-                    style: textTheme.titleMedium?.copyWith(color: estilo.color),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(oferta.texto, style: textTheme.bodyLarge),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Text(
-                    oferta.producto.nombreProducto,
-                    style: textTheme.titleMedium,
-                  ),
-                ),
-                Text(
-                  'S/$precio',
-                  style: textTheme.headlineSmall
-                      ?.copyWith(color: AppTheme.success),
-                ),
-              ],
-            ),
-            if (oferta.estrategia != null) ...[
-              const SizedBox(height: 4),
-              Text('Estrategia: ${oferta.estrategia!.nombreEstrategia}',
-                  style: textTheme.bodyMedium),
-            ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: onAceptar,
-                    icon: const Icon(Icons.shopping_bag_outlined),
-                    label: const Text('Lo quiero'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.success,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onRechazar,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.mutedText,
-                      minimumSize: const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      side: const BorderSide(color: AppTheme.border),
-                    ),
-                    child: const Text('Ahora no'),
-                  ),
-                ),
-              ],
             ),
           ],
         ),
@@ -674,6 +788,185 @@ class _ProductoCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Popup flotante que muestra la oferta durante 10 segundos.
+/// Aparece centrado en la pantalla con un timer visible.
+class _PopupOferta extends StatelessWidget {
+  const _PopupOferta({
+    required this.oferta,
+    required this.mensaje,
+    required this.segundosRestantes,
+    required this.onAceptar,
+    required this.onRechazar,
+    required this.onCerrar,
+  });
+
+  final Oferta oferta;
+  final String mensaje;
+  final int segundosRestantes;
+  final VoidCallback onAceptar;
+  final VoidCallback onRechazar;
+  final VoidCallback onCerrar;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final precio =
+        (oferta.producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+    final estilo = EmotionStyle.of('neutral');
+
+    return Stack(
+      children: [
+        // Fondo oscuro semitransparente
+        GestureDetector(
+          onTap: onCerrar,
+          child: Container(
+            color: Colors.black.withValues(alpha: 0.5),
+          ),
+        ),
+        // Popup centrado
+        Center(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 32),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Timer y boton cerrar
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: AppTheme.success.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.timer_outlined,
+                                size: 16, color: AppTheme.success),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${segundosRestantes}s',
+                              style: textTheme.bodyMedium?.copyWith(
+                                color: AppTheme.success,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: onCerrar,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Mensaje contextual
+                  Text(
+                    mensaje,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.mutedText,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  // Icono de emocion
+                  Icon(estilo.icon, size: 32, color: estilo.color),
+                  const SizedBox(height: 12),
+                  // Nombre del producto
+                  Text(
+                    oferta.producto.nombreProducto,
+                    style: textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  // Precio
+                  Text(
+                    'S/$precio',
+                    style: textTheme.headlineMedium?.copyWith(
+                      color: AppTheme.success,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  // Texto de la oferta
+                  Text(
+                    oferta.texto,
+                    style: textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  if (oferta.estrategia != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Estrategia: ${oferta.estrategia!.nombreEstrategia}',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: AppTheme.mutedText,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  // Botones de accion
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: onAceptar,
+                          icon: const Icon(Icons.shopping_bag_outlined),
+                          label: const Text('Lo quiero'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.success,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: onRechazar,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.mutedText,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            side: const BorderSide(color: AppTheme.border),
+                          ),
+                          child: const Text('Ahora no'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
