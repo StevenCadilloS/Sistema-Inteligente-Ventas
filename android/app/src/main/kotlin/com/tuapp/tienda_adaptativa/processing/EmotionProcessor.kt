@@ -25,6 +25,7 @@ class EmotionProcessor(
 
     private var currentStableEmotion: String = EmotionResult.NEUTRAL
     private var currentStableConfidence: Float = 0f
+    private var framesSinRostro: Int = 0
 
     init {
         require(stabilityThreshold > 0) {
@@ -35,13 +36,20 @@ class EmotionProcessor(
     /**
      * Agrega una lectura cruda y determina si ya existe una emocion estable.
      *
-     * `no_face` no se confirma como emocion. Cuando no hay rostro, se limpia
-     * la ventana para evitar mezclar frames anteriores con una lectura nueva.
+     * `no_face` no se confirma como emocion. La ventana se limpia solo tras
+     * [MAX_FRAMES_SIN_ROSTRO] lecturas seguidas sin rostro (la persona se
+     * fue de verdad): con la camara real, ML Kit pierde el rostro un frame
+     * suelto cada ~1s por movimiento o desenfoque, y limpiar en cada uno
+     * reiniciaba la ventana antes de completar los frames necesarios — la
+     * emocion no llegaba a estabilizarse nunca.
      */
     @Synchronized
     fun process(rawEmotion: EmotionResult): ProcessedEmotion {
         if (rawEmotion.emotion == EmotionResult.NO_FACE) {
-            buffer.clear()
+            framesSinRostro++
+            if (framesSinRostro >= MAX_FRAMES_SIN_ROSTRO) {
+                buffer.clear()
+            }
             return ProcessedEmotion(
                 emotion = currentStableEmotion,
                 confidence = 0f,
@@ -49,6 +57,7 @@ class EmotionProcessor(
             )
         }
 
+        framesSinRostro = 0
         buffer.addLast(rawEmotion)
 
         while (buffer.size > stabilityThreshold) {
@@ -104,10 +113,12 @@ class EmotionProcessor(
         buffer.clear()
         currentStableEmotion = EmotionResult.NEUTRAL
         currentStableConfidence = 0f
+        framesSinRostro = 0
     }
 
     companion object {
         const val DEFAULT_STABILITY_THRESHOLD = 10
+        const val MAX_FRAMES_SIN_ROSTRO = 5
     }
 }
 
