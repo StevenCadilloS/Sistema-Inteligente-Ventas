@@ -7,6 +7,7 @@ import 'data/repositories/cliente_repository.dart';
 import 'decision/adaptation_engine.dart';
 import 'decision/learning/bandit_optimizer.dart';
 import 'services/emotion_channel.dart';
+import 'theme/app_theme.dart';
 import 'ui/login_screen.dart';
 import 'ui/principal_screen.dart';
 import 'ui/historial_screen.dart';
@@ -56,13 +57,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Tienda Adaptativa',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light,
       initialRoute: clienteActivo != null ? '/principal' : '/',
       routes: {
         '/': (context) => LoginScreen(clienteRepository: clienteRepository),
