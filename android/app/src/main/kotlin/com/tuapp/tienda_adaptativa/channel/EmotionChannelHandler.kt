@@ -1,13 +1,13 @@
 package com.tuapp.tienda_adaptativa.channel
 
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import com.tuapp.tienda_adaptativa.context.CameraManager
 import com.tuapp.tienda_adaptativa.context.EmotionDetector
 import com.tuapp.tienda_adaptativa.processing.EmotionProcessor
 import io.flutter.plugin.common.EventChannel
 
 class EmotionChannelHandler(
-    private val activity: FlutterActivity
+    private val activity: FlutterFragmentActivity
 ) : EventChannel.StreamHandler {
 
     private val cameraManager = CameraManager(activity)
