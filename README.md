@@ -20,10 +20,23 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 | Emoción detectada | Acción automática |
 |-------------------|-------------------|
 | Tristeza | Muestra producto sustituto más económico con tono empático |
-| Sorpresa | Aplica descuento especial o sugiere un combo |
-| Felicidad | Ofrece producto premium (sin descuento) |
-| Neutral | Muestra oferta estándar del catálogo |
-| Enojo | Cambia de categoría y ofrece descuento agresivo |
+| Sorpresa | Muestra el producto menos exhibido (novedad) |
+| Felicidad | Ofrece producto premium (el más caro, sin descuento) |
+| Neutral | Muestra el producto más exhibido (oferta estándar) |
+| Enojo | Cambia de categoría respecto al último producto mostrado + el más económico de esa categoría |
+
+---
+
+## Estado actual (2026-09-06)
+
+| Parte | Estado | Dueño |
+|---|---|---|
+| Base de datos, autenticación, motor de reglas, aprendizaje, batch | ✅ **Hecho y probado** (35 tests, build Android verificado) | Elvis |
+| Detección facial y clasificación de emociones (Kotlin nativo) | ✅ **Hecho**, compila dentro del proyecto Flutter | Juan |
+| Puente Flutter ↔ Kotlin (Platform Channel) | ⏳ **Pendiente** — nada lo conecta todavía | Steven |
+| Pantallas (login, producto/oferta, historial) | ⏳ **Pendiente** — `lib/main.dart` sigue siendo la plantilla de `flutter create` | Steven |
+
+**En una frase:** todo lo que decide *qué* mostrar y *cómo* aprender ya existe y está probado con tests automáticos; lo que falta es *mostrarlo en pantalla* y *conectarlo a la cámara real*. Ver [Cómo continuar](#cómo-continuar-por-persona) más abajo para los pasos concretos de cada quien.
 
 ---
 
@@ -31,11 +44,11 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 
 | Área | Responsable(s) | Detalle |
 |------|-----------------|---------|
-| Base de datos | Elvis | Modelado y persistencia local con SQLite (`sqflite`) |
+| Base de datos | Elvis | Esquema, migraciones, persistencia local con `drift` (SQLite) |
 | Backend (lógica de negocio, Flutter/Dart) | Elvis, Juan, Steven | Trabajo compartido entre los tres integrantes |
 | — Integración con la cámara | Steven | Puente Flutter ↔ módulo nativo Kotlin (CameraX) |
 | — Modelo de emociones | Juan | Detección facial (ML Kit) y clasificación (TensorFlow Lite) |
-| — Reglas de ofertas y autenticación | Elvis | `AdaptationEngine`, `BanditOptimizer`, login/registro |
+| — Reglas de ofertas, aprendizaje y autenticación | Elvis | `AdaptationEngine`, `BanditOptimizer`, `ClienteRepository` |
 | Frontend (pantallas, UI) | Steven | Pantallas Flutter (registro, producto, historial) |
 
 ---
@@ -47,13 +60,14 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 | **Framework principal** | Flutter (Dart) | App orientada a Android, UI declarativa y lógica de negocio |
 | **Módulo nativo** | Kotlin | Cámara, ML Kit y TensorFlow Lite, expuestos a Flutter vía Platform Channels |
 | **UI** | Flutter Widgets | Interfaz declarativa moderna |
-| **Base de datos** | SQLite (`sqflite`) | Persistencia local (usuarios, productos, historial) |
+| **Base de datos** | SQLite vía [`drift`](https://drift.simonbinder.eu/) | Persistencia local (clientes, productos, estrategias, historial) — tablas tipadas, DAOs por codegen, migraciones |
 | **Cámara** | CameraX (Kotlin) | Captura de video en tiempo real |
 | **Detección facial** | Google ML Kit (Kotlin) | Detectar rostro y landmarks faciales |
 | **Clasificación de emociones** | TensorFlow Lite - FER-2013 (Kotlin) | Clasificar emoción desde imagen de cara |
-| **Aprendizaje** | Multi-Armed Bandit - UCB1 (Dart) | Seleccionar la mejor oferta según historial |
+| **Aprendizaje** | Multi-Armed Bandit - UCB1 (Dart) | Seleccionar la mejor estrategia según historial, recalculado en vivo |
+| **Sesión** | `shared_preferences` (Dart) | Cliente activo, persistido en el dispositivo |
+| **Batch periódico** | `workmanager` (Dart) | Cierre diario de KPIs, una vez al día |
 | **Arquitectura** | Clean Architecture + Pipeline | Separación de responsabilidades entre Flutter y el módulo nativo |
-| **DI** | Provider / GetIt (Dart) | Conectar componentes sin acoplamiento |
 | **Editor** | VS Code + extensiones Flutter/Dart | No se usa Android Studio |
 
 ---
@@ -76,17 +90,18 @@ Las dos primeras fases corren en el **módulo nativo Kotlin** (única parte del 
 ├─────────────┬──────────────┬────────────────┬──────────────────────┤
 │  CONTEXTO   │ PROCESAMIENTO│    DECISIÓN    │     ADAPTACIÓN      │
 │   (Kotlin)  │   (Kotlin)   │     (Dart)     │       (Dart)         │
+│   ✅ listo  │   ✅ listo   │   ✅ listo     │   ⏳ pendiente (UI)  │
 │             │              │                │                      │
-│ CameraManager│EmotionProcessor│ AdaptationEngine│ DynamicOfferCard  │
-│ EmotionDetector│ (estabiliza)│ BanditOptimizer│ AdaptiveTheme      │
-│             │              │                │ ProductRepository   │
+│ CameraManager│EmotionProcessor│ AdaptationEngine│ Pantallas Flutter │
+│ EmotionDetector│ (estabiliza)│ BanditOptimizer│ (Steven)           │
+│             │              │ ClienteRepository│                     │
 ├─────────────┼──────────────┼────────────────┼──────────────────────┤
 │ CameraX     │ Buffer N     │ Reglas de      │ UI Cambia sola      │
 │ ML Kit      │ frames       │ negocio +      │ Colores, ofertas,   │
 │ TFLite      │              │ Aprendizaje    │ textos              │
 └──────┬──────┴──────┬───────┴────────────────┴──────────────────────┘
        └──────────────┘
-     EmotionChannel (Platform Channel Flutter ↔ Kotlin)
+     ⏳ Platform Channel Flutter ↔ Kotlin (pendiente — ver "Cómo continuar")
 ```
 
 ### Flujo de ejecución completo
@@ -95,159 +110,170 @@ Las dos primeras fases corren en el **módulo nativo Kotlin** (única parte del 
 1. Cámara captura frame (30 fps)                         ┐
         ↓                                                 │
 2. ML Kit detecta cara en el frame                        │  Kotlin
-        ↓                                                 │  (nativo)
+        ↓                                                 │  (nativo, ✅ listo)
 3. TFLite clasifica emoción (triste/feliz/sorpresa/neutral/enojo)
         ↓                                                 │
 4. EmotionProcessor estabiliza (exige N frames consecutivos) ┘
         ↓
-   [Platform Channel envía ProcessedEmotion a Flutter]
+   [Platform Channel envía ProcessedEmotion a Flutter]  ⏳ pendiente
         ↓                                                 ┐
-5. AdaptationEngine aplica reglas según emoción            │
+5. AdaptationEngine.decidirOferta(emocion) aplica reglas   │
         ↓                                                 │  Dart
-6. BanditOptimizer selecciona mejor oferta (exploración vs explotación)
-        ↓                                                 │  (Flutter)
-7. UI se actualiza automáticamente (nueva oferta, nuevo color, nuevo texto)
+6. BanditOptimizer selecciona mejor estrategia (UCB1)      │  (✅ listo,
+        ↓                                                 │   sin UI)
+7. UI se actualiza automáticamente con la Oferta           │  ⏳ pendiente
         ↓                                                 │
-8. Usuario acepta o rechaza → se guarda en historial → Bandit aprende ┘
+8. Usuario acepta/rechaza → BanditOptimizer.registrarRespuesta ┘
 ```
 
 ---
 
 ## Estructura del Proyecto
 
-Estructura objetivo del proyecto Flutter (pendiente de scaffolding — ver [Estado del módulo de detección de emociones](#estado-del-módulo-de-detección-de-emociones)):
+Estructura real del repositorio (`flutter create` ya ejecutado, esquema y lógica de negocio ya implementados):
 
 ```
-tienda_adaptativa/
+PROYECTO01/
 │
-├── lib/                                        # FLUTTER / DART - App principal
-│   ├── main.dart                               # Punto de entrada
+├── lib/                                        # FLUTTER / DART
+│   ├── main.dart                               # Punto de entrada — arranca el batch; UI pendiente
 │   │
-│   ├── data/                                   # CAPA DE DATOS
+│   ├── data/
 │   │   ├── database/
-│   │   │   └── app_database.dart              # Configuración SQLite (sqflite)
-│   │   ├── models/
-│   │   │   ├── user.dart                       # Modelo de usuario
-│   │   │   ├── product.dart                    # Modelo de producto
-│   │   │   ├── offer.dart                      # Modelo de oferta adaptativa
-│   │   │   └── emotion_history.dart            # Modelo de historial
-│   │   └── repositories/
-│   │       ├── user_repository.dart            # Lógica de acceso a usuarios
-│   │       └── product_repository.dart         # Lógica de acceso a productos/ofertas
+│   │   │   ├── app_database.dart              # Conexión drift, seed de catálogos, migraciones
+│   │   │   ├── tables.dart                     # Las 11 tablas (catálogos, maestras, bitácoras)
+│   │   │   └── queries.drift                   # Vista de consulta crítica + 4 KPIs + queries del batch
+│   │   ├── repositories/
+│   │   │   └── cliente_repository.dart         # registrar() / iniciarSesion() / sesión activa
+│   │   └── batch/
+│   │       ├── batch_runner.dart               # Cierre diario (6 procesos, 1 sola transacción)
+│   │       └── cierre_diario_scheduler.dart     # Programador periódico (workmanager)
 │   │
-│   ├── decision/                               # FASE 3: DECISIÓN
-│   │   ├── adaptation_engine.dart              # Motor de reglas + autenticación
-│   │   └── learning/
-│   │       └── bandit_optimizer.dart           # Aprendizaje Multi-Armed Bandit
-│   │
-│   ├── services/                               # PUENTE HACIA EL MÓDULO NATIVO
-│   │   └── emotion_channel.dart                # Wrapper del Platform Channel
-│   │
-│   └── ui/                                     # CAPA DE PRESENTACIÓN (FASE 4: ADAPTACIÓN)
-│       ├── screens/
-│       │   ├── main_screen.dart                # Registro / Login
-│       │   ├── product_detail_screen.dart      # Pantalla principal adaptativa
-│       │   └── history_screen.dart             # Historial de interacciones
-│       ├── widgets/
-│       │   └── dynamic_offer_card.dart         # Tarjeta de oferta reactiva
-│       └── theme/
-│           └── adaptive_theme.dart             # Tema visual adaptativo
+│   └── decision/                               # FASE 3: DECISIÓN
+│       ├── adaptation_engine.dart              # decidirOferta(emocion) → Oferta
+│       └── learning/
+│           └── bandit_optimizer.dart           # UCB1: seleccionarEstrategia() / registrarRespuesta()
 │
 ├── android/                                    # MÓDULO NATIVO (FASES 1 Y 2 DEL PIPELINE)
 │   └── app/src/main/
-│       ├── kotlin/com/tuapp/tiendaadaptativa/
-│       │   ├── context/                        # FASE 1: CONTEXTO
+│       ├── kotlin/com/tuapp/tienda_adaptativa/
+│       │   ├── context/                        # FASE 1: CONTEXTO — ✅ listo
 │       │   │   ├── CameraManager.kt            # Control de cámara y permisos
 │       │   │   └── EmotionDetector.kt          # Detección facial + clasificación
-│       │   ├── processing/                     # FASE 2: PROCESAMIENTO
+│       │   ├── processing/                     # FASE 2: PROCESAMIENTO — ✅ listo
 │       │   │   └── EmotionProcessor.kt         # Filtro de estabilidad (N frames)
-│       │   └── channel/
-│       │       └── EmotionChannelHandler.kt    # Expone el pipeline nativo a Flutter
+│       │   └── channel/                        # ⏳ PENDIENTE (Steven)
+│       │       └── EmotionChannelHandler.kt    # Expondría el pipeline nativo a Flutter
 │       └── assets/
 │           └── emotion_model.tflite            # Modelo FER-2013
 │
+├── test/                                       # Espejo de lib/ — 35 tests, todos en verde
+│
+├── docs/
+│   ├── ESQUEMA_CORREGIDO.md                    # Hallazgos G1-G9, correcciones C1-C11, decisiones D1-D5
+│   ├── MODELO_ANDROID_ROOM.md                  # Diseño conceptual (apunta a la implementación real)
+│   └── PLAN_ELVIS.md                           # Plan de trabajo, contratos entre partes, auditoría
+│
 └── pubspec.yaml                                # Dependencias Flutter/Dart
 ```
+
+**Lo que falta crear:** `lib/services/emotion_channel.dart` y `android/.../channel/EmotionChannelHandler.kt` (el puente), y todo `lib/ui/` (pantallas) — ninguno existe todavía.
 
 ---
 
 ## Tabla de Ubicación del Pipeline
 
-| Elemento del Pipeline | Archivo / Clase | Lenguaje |
-|-----------------------|-----------------|----------|
-| **Captura del contexto** | `context/CameraManager.kt` | Kotlin (nativo) |
-| **Detección de emoción** | `context/EmotionDetector.kt` | Kotlin (nativo) |
-| **Procesamiento** | `processing/EmotionProcessor.kt` | Kotlin (nativo) |
-| **Puente Flutter ↔ Kotlin** | `channel/EmotionChannelHandler.kt` / `lib/services/emotion_channel.dart` | Kotlin + Dart |
-| **Decisión** | `lib/decision/adaptation_engine.dart` | Dart (Flutter) |
-| **Aprendizaje** | `lib/decision/learning/bandit_optimizer.dart` | Dart (Flutter) |
-| **Adaptación (UI)** | `lib/ui/widgets/dynamic_offer_card.dart` | Dart (Flutter) |
-| **Adaptación (Tema)** | `lib/ui/theme/adaptive_theme.dart` | Dart (Flutter) |
-| **Persistencia** | `lib/data/database/`, `lib/data/repositories/` | Dart (Flutter) |
+| Elemento del Pipeline | Archivo / Clase | Lenguaje | Estado |
+|-----------------------|-----------------|----------|--------|
+| **Captura del contexto** | `context/CameraManager.kt` | Kotlin (nativo) | ✅ |
+| **Detección de emoción** | `context/EmotionDetector.kt` | Kotlin (nativo) | ✅ |
+| **Procesamiento** | `processing/EmotionProcessor.kt` | Kotlin (nativo) | ✅ |
+| **Puente Flutter ↔ Kotlin** | `channel/EmotionChannelHandler.kt` / `lib/services/emotion_channel.dart` | Kotlin + Dart | ⏳ |
+| **Autenticación** | `lib/data/repositories/cliente_repository.dart` | Dart (Flutter) | ✅ |
+| **Decisión** | `lib/decision/adaptation_engine.dart` | Dart (Flutter) | ✅ |
+| **Aprendizaje** | `lib/decision/learning/bandit_optimizer.dart` | Dart (Flutter) | ✅ |
+| **Batch / KPIs** | `lib/data/batch/batch_runner.dart` | Dart (Flutter) | ✅ |
+| **Persistencia** | `lib/data/database/` | Dart (Flutter) | ✅ |
+| **Adaptación (UI)** | `lib/ui/` | Dart (Flutter) | ⏳ |
 
 ---
 
-## Estado del módulo de detección de emociones
+## Cómo continuar (por persona)
 
-La rama `feature/emotion-detector` mantiene la implementación nativa Kotlin de las fases de contexto y procesamiento. Es el único código del proyecto con lógica real ya escrita, por lo que se conserva tal cual y se expondrá a Flutter mediante un Platform Channel en lugar de reescribirse en Dart.
+### Steven — puente + pantallas
 
-| Archivo | Implementación |
-|---------|----------------|
-| `context/EmotionDetector.kt` | Detección de rostro con ML Kit, recorte facial, preprocesamiento 48×48 en escala de grises, inferencia TensorFlow Lite y generación de `EmotionResult` |
-| `processing/EmotionProcessor.kt` | Buffer de 10 frames, confirmación de emoción estable y cálculo de confianza promedio |
+**1. El puente (Platform Channel).** En Kotlin, `android/.../channel/EmotionChannelHandler.kt` debe envolver `CameraManager` + `EmotionDetector` + `EmotionProcessor` y enviar cada `ProcessedEmotion` estable (`isStable == true`) a Flutter por un `MethodChannel`/`EventChannel`. En Dart, `lib/services/emotion_channel.dart` recibe esos eventos.
 
-El modelo utilizado por `EmotionDetector.kt` se incluye como recurso Android en:
+**2. Conectar el resultado a la decisión.** Cuando llegue una emoción estable, llamar:
 
-```text
-app/src/main/assets/emotion_model.tflite
+```dart
+final oferta = await adaptationEngine.decidirOferta(
+  codCliente: clienteActivo,           // de ClienteRepository.clienteActivo()
+  emocion: procesado.emotion,          // el string tal cual llega de Kotlin: "triste", "feliz"...
+  nivelDeInteres: (procesado.confidence * 100).round(),
+);
+// oferta.texto, oferta.producto -> pintar en pantalla
 ```
 
-`assets` almacena únicamente el archivo del modelo y no agrega una nueva capa ni modifica la organización de paquetes Kotlin mostrada arriba.
+**3. Botones "Me interesa" / "No gracias":**
 
-El modelo utiliza siete clases FER-2013 (`angry`, `disgust`, `fear`, `happy`, `sad`, `surprise`, `neutral`) y `EmotionDetector.kt` las adapta a las emociones utilizadas por el proyecto: `enojo`, `feliz`, `triste`, `sorpresa` y `neutral`. Cuando ML Kit no encuentra un rostro, devuelve `no_face`.
+```dart
+await banditOptimizer.registrarRespuesta(
+  idProcesoPersuasion: oferta.idProcesoPersuasion,
+  aceptada: true, // o false
+);
+```
 
-Pendiente:
+**4. Pantalla de login/registro**, contra `ClienteRepository`:
 
-- Inicializar el proyecto Flutter (`pubspec.yaml`, `lib/`) y mover el módulo Kotlin existente a `android/app/src/main/kotlin/...`.
-- Implementar `EmotionChannelHandler.kt` y `lib/services/emotion_channel.dart` para conectar el pipeline nativo con la capa Dart.
-- Escribir en Dart todo lo que hoy son clases esqueleto (`AdaptationEngine`, `BanditOptimizer`, `AppDatabase`, repositorios, pantallas UI).
+```dart
+final codCliente = await clienteRepository.registrar(
+  nombre: 'Juan', apellido: 'Perez', tipoCliente: null, // opcional
+);
+// o, si ya existe sesion:
+final activo = clienteRepository.clienteActivo(); // null si nadie inicio sesion
+```
+
+Instanciar todo en `main.dart` (un solo `AppDatabase()`, compartido entre `ClienteRepository`, `AdaptationEngine` y `BanditOptimizer` vía constructor).
+
+### Juan — modelo de emociones
+
+Tu parte (`EmotionDetector.kt`, `EmotionProcessor.kt`) ya compila y está integrada al proyecto Flutter. Dos cosas útiles mientras Steven arma el puente:
+- Ayudar a definir la forma exacta del evento que cruza el channel (qué campos de `ProcessedEmotion` necesita Steven).
+- Si tienes tiempo: los datos reales de prueba (`docs/TABLAS.docx`) usan un gesto (`G0000008`) fuera de las 5 emociones básicas — vale la pena revisar si el clasificador debería reconocer algo más que triste/feliz/sorpresa/neutral/enojo.
+
+### Elvis — tu tramo
+
+Las 7 fases del plan están cerradas y auditadas (ver `docs/PLAN_ELVIS.md`). Disponible para ajustar cualquier función de `AdaptationEngine`/`BanditOptimizer`/`ClienteRepository` según lo que Steven necesite al integrar la UI real.
 
 ---
 
 ## Algoritmo de Aprendizaje: Multi-Armed Bandit
 
-El sistema no solo sigue reglas fijas, sino que **aprende** con el tiempo (implementado en Dart, dentro de `lib/decision/learning/bandit_optimizer.dart`):
+El sistema no solo sigue reglas fijas, sino que **aprende** con el tiempo (`lib/decision/learning/bandit_optimizer.dart`, recalculado en vivo desde la base de datos en cada decisión):
 
 ```
-Para cada emoción, se mantiene un registro de:
-  - Cuántas veces se mostró cada oferta
-  - Cuántas veces fue aceptada
-  - Cuántas veces fue rechazada
+Para cada estrategia, se cuenta (COUNT DISTINCT sobre procesos, no filas):
+  - Cuántas veces se aplicó (intentos)
+  - Cuántas veces terminó en venta (éxitos)
 
 Se usa UCB1 (Upper Confidence Bound) para balancear:
-  - EXPLORACIÓN: probar ofertas que no se han mostrado mucho
-  - EXPLOTACIÓN: usar la oferta que mejor funciona
+  - EXPLORACIÓN: probar estrategias que no se han aplicado mucho
+  - EXPLOTACIÓN: usar la que mejor funciona
 
-Fórmula: score = (éxitos / total) + √(2 × ln(N) / total)
+Fórmula: score = (éxitos / intentos) + √(2 × ln(N) / intentos)
 ```
 
-**Ejemplo de evolución:**
-
-| Emoción | Oferta | Éxitos | Fracasos | Score UCB1 |
-|---------|--------|--------|----------|------------|
-| Triste | Audífonos | 5 | 2 | 2.45 |
-| Triste | Mouse | 1 | 6 | 0.72 |
-| Triste | Teclado | 3 | 3 | 1.68 |
-
-→ El sistema favorecerá Audífonos para usuarios tristes.
+Una estrategia nunca aplicada se prioriza automáticamente (evita dividir entre cero y fuerza que todas se prueben antes de explotar la mejor).
 
 ---
 
 ## Requisitos
 
-- **Flutter SDK** (última versión estable)
+- **Flutter SDK** 3.47+ (`flutter --version`)
 - **Dart SDK** (incluido con Flutter)
-- **JDK 17** (para compilar el módulo nativo Android vía Gradle, usado internamente por Flutter)
+- **JDK 17+** (para compilar el módulo nativo Android vía Gradle, usado internamente por Flutter)
+- **Android SDK** (platform-tools, plataformas 34/36, NDK, build-tools) — se puede instalar sin Android Studio con `sdkmanager` de las command-line tools
 - **VS Code** + extensiones Flutter y Dart — no se usa Android Studio
 - **Celular Android** con Android 8.0+ (API 26+) y cámara frontal
 - **Git**
@@ -259,17 +285,22 @@ Fórmula: score = (éxitos / total) + √(2 × ln(N) / total)
 ```bash
 # 1. Clonar el repositorio
 git clone https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas.git
+cd Sistema-Inteligente-Ventas
 
-# 2. Abrir la carpeta en VS Code
-code Sistema-Inteligente-Ventas
-
-# 3. Instalar las dependencias de Flutter
+# 2. Instalar las dependencias de Flutter
 flutter pub get
 
-# 4. Conectar el celular Android vía USB (con depuración USB activada)
+# 3. Generar el código de drift (tablas, queries) - necesario tras clonar
+#    y despues de CUALQUIER cambio en tables.dart o queries.drift
+dart run build_runner build
+
+# 4. Correr los tests (no requiere celular ni emulador)
+flutter test
+
+# 5. Conectar el celular Android vía USB (con depuración USB activada)
 flutter devices
 
-# 5. Ejecutar la app
+# 6. Ejecutar la app
 flutter run
 ```
 
@@ -285,7 +316,9 @@ flutter run
 
 ## Cómo Demostrar la Adaptación
 
-### Con el celular:
+> Requiere el puente Flutter↔Kotlin y las pantallas de Steven (ver [Cómo continuar](#cómo-continuar-por-persona)). Mientras tanto, la lógica se puede demostrar corriendo `flutter test` — cada regla y cada aprendizaje tiene un test que la ejercita punta a punta.
+
+### Con el celular (una vez conectado el puente):
 
 1. **Abrir la app** → registrarse
 2. **Mostrar cara** → la app detecta emoción y muestra oferta
@@ -293,15 +326,9 @@ flutter run
 4. **Aceptar/rechazar** → el sistema registra y aprende
 5. **Ver historial** → muestra estadísticas de emociones y aceptaciones
 
-### Comandos para demostrar sensores y revisar logs:
+### Comandos para revisar logs:
 
 ```bash
-# Simular batería baja (cambia modo visual)
-adb shell dumpsys battery set level 10
-
-# Restaurar batería
-adb shell dumpsys battery reset
-
 # Ver logs de la app Flutter
 flutter logs
 
@@ -315,14 +342,15 @@ adb logcat | grep "EmotionDetector"
 
 | Dependencia | Versión | Uso |
 |-------------|---------|-----|
-| Flutter | 3.x | Framework principal de la app |
-| Dart | 3.x | Lenguaje de la capa Flutter |
+| Flutter | 3.47.x | Framework principal de la app |
+| Dart | 3.13.x | Lenguaje de la capa Flutter |
 | Kotlin | 1.9.x | Módulo nativo (cámara, ML Kit, TensorFlow Lite) |
-| sqflite | 2.x | Base de datos SQLite en Dart |
+| drift | 2.34.x | Base de datos SQLite tipada en Dart |
+| shared_preferences | 2.5.x | Sesión del cliente activo |
+| workmanager | 0.10.x | Programador del cierre diario |
 | CameraX | 1.3.x | Captura de cámara (Kotlin) |
 | ML Kit Face Detection | 16.x | Detección de rostro (Kotlin) |
-| TensorFlow Lite | 2.14.x | Clasificación de emociones (Kotlin) |
-| provider / get_it | última | Inyección de dependencias (Dart) |
+| TensorFlow Lite | 2.16.x | Clasificación de emociones (Kotlin) |
 
 ---
 

@@ -171,6 +171,8 @@ En la primera versión de este documento reporté que "faltaban los diagramas de
 
 ## 6. Siguiente paso
 
-El modelo listo para Android Studio — DDL, entidades Room en Kotlin, DAOs para los 4 KPIs y las decisiones de optimización — está en **[MODELO_ANDROID_ROOM.md](MODELO_ANDROID_ROOM.md)**.
+El diseño conceptual — DDL, entidades, DAOs para los 4 KPIs y las decisiones de optimización — está en **[MODELO_ANDROID_ROOM.md](MODELO_ANDROID_ROOM.md)** (nota: escrito para Room, pero la implementación real quedó en Flutter/`drift` — el propio documento apunta a los archivos vigentes).
+
+Implementación, estado y qué falta por hacer (para todo el equipo): **[PLAN_ELVIS.md](PLAN_ELVIS.md)**.
 
 El grafo de conocimiento sigue disponible en `graphify-out/` (`graph.html` interactivo, `GRAPH_REPORT.md`, `graph.json`). Consultas: `graphify query "<pregunta>"`.
