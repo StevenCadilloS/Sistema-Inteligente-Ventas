@@ -1,11 +1,14 @@
 package com.tuapp.tienda_adaptativa
 
 import com.tuapp.tienda_adaptativa.channel.EmotionChannelHandler
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 
-class MainActivity : FlutterActivity() {
+// FlutterFragmentActivity (no FlutterActivity): CameraManager necesita
+// ComponentActivity para registerForActivityResult() al pedir el permiso
+// de camara, y FlutterActivity extiende Activity puro, no ComponentActivity.
+class MainActivity : FlutterFragmentActivity() {
     private val emotionChannelName = "com.tuapp.tienda_adaptativa/emotion"
     private var handler: EmotionChannelHandler? = null
 
