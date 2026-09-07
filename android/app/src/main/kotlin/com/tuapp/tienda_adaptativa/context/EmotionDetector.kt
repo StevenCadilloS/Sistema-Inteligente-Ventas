@@ -318,8 +318,8 @@ class EmotionDetector(context: Context) : Closeable {
          */
         private fun mapFerClass(index: Int): String = when (index) {
             0 -> EmotionResult.ANGRY      // angry
-            1 -> EmotionResult.ANGRY      // disgust
-            2 -> EmotionResult.NEUTRAL    // fear: no existe regla propia en el proyecto
+            1 -> EmotionResult.UNKNOWN    // disgust: no existe regla propia
+            2 -> EmotionResult.UNKNOWN    // fear: no existe regla propia
             3 -> EmotionResult.HAPPY
             4 -> EmotionResult.SAD
             5 -> EmotionResult.SURPRISE
@@ -390,6 +390,7 @@ data class EmotionResult(
         const val NEUTRAL = "neutral"
         const val ANGRY = "enojo"
         const val NO_FACE = "no_face"
+        const val UNKNOWN = "unknown"
 
         private val SUPPORTED = setOf(
             SAD,
@@ -397,7 +398,8 @@ data class EmotionResult(
             SURPRISE,
             NEUTRAL,
             ANGRY,
-            NO_FACE
+            NO_FACE,
+            UNKNOWN
         )
 
         fun noFace(): EmotionResult = EmotionResult(

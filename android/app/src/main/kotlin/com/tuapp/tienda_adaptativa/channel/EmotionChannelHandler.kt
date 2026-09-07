@@ -29,9 +29,12 @@ class EmotionChannelHandler(
                     Log.d(
                         TAG,
                         "crudo=${crudo.emotion}(${crudo.confidence}) -> " +
-                            "procesado=${procesado.emotion} estable=${procesado.isStable}",
+                            "procesado=${procesado.emotion} estable=${procesado.isStable} " +
+                                "cambio=${procesado.didChange}",
                     )
-                    if (procesado.isStable) {
+                    // Flutter sólo necesita enterarse de una emoción nueva. No
+                    // reenviamos cada frame que confirma el mismo estado.
+                    if (procesado.didChange) {
                         // EventSink.success() es @UiThread, pero este callback
                         // corre en el executor de ML Kit: sin el post al hilo
                         // principal, Flutter lanza "Methods marked with

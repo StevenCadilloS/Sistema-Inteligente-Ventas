@@ -60,4 +60,5 @@ dependencies {
     // declaran el mismo namespace de manifest, lo que rompe el manifest
     // merger con AGP moderno. 2.16.1 lo corrige; misma API (org.tensorflow.lite.*).
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    testImplementation("junit:junit:4.13.2")
 }

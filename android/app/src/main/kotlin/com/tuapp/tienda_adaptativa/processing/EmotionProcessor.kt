@@ -4,134 +4,162 @@ import com.tuapp.tienda_adaptativa.context.EmotionResult
 import java.util.ArrayDeque
 
 /**
- * PROCESAMIENTO - FILTRO DE ESTABILIDAD DE EMOCIONES
- * Fase 2 del pipeline adaptativo.
+ * Estabiliza las predicciones del modelo antes de enviarlas a Flutter.
  *
- * Responsabilidades:
- * - Recibir emociones crudas provenientes de EmotionDetector.
- * - Mantener una ventana de N frames.
- * - Confirmar una emocion solo si se repite durante N frames consecutivos.
- * - Calcular la confianza promedio de la emocion estable.
- * - Conservar la ultima emocion estable mientras la lectura aun oscila.
- *
- * Flujo:
- * EmotionResult -> buffer de N frames -> ProcessedEmotion
+ * El modelo puede alternar de clase entre frames aun cuando el gesto no haya
+ * cambiado. Por eso se usa una ventana deslizante con voto ponderado por
+ * confianza, en vez de confirmar una etiqueta por pocos frames consecutivos.
  */
 class EmotionProcessor(
-    private val stabilityThreshold: Int = DEFAULT_STABILITY_THRESHOLD
+    private val windowSize: Int = DEFAULT_WINDOW_SIZE,
+    private val minimumSamples: Int = DEFAULT_MINIMUM_SAMPLES,
+    private val minimumConfidence: Float = DEFAULT_MINIMUM_CONFIDENCE,
+    private val minimumWinnerShare: Float = DEFAULT_MINIMUM_WINNER_SHARE,
+    private val switchConfirmations: Int = DEFAULT_SWITCH_CONFIRMATIONS,
 ) {
-
     private val buffer = ArrayDeque<EmotionResult>()
 
     private var currentStableEmotion: String = EmotionResult.NEUTRAL
     private var currentStableConfidence: Float = 0f
-    private var framesSinRostro: Int = 0
+    private var hasStableEmotion = false
+    private var pendingEmotion: String? = null
+    private var pendingConfirmations = 0
+    private var framesWithoutUsefulReading = 0
 
     init {
-        require(stabilityThreshold > 0) {
-            "El numero de frames para estabilizar debe ser mayor que cero."
-        }
+        require(windowSize > 0)
+        require(minimumSamples in 1..windowSize)
+        require(minimumConfidence in 0f..1f)
+        require(minimumWinnerShare in 0.5f..1f)
+        require(switchConfirmations > 0)
     }
 
-    /**
-     * Agrega una lectura cruda y determina si ya existe una emocion estable.
-     *
-     * `no_face` no se confirma como emocion. La ventana se limpia solo tras
-     * [MAX_FRAMES_SIN_ROSTRO] lecturas seguidas sin rostro (la persona se
-     * fue de verdad): con la camara real, ML Kit pierde el rostro un frame
-     * suelto cada ~1s por movimiento o desenfoque, y limpiar en cada uno
-     * reiniciaba la ventana antes de completar los frames necesarios — la
-     * emocion no llegaba a estabilizarse nunca.
-     */
     @Synchronized
     fun process(rawEmotion: EmotionResult): ProcessedEmotion {
-        if (rawEmotion.emotion == EmotionResult.NO_FACE) {
-            framesSinRostro++
-            if (framesSinRostro >= MAX_FRAMES_SIN_ROSTRO) {
+        if (!isUseful(rawEmotion)) {
+            framesWithoutUsefulReading++
+            if (framesWithoutUsefulReading >= MAX_FRAMES_WITHOUT_USEFUL_READING) {
                 buffer.clear()
+                clearPendingCandidate()
             }
-            return ProcessedEmotion(
-                emotion = currentStableEmotion,
-                confidence = 0f,
-                isStable = false
-            )
+            return currentResult(didChange = false)
         }
 
-        framesSinRostro = 0
+        framesWithoutUsefulReading = 0
         buffer.addLast(rawEmotion)
+        while (buffer.size > windowSize) buffer.removeFirst()
 
-        while (buffer.size > stabilityThreshold) {
-            buffer.removeFirst()
+        val winner = findWinner() ?: return currentResult(didChange = false)
+
+        // La primera lectura estable se puede publicar inmediatamente una vez
+        // que la ventana tenga evidencia suficiente.
+        if (!hasStableEmotion) {
+            accept(winner)
+            return currentResult(didChange = true)
         }
 
-        val stable = isStable()
-
-        if (stable) {
-            currentStableEmotion = rawEmotion.emotion
-            currentStableConfidence = getAverageConfidence()
+        // Si la ventana sigue apoyando el estado actual, sólo refrescamos su
+        // confianza y cancelamos cualquier transición incompleta.
+        if (winner.emotion == currentStableEmotion) {
+            currentStableConfidence = winner.averageConfidence
+            clearPendingCandidate()
+            return currentResult(didChange = false)
         }
 
-        return ProcessedEmotion(
-            emotion = currentStableEmotion,
-            confidence = if (stable) {
-                currentStableConfidence
-            } else {
-                currentStableConfidence.coerceIn(0f, 1f)
-            },
-            isStable = stable
-        )
+        // Histéresis: una emoción rival debe ganar varias ventanas seguidas
+        // antes de reemplazar a la que ya está visible.
+        if (pendingEmotion == winner.emotion) {
+            pendingConfirmations++
+        } else {
+            pendingEmotion = winner.emotion
+            pendingConfirmations = 1
+        }
+
+        if (pendingConfirmations < switchConfirmations) {
+            return currentResult(didChange = false)
+        }
+
+        accept(winner)
+        return currentResult(didChange = true)
     }
 
-    /**
-     * Una lectura se considera estable solo cuando la ventana esta completa
-     * y todos los frames contienen la misma emocion.
-     */
-    private fun isStable(): Boolean {
-        if (buffer.size < stabilityThreshold) return false
+    private fun isUseful(result: EmotionResult): Boolean =
+        result.emotion != EmotionResult.NO_FACE &&
+            result.emotion != EmotionResult.UNKNOWN &&
+            result.confidence >= minimumConfidence
 
-        val firstEmotion = buffer.firstOrNull()?.emotion ?: return false
-        return buffer.all { result -> result.emotion == firstEmotion }
+    private fun findWinner(): Winner? {
+        if (buffer.size < minimumSamples) return null
+
+        val scores = mutableMapOf<String, Float>()
+        val counts = mutableMapOf<String, Int>()
+        var totalScore = 0f
+
+        buffer.forEach { result ->
+            scores[result.emotion] = (scores[result.emotion] ?: 0f) + result.confidence
+            counts[result.emotion] = (counts[result.emotion] ?: 0) + 1
+            totalScore += result.confidence
+        }
+
+        val winnerEntry = scores.maxByOrNull { it.value } ?: return null
+        val winnerCount = counts.getValue(winnerEntry.key)
+        val winnerShare = if (totalScore > 0f) winnerEntry.value / totalScore else 0f
+        val averageConfidence = winnerEntry.value / winnerCount
+
+        if (winnerShare < minimumWinnerShare) return null
+        if (averageConfidence < minimumConfidence) return null
+
+        return Winner(winnerEntry.key, averageConfidence.coerceIn(0f, 1f))
     }
 
-    /**
-     * Confianza promedio de los frames presentes en la ventana.
-     */
-    private fun getAverageConfidence(): Float {
-        if (buffer.isEmpty()) return 0f
-
-        val sum = buffer.sumOf { result -> result.confidence.toDouble() }
-        return (sum / buffer.size)
-            .toFloat()
-            .coerceIn(0f, 1f)
+    private fun accept(winner: Winner) {
+        currentStableEmotion = winner.emotion
+        currentStableConfidence = winner.averageConfidence
+        hasStableEmotion = true
+        clearPendingCandidate()
     }
 
-    /**
-     * Reinicia el filtro, por ejemplo al cambiar de pantalla o producto.
-     */
+    private fun currentResult(didChange: Boolean) = ProcessedEmotion(
+        emotion = currentStableEmotion,
+        confidence = currentStableConfidence,
+        isStable = hasStableEmotion,
+        didChange = didChange,
+    )
+
+    private fun clearPendingCandidate() {
+        pendingEmotion = null
+        pendingConfirmations = 0
+    }
+
     @Synchronized
     fun reset() {
         buffer.clear()
         currentStableEmotion = EmotionResult.NEUTRAL
         currentStableConfidence = 0f
-        framesSinRostro = 0
+        hasStableEmotion = false
+        framesWithoutUsefulReading = 0
+        clearPendingCandidate()
     }
 
+    private data class Winner(
+        val emotion: String,
+        val averageConfidence: Float,
+    )
+
     companion object {
-        /**
-         * A ~8-10 fps reales en dispositivo, 5 frames confirman una emocion
-         * en ~0.6s. Con 10 la app tardaba mas de un segundo en reaccionar y
-         * se sentia lenta frente a la camara.
-         */
-        const val DEFAULT_STABILITY_THRESHOLD = 5
-        const val MAX_FRAMES_SIN_ROSTRO = 5
+        // A 8-10 fps, 15 muestras representan aproximadamente 1.5-2 segundos.
+        const val DEFAULT_WINDOW_SIZE = 15
+        const val DEFAULT_MINIMUM_SAMPLES = 10
+        const val DEFAULT_MINIMUM_CONFIDENCE = 0.55f
+        const val DEFAULT_MINIMUM_WINNER_SHARE = 0.70f
+        const val DEFAULT_SWITCH_CONFIRMATIONS = 4
+        const val MAX_FRAMES_WITHOUT_USEFUL_READING = 8
     }
 }
 
-/**
- * Emocion procesada y estabilizada por la fase 2.
- */
 data class ProcessedEmotion(
     val emotion: String,
     val confidence: Float,
-    val isStable: Boolean
+    val isStable: Boolean,
+    val didChange: Boolean,
 )
