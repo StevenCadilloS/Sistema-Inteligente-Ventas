@@ -37,8 +37,8 @@ Responsable de detectar el rostro y clasificar la expresión facial.
 - Selección del rostro principal cuando aparecen varias caras
 - Corrección de orientación del frame según `rotationDegrees`
 - Recorte seguro de la región facial con un pequeño margen
-- Preprocesamiento de la cara a `48 x 48` píxeles en escala de grises
-- Normalización de píxeles a valores entre `0` y `1`
+- Preprocesamiento de la cara a gris `48 x 48` y luego RGB `96 x 96`
+- Segundo escalado bilineal en `float32` y normalización a `[-1, 1]`
 - Carga y ejecución del modelo TensorFlow Lite `emotion_model.tflite`
 - Clasificación basada en FER-2013
 - Conversión de las clases del modelo a las emociones del proyecto:
@@ -63,7 +63,7 @@ ML Kit detecta rostro
      ↓
 Recorte facial
      ↓
-48x48 grayscale
+48x48 gris -> 96x96 RGB float32
      ↓
 TensorFlow Lite
      ↓
@@ -80,7 +80,12 @@ El modelo se encuentra en:
 app/src/main/assets/emotion_model.tflite
 ```
 
-Trabaja con una entrada facial de `48 x 48` en escala de grises y genera 7 clases FER-2013.
+Usa MaternaLink FER MobileNetV2 (variante float16), con entrada RGB `96 x 96`
+y siete probabilidades calibradas en el orden `angry`, `disgust`, `fear`,
+`happy`, `neutral`, `sad`, `surprise`.
+
+La procedencia, licencia, hash y contrato del modelo están documentados en
+`app/src/main/assets/README.md`.
 
 El detector adapta esas clases a las emociones definidas por el pipeline del proyecto.
 

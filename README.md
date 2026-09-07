@@ -165,7 +165,8 @@ PROYECTO01/
 │       │   └── channel/                        # ⏳ PENDIENTE (Steven)
 │       │       └── EmotionChannelHandler.kt    # Expondría el pipeline nativo a Flutter
 │       └── assets/
-│           └── emotion_model.tflite            # Modelo FER-2013
+│           ├── emotion_model.tflite            # FER MobileNetV2 calibrado
+│           └── README.md                       # Fuente, licencia y contrato
 │
 ├── test/                                       # Espejo de lib/ — 35 tests, todos en verde
 │

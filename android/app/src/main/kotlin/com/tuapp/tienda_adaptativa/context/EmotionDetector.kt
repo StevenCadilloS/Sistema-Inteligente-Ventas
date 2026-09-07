@@ -12,7 +12,6 @@ import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.face.FaceLandmark
 import org.tensorflow.lite.Interpreter
 import java.io.Closeable
 import java.nio.ByteBuffer
@@ -21,7 +20,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.exp
-import kotlin.math.hypot
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -32,8 +31,8 @@ import kotlin.math.roundToInt
  * - Recibir frames producidos por CameraManager/CameraX.
  * - Detectar el rostro principal con Google ML Kit.
  * - Recortar la region facial.
- * - Preparar la imagen a 48x48 en escala de grises.
- * - Ejecutar el modelo FER-2013 con TensorFlow Lite.
+ * - Preparar la imagen con el pipeline exacto FER-2013 -> MobileNetV2.
+ * - Ejecutar el modelo FER MobileNetV2 calibrado con TensorFlow Lite.
  * - Devolver un EmotionResult crudo para EmotionProcessor.
  *
  * Flujo:
@@ -47,8 +46,8 @@ class EmotionDetector(context: Context) : Closeable {
     private val faceDetector: FaceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
             .setMinFaceSize(0.25f)
             .enableTracking()
             .build()
@@ -85,13 +84,6 @@ class EmotionDetector(context: Context) : Closeable {
                         return@addOnSuccessListener
                     }
 
-                    // ML Kit calcula esta probabilidad junto con la deteccion.
-                    // Se combina con FER mas abajo: una boca abierta puede
-                    // parecer sonrisa para ML Kit aunque FER vea sorpresa.
-                    val smileProbability = mainFace.smilingProbability
-                    val mouthOpenRatio = mouthOpenRatio(mainFace)
-                    val eyesOpenProbability = averageEyesOpenProbability(mainFace)
-
                     val uprightFrame = rotateBitmap(
                         bitmap = frame.toBitmap(),
                         rotationDegrees = rotationDegrees
@@ -105,20 +97,10 @@ class EmotionDetector(context: Context) : Closeable {
 
                         try {
                             val inferenceStartedAt = SystemClock.elapsedRealtime()
-                            val ferResult = classifier.classify(faceBitmap)
-                            val result = fuseEmotion(
-                                ferResult = ferResult,
-                                smileProbability = smileProbability,
-                                mouthOpenRatio = mouthOpenRatio,
-                                eyesOpenProbability = eyesOpenProbability,
-                            )
+                            val result = classifier.classify(faceBitmap)
                             Log.d(
                                 TAG,
-                                "fer=${ferResult.emotion}(${"%.3f".format(ferResult.confidence)}) " +
-                                    "sonrisa=${smileProbability?.let { "%.3f".format(it) }} " +
-                                    "boca=${mouthOpenRatio?.let { "%.3f".format(it) }} " +
-                                    "ojos=${eyesOpenProbability?.let { "%.3f".format(it) }} " +
-                                    "fusion=${result.emotion}(${"%.3f".format(result.confidence)}) " +
+                                "fer=${result.emotion}(${"%.3f".format(result.confidence)}) " +
                                     "deteccionMs=${inferenceStartedAt - detectionStartedAt} " +
                                     "inferenciaMs=${SystemClock.elapsedRealtime() - inferenceStartedAt}"
                             )
@@ -268,47 +250,87 @@ class EmotionDetector(context: Context) : Closeable {
             )
         }
 
-        /** Convierte el rostro a 48x48 RGB y normaliza sus canales a [0, 1]. */
+        /**
+         * Reproduce el contrato publicado del modelo:
+         * gris -> 48x48 uint8 -> 96x96 float32 -> RGB -> [-1, 1].
+         *
+         * El segundo escalado se calcula en float para no volver a redondear
+         * los valores interpolados a enteros.
+         */
         private fun preprocess(bitmap: Bitmap): ByteBuffer {
-            val scaled = Bitmap.createScaledBitmap(
+            val scaled48 = Bitmap.createScaledBitmap(
                 bitmap,
-                INPUT_SIZE,
-                INPUT_SIZE,
+                SOURCE_SIZE,
+                SOURCE_SIZE,
                 true
             )
 
             try {
-                val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
-                scaled.getPixels(
+                val pixels = IntArray(SOURCE_SIZE * SOURCE_SIZE)
+                scaled48.getPixels(
                     pixels,
                     0,
-                    INPUT_SIZE,
+                    SOURCE_SIZE,
                     0,
                     0,
-                    INPUT_SIZE,
-                    INPUT_SIZE
+                    SOURCE_SIZE,
+                    SOURCE_SIZE
                 )
+
+                val grayscale48 = FloatArray(SOURCE_SIZE * SOURCE_SIZE) { index ->
+                    val pixel = pixels[index]
+                    val red = (pixel shr 16) and 0xFF
+                    val green = (pixel shr 8) and 0xFF
+                    val blue = pixel and 0xFF
+                    (GRAYSCALE_RED * red +
+                        GRAYSCALE_GREEN * green +
+                        GRAYSCALE_BLUE * blue)
+                        .roundToInt()
+                        .coerceIn(0, 255)
+                        .toFloat()
+                }
 
                 val buffer = ByteBuffer
                     .allocateDirect(INPUT_SIZE * INPUT_SIZE * INPUT_CHANNELS * FLOAT_BYTES)
                     .order(ByteOrder.nativeOrder())
 
-                pixels.forEach { pixel ->
-                    val red = (pixel shr 16) and 0xFF
-                    val green = (pixel shr 8) and 0xFF
-                    val blue = pixel and 0xFF
-                    buffer.putFloat(red / 255f)
-                    buffer.putFloat(green / 255f)
-                    buffer.putFloat(blue / 255f)
+                for (y in 0 until INPUT_SIZE) {
+                    for (x in 0 until INPUT_SIZE) {
+                        val gray = bilinearSample(grayscale48, x, y)
+                        val normalized = gray / NORMALIZATION_DIVISOR - 1f
+                        repeat(INPUT_CHANNELS) {
+                            buffer.putFloat(normalized)
+                        }
+                    }
                 }
 
                 buffer.rewind()
                 return buffer
             } finally {
-                if (scaled !== bitmap && !scaled.isRecycled) {
-                    scaled.recycle()
+                if (scaled48 !== bitmap && !scaled48.isRecycled) {
+                    scaled48.recycle()
                 }
             }
+        }
+
+        private fun bilinearSample(source: FloatArray, outputX: Int, outputY: Int): Float {
+            val sourceX = (outputX + 0.5f) * SOURCE_SIZE / INPUT_SIZE - 0.5f
+            val sourceY = (outputY + 0.5f) * SOURCE_SIZE / INPUT_SIZE - 0.5f
+            val x0 = floor(sourceX).toInt()
+            val y0 = floor(sourceY).toInt()
+            val x1 = x0 + 1
+            val y1 = y0 + 1
+            val xWeight = sourceX - x0
+            val yWeight = sourceY - y0
+
+            fun pixel(x: Int, y: Int): Float = source[
+                y.coerceIn(0, SOURCE_SIZE - 1) * SOURCE_SIZE +
+                    x.coerceIn(0, SOURCE_SIZE - 1)
+            ]
+
+            val top = pixel(x0, y0) * (1f - xWeight) + pixel(x1, y0) * xWeight
+            val bottom = pixel(x0, y1) * (1f - xWeight) + pixel(x1, y1) * xWeight
+            return top * (1f - yWeight) + bottom * yWeight
         }
 
         /**
@@ -335,8 +357,8 @@ class EmotionDetector(context: Context) : Closeable {
         }
 
         /**
-         * Orden FER-2013 del modelo:
-         * angry, disgust, fear, happy, sad, surprise, neutral.
+         * Orden publicado por el modelo:
+         * angry, disgust, fear, happy, neutral, sad, surprise.
          *
          * El pipeline del proyecto usa cinco emociones de negocio.
          */
@@ -345,9 +367,9 @@ class EmotionDetector(context: Context) : Closeable {
             1 -> EmotionResult.UNKNOWN    // disgust: no existe regla propia
             2 -> EmotionResult.UNKNOWN    // fear: no existe regla propia
             3 -> EmotionResult.HAPPY
-            4 -> EmotionResult.SAD
-            5 -> EmotionResult.SURPRISE
-            6 -> EmotionResult.NEUTRAL
+            4 -> EmotionResult.NEUTRAL
+            5 -> EmotionResult.SAD
+            6 -> EmotionResult.SURPRISE
             else -> EmotionResult.NEUTRAL
         }
 
@@ -374,81 +396,21 @@ class EmotionDetector(context: Context) : Closeable {
         }
     }
 
-    private fun fuseEmotion(
-        ferResult: EmotionResult,
-        smileProbability: Float?,
-        mouthOpenRatio: Float?,
-        eyesOpenProbability: Float?,
-    ): EmotionResult {
-        // La boca abierta de una sorpresa tambien eleva smilingProbability.
-        // Por eso una sorpresa FER clara se conserva antes de evaluar sonrisa.
-        if (
-            ferResult.emotion == EmotionResult.SURPRISE &&
-            ferResult.confidence >= SURPRISE_PRIORITY_CONFIDENCE
-        ) {
-            return ferResult
-        }
-
-        val hasStrongMouthOpening =
-            mouthOpenRatio != null && mouthOpenRatio >= SURPRISE_STRONG_MOUTH_OPEN_RATIO
-        val hasModerateMouthOpeningWithoutSmile =
-            mouthOpenRatio != null &&
-                mouthOpenRatio >= SURPRISE_MODERATE_MOUTH_OPEN_RATIO &&
-                (smileProbability == null || smileProbability <= SURPRISE_MAX_SMILE_FOR_MODERATE_OPENING)
-
-        if (
-            eyesOpenProbability != null && eyesOpenProbability >= SURPRISE_EYES_OPEN_THRESHOLD &&
-            (hasStrongMouthOpening || hasModerateMouthOpeningWithoutSmile)
-        ) {
-            // Una proporcion geometrica no es una probabilidad. Una vez que
-            // las dos senales cruzan sus umbrales, publicamos una confianza
-            // conservadora que el estabilizador pueda considerar util.
-            val confidence = eyesOpenProbability.coerceAtLeast(SURPRISE_BASE_CONFIDENCE)
-            return EmotionResult(EmotionResult.SURPRISE, confidence)
-        }
-
-        if (smileProbability != null && smileProbability >= SMILE_THRESHOLD) {
-            return EmotionResult(EmotionResult.HAPPY, smileProbability)
-        }
-
-        return ferResult
-    }
-
-    private fun mouthOpenRatio(face: Face): Float? {
-        val left = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position ?: return null
-        val right = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position ?: return null
-        val bottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position ?: return null
-        val mouthWidth = hypot(right.x - left.x, right.y - left.y)
-        if (mouthWidth <= 0f) return null
-
-        val cornerY = (left.y + right.y) / 2f
-        return ((bottom.y - cornerY) / mouthWidth).coerceAtLeast(0f)
-    }
-
-    private fun averageEyesOpenProbability(face: Face): Float? {
-        val left = face.leftEyeOpenProbability ?: return null
-        val right = face.rightEyeOpenProbability ?: return null
-        return (left + right) / 2f
-    }
-
     private companion object {
         const val TAG = "EmotionDetector"
         const val FACE_PADDING_RATIO = 0.12f
-        const val SMILE_THRESHOLD = 0.72f
-        const val SURPRISE_PRIORITY_CONFIDENCE = 0.55f
-        const val SURPRISE_MODERATE_MOUTH_OPEN_RATIO = 0.202f
-        const val SURPRISE_STRONG_MOUTH_OPEN_RATIO = 0.21f
-        const val SURPRISE_EYES_OPEN_THRESHOLD = 0.55f
-        const val SURPRISE_MAX_SMILE_FOR_MODERATE_OPENING = 0.45f
-        const val SURPRISE_BASE_CONFIDENCE = 0.75f
 
-        // El modelo RGB reconoce el resto de expresiones; las sonrisas claras
-        // se corrigen con ML Kit para evitar su falso positivo de enojo.
         const val MODEL_ASSET = "emotion_model.tflite"
-        const val INPUT_SIZE = 48
+        const val SOURCE_SIZE = 48
+        const val INPUT_SIZE = 96
         const val INPUT_CHANNELS = 3
         const val FER_CLASS_COUNT = 7
         const val FLOAT_BYTES = 4
+
+        const val GRAYSCALE_RED = 0.299f
+        const val GRAYSCALE_GREEN = 0.587f
+        const val GRAYSCALE_BLUE = 0.114f
+        const val NORMALIZATION_DIVISOR = 127.5f
 
         const val PROBABILITY_EPSILON = 0.05f
     }
