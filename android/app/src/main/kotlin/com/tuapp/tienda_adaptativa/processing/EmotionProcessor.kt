@@ -147,12 +147,13 @@ class EmotionProcessor(
     )
 
     companion object {
-        // A 8-10 fps, 15 muestras representan aproximadamente 1.5-2 segundos.
-        const val DEFAULT_WINDOW_SIZE = 15
-        const val DEFAULT_MINIMUM_SAMPLES = 10
+        // Ventana corta con histeresis: reacciona pronto a un gesto sostenido,
+        // pero una prediccion aislada no cambia la interfaz.
+        const val DEFAULT_WINDOW_SIZE = 7
+        const val DEFAULT_MINIMUM_SAMPLES = 4
         const val DEFAULT_MINIMUM_CONFIDENCE = 0.55f
-        const val DEFAULT_MINIMUM_WINNER_SHARE = 0.70f
-        const val DEFAULT_SWITCH_CONFIRMATIONS = 4
+        const val DEFAULT_MINIMUM_WINNER_SHARE = 0.62f
+        const val DEFAULT_SWITCH_CONFIRMATIONS = 2
         const val MAX_FRAMES_WITHOUT_USEFUL_READING = 8
     }
 }

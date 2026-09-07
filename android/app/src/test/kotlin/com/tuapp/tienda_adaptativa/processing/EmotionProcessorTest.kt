@@ -87,4 +87,19 @@ class EmotionProcessorTest {
         assertEquals(EmotionResult.SAD, repeated.emotion)
         assertFalse(repeated.didChange)
     }
+
+    @Test
+    fun `la configuracion por defecto confirma una sonrisa en cuatro lecturas`() {
+        val processor = EmotionProcessor()
+
+        repeat(3) {
+            val pending = processor.process(result(EmotionResult.HAPPY, 0.9f))
+            assertFalse(pending.isStable)
+        }
+
+        val stable = processor.process(result(EmotionResult.HAPPY, 0.9f))
+        assertTrue(stable.isStable)
+        assertTrue(stable.didChange)
+        assertEquals(EmotionResult.HAPPY, stable.emotion)
+    }
 }
