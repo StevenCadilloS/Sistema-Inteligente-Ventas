@@ -120,6 +120,58 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
     }
   }
 
+  /// Compra de un producto que el cliente eligio del feed, no la oferta
+  /// sugerida: se registra como su propio proceso de persuasion (sin
+  /// estrategia atribuida) y se cierra como venta.
+  Future<void> _comprarEleccionLibre(Producto producto) async {
+    final codCliente = _codCliente;
+    if (codCliente == null) return;
+
+    try {
+      final idProceso = await widget.adaptationEngine.registrarEleccionLibre(
+        codCliente: codCliente,
+        producto: producto,
+        emocion: _emocionDetectada ?? 'neutral',
+        nivelDeInteres: (_confianza * 100).round(),
+      );
+      await widget.banditOptimizer
+          .registrarRespuesta(idProcesoPersuasion: idProceso, aceptada: true);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${producto.nombreProducto} agregado a tu compra'),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo registrar la compra: $e')),
+        );
+      }
+    }
+  }
+
+  void _abrirDetalle(Producto producto) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => _DetalleProducto(
+        producto: producto,
+        onComprar: () {
+          Navigator.pop(sheetContext);
+          _comprarEleccionLibre(producto);
+        },
+      ),
+    );
+  }
+
   Future<void> _registrarRespuesta(bool aceptada) async {
     final oferta = _ofertaActual;
     if (oferta == null) return;
@@ -226,6 +278,7 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
                                     producto: producto,
                                     destacado: index == 0 && detectando,
                                     estilo: estilo,
+                                    onTap: () => _abrirDetalle(producto),
                                   );
                                 },
                                 childCount: _catalogo.length,
@@ -449,17 +502,71 @@ class _OfertaDestacada extends StatelessWidget {
   }
 }
 
+class _DetalleProducto extends StatelessWidget {
+  const _DetalleProducto({required this.producto, required this.onComprar});
+
+  final Producto producto;
+  final VoidCallback onComprar;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final precio =
+        (producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+    final hayStock = producto.totalDisponible > 0;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(producto.nombreProducto, style: textTheme.headlineSmall),
+            const SizedBox(height: 8),
+            Text(
+              'S/$precio',
+              style: textTheme.headlineMedium?.copyWith(
+                color: AppTheme.success,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              hayStock
+                  ? '${producto.totalDisponible} disponibles · ${producto.totalVendidos} vendidos'
+                  : 'Sin stock por ahora',
+              style: textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: hayStock ? onComprar : null,
+              icon: const Icon(Icons.shopping_bag_outlined),
+              label: Text(hayStock ? 'Lo quiero' : 'Sin stock'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.success,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ProductoCard extends StatelessWidget {
   const _ProductoCard({
     super.key,
     required this.producto,
     required this.destacado,
     required this.estilo,
+    required this.onTap,
   });
 
   final Producto producto;
   final bool destacado;
   final EmotionStyle estilo;
+  final VoidCallback onTap;
 
   /// Sin imagenes en la BD, cada categoria se distingue por color e icono
   /// derivados de su codigo — asi no se rompe si el catalogo cambia.
@@ -494,6 +601,7 @@ class _ProductoCard extends StatelessWidget {
 
     return Card(
       margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
         side: BorderSide(
@@ -501,9 +609,11 @@ class _ProductoCard extends StatelessWidget {
           width: destacado ? 2 : 1,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           Expanded(
             child: Container(
               width: double.infinity,
@@ -561,7 +671,8 @@ class _ProductoCard extends StatelessWidget {
               ],
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

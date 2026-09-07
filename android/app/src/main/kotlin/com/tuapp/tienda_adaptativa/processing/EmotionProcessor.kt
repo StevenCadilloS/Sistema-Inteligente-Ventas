@@ -117,7 +117,12 @@ class EmotionProcessor(
     }
 
     companion object {
-        const val DEFAULT_STABILITY_THRESHOLD = 10
+        /**
+         * A ~8-10 fps reales en dispositivo, 5 frames confirman una emocion
+         * en ~0.6s. Con 10 la app tardaba mas de un segundo en reaccionar y
+         * se sentia lenta frente a la camara.
+         */
+        const val DEFAULT_STABILITY_THRESHOLD = 5
         const val MAX_FRAMES_SIN_ROSTRO = 5
     }
 }

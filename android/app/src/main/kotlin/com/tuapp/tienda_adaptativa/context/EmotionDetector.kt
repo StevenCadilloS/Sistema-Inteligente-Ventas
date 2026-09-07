@@ -43,7 +43,10 @@ class EmotionDetector(context: Context) : Closeable {
     private val faceDetector: FaceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            // LANDMARK_MODE_NONE: de la cara solo se usa boundingBox para
+            // recortarla; calcular todos los landmarks costaba tiempo por
+            // frame y bajaba los fps sin que nadie leyera el resultado.
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
             .enableTracking()
             .build()
     )
