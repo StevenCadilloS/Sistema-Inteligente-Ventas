@@ -2,12 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../data/database/app_database.dart';
 import '../data/repositories/cliente_repository.dart';
 import '../decision/adaptation_engine.dart';
 import '../decision/learning/bandit_optimizer.dart';
 import '../services/emotion_channel.dart';
 import '../theme/app_theme.dart';
 
+/// Tienda con feed de productos. La camara corre de fondo (sin preview) y
+/// cada vez que cambia la emocion estable del cliente, el feed se reordena y
+/// se destaca una oferta nueva — sin que el usuario toque nada, que es el
+/// requisito eliminatorio del taller.
 class PrincipalScreen extends StatefulWidget {
   const PrincipalScreen({
     super.key,
@@ -27,42 +32,20 @@ class PrincipalScreen extends StatefulWidget {
 }
 
 class _PrincipalScreenState extends State<PrincipalScreen> {
+  List<Producto> _catalogo = const [];
   Oferta? _ofertaActual;
-  String _emocionDetectada = 'neutral';
-  double _confianza = 0.0;
-  bool _detectando = false;
+  // null = todavia no llego ninguna emocion estable. Distinto de 'neutral',
+  // que si es una lectura real y debe disparar una oferta.
+  String? _emocionDetectada;
+  double _confianza = 0;
+  bool _cargando = true;
   StreamSubscription<EmocionDetectada>? _subscription;
 
   @override
   void initState() {
     super.initState();
+    _cargarCatalogoInicial();
     _iniciarDeteccion();
-  }
-
-  void _iniciarDeteccion() {
-    final codCliente = widget.clienteRepository.clienteActivo();
-    if (codCliente == null) return;
-
-    _subscription = widget.emotionChannel.emociones.listen((emocion) async {
-      if (!mounted) return;
-
-      setState(() {
-        _emocionDetectada = emocion.emotion;
-        _confianza = emocion.confidence;
-        _detectando = true;
-      });
-
-      final nivelInteres = (emocion.confidence * 100).round();
-      final oferta = await widget.adaptationEngine.decidirOferta(
-        codCliente: codCliente,
-        emocion: emocion.emotion,
-        nivelDeInteres: nivelInteres,
-      );
-
-      if (mounted) {
-        setState(() => _ofertaActual = oferta);
-      }
-    });
   }
 
   @override
@@ -71,19 +54,86 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
     super.dispose();
   }
 
+  String? get _codCliente => widget.clienteRepository.clienteActivo();
+
+  /// El feed se pinta desde el arranque con el orden `neutral`, antes de que
+  /// la camara detecte nada: la tienda nunca se ve vacia.
+  Future<void> _cargarCatalogoInicial() async {
+    final codCliente = _codCliente;
+    if (codCliente == null) return;
+
+    final catalogo = await widget.adaptationEngine
+        .catalogoPara(codCliente: codCliente, emocion: 'neutral');
+    if (mounted) {
+      setState(() {
+        _catalogo = catalogo;
+        _cargando = false;
+      });
+    }
+  }
+
+  void _iniciarDeteccion() {
+    final codCliente = _codCliente;
+    if (codCliente == null) return;
+
+    _subscription = widget.emotionChannel.emociones.listen((emocion) {
+      if (!mounted) return;
+
+      final cambioDeEmocion = emocion.emotion != _emocionDetectada;
+      setState(() {
+        _emocionDetectada = emocion.emotion;
+        _confianza = emocion.confidence;
+      });
+
+      // Re-decidir en cada frame estable llenaria `interacciones` de filas
+      // repetidas; el feed solo reacciona cuando la emocion realmente cambia.
+      if (cambioDeEmocion) {
+        _adaptarA(emocion, codCliente);
+      }
+    });
+  }
+
+  Future<void> _adaptarA(EmocionDetectada emocion, String codCliente) async {
+    try {
+      final oferta = await widget.adaptationEngine.decidirOferta(
+        codCliente: codCliente,
+        emocion: emocion.emotion,
+        nivelDeInteres: (emocion.confidence * 100).round(),
+      );
+      final catalogo = await widget.adaptationEngine
+          .catalogoPara(codCliente: codCliente, emocion: emocion.emotion);
+
+      if (mounted) {
+        setState(() {
+          _ofertaActual = oferta;
+          _catalogo = catalogo;
+        });
+      }
+    } catch (e) {
+      // Antes esto se perdia en silencio y la pantalla quedaba congelada
+      // sin explicacion (p.ej. catalogo vacio).
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo adaptar la oferta: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _registrarRespuesta(bool aceptada) async {
-    if (_ofertaActual == null) return;
+    final oferta = _ofertaActual;
+    if (oferta == null) return;
 
     await widget.banditOptimizer.registrarRespuesta(
-      idProcesoPersuasion: _ofertaActual!.idProcesoPersuasion,
+      idProcesoPersuasion: oferta.idProcesoPersuasion,
       aceptada: aceptada,
     );
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(aceptada ? 'Venta registrada' : 'Oferta rechazada'),
-          backgroundColor: aceptada ? Colors.green : Colors.orange,
+          content: Text(aceptada ? 'Venta registrada' : 'Oferta descartada'),
+          backgroundColor: aceptada ? AppTheme.success : AppTheme.mutedText,
         ),
       );
       setState(() => _ofertaActual = null);
@@ -92,12 +142,19 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final emocionStyle = EmotionStyle.of(_emocionDetectada);
+    final estilo = EmotionStyle.of(_emocionDetectada ?? 'neutral');
+    final detectando = _emocionDetectada != null;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Tienda Adaptativa'),
+        centerTitle: false,
         actions: [
+          _ChipEmocion(
+            estilo: estilo,
+            detectando: detectando,
+            confianza: _confianza,
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Historial',
@@ -106,92 +163,179 @@ class _PrincipalScreenState extends State<PrincipalScreen> {
         ],
       ),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _EmocionCard(
-                    detectando: _detectando,
-                    confianza: _confianza,
-                    estilo: emocionStyle,
+        child: _cargando
+            ? const Center(child: CircularProgressIndicator())
+            : Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Responsive: 2 columnas en celular, hasta 4 en tablet.
+                      final columnas =
+                          (constraints.maxWidth / 190).floor().clamp(2, 4);
+
+                      return CustomScrollView(
+                        slivers: [
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            sliver: SliverToBoxAdapter(
+                              child: AnimatedSwitcher(
+                                duration: const Duration(milliseconds: 250),
+                                child: _ofertaActual == null
+                                    ? _BannerEsperando(
+                                        key: const ValueKey('esperando'),
+                                        detectando: detectando,
+                                      )
+                                    : _OfertaDestacada(
+                                        key: ValueKey(
+                                            _ofertaActual!.idProcesoPersuasion),
+                                        oferta: _ofertaActual!,
+                                        estilo: estilo,
+                                        onAceptar: () =>
+                                            _registrarRespuesta(true),
+                                        onRechazar: () =>
+                                            _registrarRespuesta(false),
+                                      ),
+                              ),
+                            ),
+                          ),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                            sliver: SliverToBoxAdapter(
+                              child: _TituloFeed(
+                                estilo: estilo,
+                                detectando: detectando,
+                              ),
+                            ),
+                          ),
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                            sliver: SliverGrid(
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columnas,
+                                mainAxisSpacing: 12,
+                                crossAxisSpacing: 12,
+                                childAspectRatio: 0.72,
+                              ),
+                              delegate: SliverChildBuilderDelegate(
+                                (context, index) {
+                                  final producto = _catalogo[index];
+                                  return _ProductoCard(
+                                    key: ValueKey(producto.codLoteProducto),
+                                    producto: producto,
+                                    destacado: index == 0 && detectando,
+                                    estilo: estilo,
+                                  );
+                                },
+                                childCount: _catalogo.length,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
-                  const SizedBox(height: 16),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 250),
-                    child: _ofertaActual != null
-                        ? _OfertaCard(
-                            key: ValueKey(_ofertaActual!.idProcesoPersuasion),
-                            oferta: _ofertaActual!,
-                            estilo: emocionStyle,
-                            onAceptar: () => _registrarRespuesta(true),
-                            onRechazar: () => _registrarRespuesta(false),
-                          )
-                        : const _EsperandoCard(key: ValueKey('esperando')),
-                  ),
-                ],
+                ),
               ),
+      ),
+    );
+  }
+}
+
+class _ChipEmocion extends StatelessWidget {
+  const _ChipEmocion({
+    required this.estilo,
+    required this.detectando,
+    required this.confianza,
+  });
+
+  final EmotionStyle estilo;
+  final bool detectando;
+  final double confianza;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = detectando ? estilo.color : AppTheme.mutedText;
+
+    return Center(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        margin: const EdgeInsets.only(right: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(detectando ? estilo.icon : Icons.videocam_outlined,
+                size: 16, color: color),
+            const SizedBox(width: 6),
+            Text(
+              detectando
+                  ? '${estilo.label} ${(confianza * 100).toStringAsFixed(0)}%'
+                  : 'Leyendo...',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: color, fontSize: 12),
             ),
-          ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _EmocionCard extends StatelessWidget {
-  const _EmocionCard({
-    required this.detectando,
-    required this.confianza,
-    required this.estilo,
-  });
+class _TituloFeed extends StatelessWidget {
+  const _TituloFeed({required this.estilo, required this.detectando});
 
-  final bool detectando;
-  final double confianza;
   final EmotionStyle estilo;
+  final bool detectando;
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Para ti ahora', style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 2),
+        Text(
+          detectando
+              ? 'Orden ajustado a tu expresion: ${estilo.label.toLowerCase()}'
+              : 'Orden estandar de la tienda',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+      ],
+    );
+  }
+}
 
+class _BannerEsperando extends StatelessWidget {
+  const _BannerEsperando({super.key, required this.detectando});
+
+  final bool detectando;
+
+  @override
+  Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: detectando
-                    ? estilo.color.withValues(alpha: 0.12)
-                    : AppTheme.border.withValues(alpha: 0.4),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                estilo.icon,
-                size: 28,
-                color: detectando ? estilo.color : AppTheme.mutedText,
-              ),
+            Icon(
+              detectando ? Icons.auto_awesome : Icons.videocam_outlined,
+              color: AppTheme.mutedText,
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Deteccion de emocion', style: textTheme.titleMedium),
-                  const SizedBox(height: 4),
-                  Text(
-                    detectando
-                        ? '${estilo.label} · ${(confianza * 100).toStringAsFixed(0)}% confianza'
-                        : 'Esperando rostro frente a la camara...',
-                    style: textTheme.bodyMedium,
-                  ),
-                ],
+              child: Text(
+                detectando
+                    ? 'Sigue navegando: la oferta se arma sola con tu expresion.'
+                    : 'Leyendo tu expresion con la camara frontal...',
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
           ],
@@ -201,8 +345,8 @@ class _EmocionCard extends StatelessWidget {
   }
 }
 
-class _OfertaCard extends StatelessWidget {
-  const _OfertaCard({
+class _OfertaDestacada extends StatelessWidget {
+  const _OfertaDestacada({
     super.key,
     required this.oferta,
     required this.estilo,
@@ -221,111 +365,203 @@ class _OfertaCard extends StatelessWidget {
     final precio =
         (oferta.producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Card(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: estilo.color.withValues(alpha: 0.4)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: estilo.color.withValues(alpha: 0.45)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    Icon(estilo.icon, color: estilo.color, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Oferta adaptativa · ${estilo.label}',
-                      style: textTheme.titleMedium?.copyWith(
-                        color: estilo.color,
-                      ),
-                    ),
-                  ],
+                Icon(estilo.icon, size: 18, color: estilo.color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Oferta para ti · ${estilo.label}',
+                    style: textTheme.titleMedium?.copyWith(color: estilo.color),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                Text(oferta.texto, style: textTheme.bodyLarge),
-                const SizedBox(height: 12),
-                Divider(color: AppTheme.border),
-                const SizedBox(height: 8),
-                Text(
-                  oferta.producto.nombreProducto,
-                  style: textTheme.titleMedium,
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(oferta.texto, style: textTheme.bodyLarge),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Text(
+                    oferta.producto.nombreProducto,
+                    style: textTheme.titleMedium,
+                  ),
                 ),
                 Text(
                   'S/$precio',
-                  style: textTheme.headlineSmall?.copyWith(
-                    color: AppTheme.success,
-                  ),
+                  style: textTheme.headlineSmall
+                      ?.copyWith(color: AppTheme.success),
                 ),
-                if (oferta.estrategia != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Estrategia: ${oferta.estrategia!.nombreEstrategia}',
-                    style: textTheme.bodyMedium,
-                  ),
-                ],
               ],
             ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: onAceptar,
-                icon: const Icon(Icons.check),
-                label: const Text('Me interesa'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.success,
-                  foregroundColor: Colors.white,
+            if (oferta.estrategia != null) ...[
+              const SizedBox(height: 4),
+              Text('Estrategia: ${oferta.estrategia!.nombreEstrategia}',
+                  style: textTheme.bodyMedium),
+            ],
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: onAceptar,
+                    icon: const Icon(Icons.shopping_bag_outlined),
+                    label: const Text('Lo quiero'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.success,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: onRechazar,
-                icon: const Icon(Icons.close),
-                label: const Text('No gracias'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.danger,
-                  foregroundColor: Colors.white,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onRechazar,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.mutedText,
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: const BorderSide(color: AppTheme.border),
+                    ),
+                    child: const Text('Ahora no'),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
-      ],
+      ),
     );
   }
 }
 
-class _EsperandoCard extends StatelessWidget {
-  const _EsperandoCard({super.key});
+class _ProductoCard extends StatelessWidget {
+  const _ProductoCard({
+    super.key,
+    required this.producto,
+    required this.destacado,
+    required this.estilo,
+  });
+
+  final Producto producto;
+  final bool destacado;
+  final EmotionStyle estilo;
+
+  /// Sin imagenes en la BD, cada categoria se distingue por color e icono
+  /// derivados de su codigo — asi no se rompe si el catalogo cambia.
+  (IconData, Color) get _visualCategoria {
+    const iconos = [
+      Icons.devices_other,
+      Icons.chair_outlined,
+      Icons.checkroom,
+      Icons.spa_outlined,
+      Icons.local_mall_outlined,
+    ];
+    const colores = [
+      Color(0xFF0891B2),
+      Color(0xFF7C3AED),
+      Color(0xFFDB2777),
+      Color(0xFF059669),
+      Color(0xFFEA580C),
+    ];
+    final indice = (producto.tipoProducto ?? producto.codLoteProducto)
+            .hashCode
+            .abs() %
+        iconos.length;
+    return (iconos[indice], colores[indice]);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final (icono, color) = _visualCategoria;
+    final precio =
+        (producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Center(
-          child: Column(
-            children: [
-              Icon(Icons.camera_alt_outlined, size: 56, color: AppTheme.mutedText),
-              const SizedBox(height: 16),
-              Text(
-                'Esperando deteccion de emocion...',
-                style: Theme.of(context).textTheme.bodyMedium,
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(
+          color: destacado ? estilo.color : AppTheme.border,
+          width: destacado ? 2 : 1,
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.10),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(15),
+                ),
+              ),
+              child: Stack(
+                children: [
+                  Center(child: Icon(icono, size: 40, color: color)),
+                  if (destacado)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: estilo.color,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Para ti',
+                          style: textTheme.bodyMedium?.copyWith(
+                            color: Colors.white,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  producto.nombreProducto,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyLarge,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'S/$precio',
+                  style: textTheme.titleMedium?.copyWith(
+                    color: AppTheme.success,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

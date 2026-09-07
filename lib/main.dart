@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/batch/cierre_diario_scheduler.dart';
 import 'data/database/app_database.dart';
+import 'data/database/demo_seed.dart';
 import 'data/repositories/cliente_repository.dart';
 import 'decision/adaptation_engine.dart';
 import 'decision/learning/bandit_optimizer.dart';
@@ -18,6 +19,7 @@ Future<void> main() async {
   await programarCierreDiario();
 
   final db = AppDatabase();
+  await sembrarCatalogoDemo(db);
   final prefs = await SharedPreferences.getInstance();
 
   final clienteRepository = ClienteRepository(db, prefs);
