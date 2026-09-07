@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.Rect
 import androidx.camera.core.ImageProxy
+import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
@@ -42,11 +43,9 @@ class EmotionDetector(context: Context) : Closeable {
 
     private val faceDetector: FaceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-            // LANDMARK_MODE_NONE: de la cara solo se usa boundingBox para
-            // recortarla; calcular todos los landmarks costaba tiempo por
-            // frame y bajaba los fps sin que nadie leyera el resultado.
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
+            .setMinFaceSize(0.35f)
             .enableTracking()
             .build()
     )
@@ -225,13 +224,16 @@ class EmotionDetector(context: Context) : Closeable {
             val rawOutput = Array(1) { FloatArray(FER_CLASS_COUNT) }
             interpreter.run(input, rawOutput)
 
-            val probabilities = toProbabilities(rawOutput[0])
-            val bestIndex = probabilities.indices.maxByOrNull { probabilities[it] }
+            val probs = toProbabilities(rawOutput[0])
+            Log.d(TAG, "raw_logits=${rawOutput[0].map { "%.3f".format(it) }}")
+            Log.d(TAG, "probs=${probs.map { "%.3f".format(it) }}")
+
+            val bestIndex = probs.indices.maxByOrNull { probs[it] }
                 ?: return EmotionResult(EmotionResult.NEUTRAL, 0f)
 
             return EmotionResult(
                 emotion = mapFerClass(bestIndex),
-                confidence = probabilities[bestIndex].coerceIn(0f, 1f)
+                confidence = probs[bestIndex].coerceIn(0f, 1f)
             )
         }
 
@@ -345,6 +347,10 @@ class EmotionDetector(context: Context) : Closeable {
 
         override fun close() {
             interpreter.close()
+        }
+
+        private companion object {
+            const val TAG = "EmotionDetector"
         }
     }
 
