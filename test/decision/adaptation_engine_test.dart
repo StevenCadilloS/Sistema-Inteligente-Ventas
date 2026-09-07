@@ -70,7 +70,7 @@ void main() {
   test('triste -> el producto mas economico', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000001', // triste
+      emocion: 'triste', // triste
       nivelDeInteres: 60,
     );
     expect(oferta.producto.codLoteProducto, 'P0000001');
@@ -79,7 +79,7 @@ void main() {
   test('feliz -> el producto mas caro (premium)', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000002', // feliz
+      emocion: 'feliz', // feliz
       nivelDeInteres: 90,
     );
     expect(oferta.producto.codLoteProducto, 'P0000002');
@@ -88,7 +88,7 @@ void main() {
   test('neutral -> el producto mas mostrado (estandar)', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000004', // neutral
+      emocion: 'neutral', // neutral
       nivelDeInteres: 50,
     );
     expect(oferta.producto.codLoteProducto, 'P0000003');
@@ -104,7 +104,7 @@ void main() {
 
     await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000001', // triste -> elige P0000001 (el mas economico)
+      emocion: 'triste', // elige P0000001 (el mas economico)
       nivelDeInteres: 60,
     );
 
@@ -115,15 +115,16 @@ void main() {
   });
 
   test(
-      'gesto no catalogado (ej. G0000008 de casos_reales_test.dart) cae a '
-      'neutral en vez de crashear', () async {
+      'emocion no catalogada (ej. gesto G0000008 de casos_reales_test.dart, '
+      'o "no_face" del clasificador) cae a neutral en vez de crashear',
+      () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000008', // fuera de las 5 emociones basicas sembradas
+      emocion: 'sin_clasificar', // no coincide con ningun nombreGesto sembrado
       nivelDeInteres: 50,
     );
 
-    // neutral -> el mas mostrado, igual que con G0000004.
+    // neutral -> el mas mostrado, igual que con 'neutral'.
     expect(oferta.producto.codLoteProducto, 'P0000003');
 
     // Sin fila en Gestos no se puede guardar el codigo (rompe la FK): la
@@ -140,14 +141,14 @@ void main() {
     // Primero se le muestra un producto de la categoria Audio (feliz).
     await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000002',
+      emocion: 'feliz',
       nivelDeInteres: 80,
     );
 
     // Ahora se enoja: debe saltar a la categoria Accesorios (P0000003).
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000005', // enojo
+      emocion: 'enojo', // enojo
       nivelDeInteres: 70,
     );
     expect(oferta.producto.tipoProducto, 'T00002');
@@ -165,7 +166,7 @@ void main() {
 
     final oferta = await engine.decidirOferta(
       codCliente: codCliente, // sin interacciones previas en este test
-      codGesto: 'G0000005', // enojo
+      emocion: 'enojo', // enojo
       nivelDeInteres: 70,
     );
 
@@ -176,7 +177,7 @@ void main() {
       () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000003', // sorpresa
+      emocion: 'sorpresa', // sorpresa
       nivelDeInteres: 75,
     );
 
@@ -196,12 +197,12 @@ void main() {
       () async {
     final triste = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000001',
+      emocion: 'triste',
       nivelDeInteres: 60,
     );
     final feliz = await engine.decidirOferta(
       codCliente: codCliente,
-      codGesto: 'G0000002',
+      emocion: 'feliz',
       nivelDeInteres: 60,
     );
 

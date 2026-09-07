@@ -44,21 +44,27 @@ class AdaptationEngine {
 
   Future<Oferta> decidirOferta({
     required String codCliente,
-    required String codGesto,
+    required String emocion, // ej. "triste" - ProcessedEmotion.emotion en Kotlin
     required int nivelDeInteres,
   }) async {
+    // EmotionProcessor.kt (Juan) no conoce codigos de catalogo: solo
+    // produce el nombre de la emocion (ver ProcessedEmotion.emotion en
+    // processing/EmotionProcessor.kt). Por eso se busca por nombreGesto,
+    // no por codGesto - codGesto es un detalle interno de persistencia.
+    //
     // getSingleOrNull, no getSingle: los datos historicos reales tienen
-    // codigos de gesto fuera de las 5 emociones basicas sembradas (ver
-    // test/data/database/casos_reales_test.dart, gesto G0000008). Un
-    // gesto sin catalogar cae a la regla neutral en vez de tumbar el
-    // pipeline de decision.
+    // gestos fuera de las 5 emociones basicas sembradas (ver
+    // test/data/database/casos_reales_test.dart, gesto G0000008), y en
+    // produccion el clasificador puede devolver "no_face" u otro valor no
+    // sembrado. Una emocion sin catalogar cae a la regla neutral en vez de
+    // tumbar el pipeline de decision.
     final gesto = await (_db.select(_db.gestos)
-          ..where((g) => g.codGesto.equals(codGesto)))
+          ..where((g) => g.nombreGesto.equals(emocion)))
         .getSingleOrNull();
     final regla = gesto == null ? _TipoRegla.neutral : _reglaPara(gesto.nombreGesto);
-    // Sin fila en Gestos no se puede guardar codGesto (rompe la FK); se
+    // Sin fila en Gestos no hay codGesto que guardar (rompe la FK); se
     // registra la interaccion igual, solo sin ese dato.
-    final codGestoValido = gesto == null ? null : codGesto;
+    final codGesto = gesto?.codGesto;
 
     final producto = await _productoPara(regla, codCliente);
     final estrategia = await _bandit.seleccionarEstrategia();
@@ -78,7 +84,7 @@ class AdaptationEngine {
             idProcesoPersuasion: idProcesoPersuasion,
             codCliente: codCliente,
             codEstrategia: Value(estrategia?.codEstrategia),
-            codGesto: Value(codGestoValido),
+            codGesto: Value(codGesto),
             codLoteProducto: Value(producto.codLoteProducto),
             tipoTransaccion: _tipoTransaccion,
             timestamp: DateTime.now().millisecondsSinceEpoch,
