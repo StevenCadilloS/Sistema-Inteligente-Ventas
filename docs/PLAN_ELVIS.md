@@ -156,7 +156,7 @@ El diseño del curso de Base de Datos ya trae los enganches que la app adaptativ
 
 | Dirección | Qué se pasa | Quién lo define |
 |---|---|---|
-| Juan → Elvis | Por emoción estable: `codGesto` + `nivelDeInteres` (0–100). Juan no escribe en la BD. | El mapeo FER-2013 → `maestra_gestos` lo defino yo al sembrar el catálogo. |
+| Juan → Elvis | Por emoción estable: `emocion` (String, ej. `"triste"` — es literalmente `ProcessedEmotion.emotion` de `EmotionProcessor.kt`, **no** un `codGesto`) + `nivelDeInteres` (0–100). Juan no escribe en la BD. | El mapeo FER-2013 → `maestra_gestos` lo defino yo al sembrar el catálogo; `decidirOferta` busca por `nombreGesto`, no por código (corregido en auditoría — ver sección 8). |
 | Elvis → Steven | `decidirOferta(...)` devuelve la oferta a pintar; `registrarRespuesta(...)` cierra el ciclo. | Yo. Steven solo consume. |
 | Elvis → Steven | `registrar(...)`, `iniciarSesion(...)`, cliente activo de la sesión. | Yo, incluido el formato de `codCliente`. |
 
@@ -208,6 +208,12 @@ De paso, escribiendo el test del hallazgo #2 con datos realistas (un proceso con
 | 11 | `productos.totalVecesMostrado` nunca se incrementaba en ningún lado — las reglas `neutral`/`sorpresa` (que ordenan por esa columna) nunca cambiaban de resultado: no eran adaptativas de verdad | `AdaptationEngine.decidirOferta` la incrementa (update SQL relativo, seguro ante concurrencia) dentro de la misma transacción que registra la interacción |
 
 Nota aparte, no corregida (fuera de alcance): `productos.totalDisponible` (stock) tampoco se decrementa al vender. Nada en el pipeline actual la lee, así que no rompe nada hoy, pero quedaría pendiente si se necesita control de inventario real.
+
+**Tercera pasada** (contrato con Juan), 1 hallazgo más — el más serio de los tres pasadas:
+
+| # | Hallazgo | Corrección |
+|---|---|---|
+| 12 | `decidirOferta(codGesto: ...)` esperaba un código de catálogo (`"G0000001"`), pero `EmotionProcessor.kt` (Juan) solo produce `ProcessedEmotion.emotion: String` (`"triste"`) — **no existe ningún `codGesto` en su lado**. Con el puente conectado tal cual, toda emoción real habría caído a `neutral` en silencio (por el fallback del hallazgo #4), sin error visible | Parámetro renombrado a `emocion` (String); se busca por `nombreGesto`, no por `codGesto` — el código de catálogo queda como detalle interno de persistencia |
 
 8 tests nuevos de regresión en total. Ver commits de auditoría para el detalle.
 
