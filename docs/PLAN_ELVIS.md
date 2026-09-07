@@ -5,6 +5,8 @@ Sistema Cierre de Ventas · Taller 1 de Desarrollo Adaptativo · UNI FIIS
 
 **Equipo:** Steven (frontend + integración con la cámara) · Juan (modelo de emociones) · Elvis (BD + reglas + autenticación). El backend es trabajo de los tres.
 
+> **Steven / Juan:** el `README.md` de la raíz tiene una sección **"Cómo continuar (por persona)"** con los pasos concretos y las firmas exactas de las funciones que ya están listas para usar (`ClienteRepository`, `AdaptationEngine.decidirOferta`, `BanditOptimizer.registrarRespuesta`). Este documento es el detalle de cómo se construyó ese tramo — para saber *qué llamar y con qué datos*, empiecen por el README.
+
 ---
 
 ## 0. Lo que califica el taller (y lo que no)

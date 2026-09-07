@@ -3,6 +3,13 @@ Sistema Cierre de Ventas · implementación del esquema corregido
 
 > Requiere leer antes **[ESQUEMA_CORREGIDO.md](ESQUEMA_CORREGIDO.md)** (hallazgos G1–G9, correcciones C1–C11).
 
+> **⚠️ Estado: diseño de referencia, ya implementado — pero no en Room.** El equipo decidió Flutter en vez de Android nativo (ver `PLAN_ELVIS.md §1`), así que este documento quedó como el **diseño conceptual** de las 11 tablas/vista/KPIs. La implementación real y vigente está en Dart con `drift`, traducida 1 a 1:
+> - Tablas → [`lib/data/database/tables.dart`](../lib/data/database/tables.dart)
+> - Vista + los 4 KPIs + batch (SQL crudo, casi idéntico al de este documento) → [`lib/data/database/queries.drift`](../lib/data/database/queries.drift)
+> - Conexión, seed de catálogos, `PRAGMA foreign_keys` → [`lib/data/database/app_database.dart`](../lib/data/database/app_database.dart)
+>
+> No escribas código Room/Kotlin a partir de esto — para el detalle de decisiones tomadas durante la traducción (D1–D5) y el estado real, ve a **[PLAN_ELVIS.md](PLAN_ELVIS.md)**.
+
 ---
 
 ## 1. Qué se traduce del diseño original y qué no
