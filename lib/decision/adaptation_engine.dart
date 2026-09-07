@@ -73,10 +73,60 @@ class AdaptationEngine {
     final producto = catalogo.first;
     final estrategia = await _bandit.seleccionarEstrategia();
 
-    // El calculo del siguiente correlativo/idProcesoPersuasion (leer el
-    // maximo actual) y el insert que los consume van en UNA transaccion:
-    // sueltos, dos llamadas concurrentes podrian leer el mismo maximo y
-    // chocar contra el UNIQUE(canal, correlativo) al insertar.
+    final idProcesoPersuasion = await _registrarInteraccion(
+      codCliente: codCliente,
+      producto: producto,
+      codEstrategia: estrategia?.codEstrategia,
+      codGesto: codGesto,
+      nivelDeInteres: nivelDeInteres,
+    );
+
+    return Oferta(
+      idProcesoPersuasion: idProcesoPersuasion,
+      producto: producto,
+      estrategia: estrategia,
+      texto: _textoPara(regla, producto),
+    );
+  }
+
+  /// El cliente elige un producto del feed por su cuenta, en vez de aceptar
+  /// la oferta sugerida. Se registra como su propio proceso de persuasion y
+  /// devuelve el `idProcesoPersuasion` para cerrarlo con
+  /// [BanditOptimizer.registrarRespuesta].
+  ///
+  /// Va sin estrategia (C11: `codEstrategia` nullable a proposito): ninguna
+  /// estrategia lo convencio, y atribuirsela le regalaria una conversion
+  /// falsa al UCB1.
+  Future<String> registrarEleccionLibre({
+    required String codCliente,
+    required Producto producto,
+    required String emocion,
+    required int nivelDeInteres,
+  }) async {
+    final gesto = await (_db.select(_db.gestos)
+          ..where((g) => g.nombreGesto.equals(emocion)))
+        .getSingleOrNull();
+
+    return _registrarInteraccion(
+      codCliente: codCliente,
+      producto: producto,
+      codEstrategia: null,
+      codGesto: gesto?.codGesto,
+      nivelDeInteres: nivelDeInteres,
+    );
+  }
+
+  /// El calculo del siguiente correlativo/idProcesoPersuasion (leer el
+  /// maximo actual) y el insert que los consume van en UNA transaccion:
+  /// sueltos, dos llamadas concurrentes podrian leer el mismo maximo y
+  /// chocar contra el UNIQUE(canal, correlativo) al insertar.
+  Future<String> _registrarInteraccion({
+    required String codCliente,
+    required Producto producto,
+    required String? codEstrategia,
+    required String? codGesto,
+    required int nivelDeInteres,
+  }) async {
     late final String idProcesoPersuasion;
     await _db.transaction(() async {
       idProcesoPersuasion = await _siguienteIdProcesoPersuasion();
@@ -87,7 +137,7 @@ class AdaptationEngine {
             correlativo: correlativo,
             idProcesoPersuasion: idProcesoPersuasion,
             codCliente: codCliente,
-            codEstrategia: Value(estrategia?.codEstrategia),
+            codEstrategia: Value(codEstrategia),
             codGesto: Value(codGesto),
             codLoteProducto: Value(producto.codLoteProducto),
             tipoTransaccion: _tipoTransaccion,
@@ -107,12 +157,7 @@ class AdaptationEngine {
       );
     });
 
-    return Oferta(
-      idProcesoPersuasion: idProcesoPersuasion,
-      producto: producto,
-      estrategia: estrategia,
-      texto: _textoPara(regla, producto),
-    );
+    return idProcesoPersuasion;
   }
 
   _TipoRegla _reglaPara(String nombreGesto) {
