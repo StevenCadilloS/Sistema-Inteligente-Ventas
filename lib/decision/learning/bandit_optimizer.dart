@@ -106,6 +106,17 @@ class BanditOptimizer {
             precioUnitarioCentavos:
                 precioFinalCentavos ?? producto.precioUnitarioCentavos,
           ));
+
+      // El stock baja dentro de la misma transaccion que la venta: si algo
+      // falla, no queda una venta sin su descuento de inventario. Update
+      // relativo en SQL (no leer+restar en Dart) para que dos compras
+      // concurrentes no se pisen, y con guarda para no dejarlo negativo.
+      await _db.customUpdate(
+        'UPDATE productos SET total_disponible = total_disponible - 1 '
+        'WHERE cod_lote_producto = ? AND total_disponible > 0',
+        variables: [Variable<String>(producto.codLoteProducto)],
+        updates: {_db.productos},
+      );
     });
   }
 

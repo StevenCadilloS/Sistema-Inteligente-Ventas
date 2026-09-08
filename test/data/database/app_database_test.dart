@@ -66,6 +66,7 @@ void main() {
           tipoProducto: const Value('T00001'),
           precioUnitarioCentavos: 15000,
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ));
     await db.into(db.clientes).insert(ClientesCompanion.insert(
           codCliente: 'C0000001',
@@ -148,6 +149,7 @@ void main() {
           nombreProducto: 'Mouse Gamer',
           precioUnitarioCentavos: 8000,
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ));
     await db.into(db.clientes).insert(ClientesCompanion.insert(
           codCliente: 'C0000002',

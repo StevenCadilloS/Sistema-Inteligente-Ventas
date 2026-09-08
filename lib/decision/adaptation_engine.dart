@@ -114,16 +114,54 @@ class AdaptationEngine {
     );
 
     // El descuento es la carta que se juega cuando el cliente dice que no:
-    // la primera oferta va a precio de lista.
-    final descuento = conDescuento ? _descuentoPara(regla) : 0;
+    // la primera oferta va a precio de lista. Sobre esa base, la estrategia
+    // que eligio el UCB1 decide como se persuade.
+    final descuento = conDescuento
+        ? _descuentoConEstrategia(_descuentoPara(regla), estrategia)
+        : 0;
 
     return Oferta(
       idProcesoPersuasion: idProcesoPersuasion,
       producto: producto,
       estrategia: estrategia,
-      texto: _textoPara(regla, producto, descuento),
+      texto: _textoPara(regla, producto, descuento) +
+          (conDescuento ? _beneficioDe(estrategia) : ''),
       descuentoPorcentaje: descuento,
     );
+  }
+
+  /// Bien sustituto de [producto]: la alternativa mas economica que cubre la
+  /// misma necesidad, es decir, de su misma categoria. Se usa cuando el
+  /// cliente rechazo el producto dos veces (a precio de lista y rebajado):
+  /// insistir con el mismo ya no tiene sentido, pero si ofrecerle otra cosa
+  /// del mismo rubro.
+  ///
+  /// Se prefiere uno mas barato que el rechazado — si rechazo dos veces por
+  /// precio, subirselo no ayuda. Si no hay ninguno mas barato, cae al mas
+  /// economico de la categoria. Devuelve null si no queda alternativa.
+  Future<Producto?> sustitutoPara(
+    Producto producto, {
+    Set<String> excluir = const {},
+  }) async {
+    final activos = await (_db.select(_db.productos)
+          ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
+          ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
+        .get();
+
+    final descartados = {...excluir, producto.codLoteProducto};
+    final candidatos = activos
+        .where((p) => !descartados.contains(p.codLoteProducto))
+        .where((p) => p.tipoProducto == producto.tipoProducto)
+        .toList();
+
+    if (candidatos.isEmpty) return null;
+
+    final masBaratos = candidatos.where(
+      (p) => p.precioUnitarioCentavos < producto.precioUnitarioCentavos,
+    );
+    // `activos` viene por precio ascendente, asi que el primero de cada
+    // filtro ya es el mas economico.
+    return masBaratos.isNotEmpty ? masBaratos.first : candidatos.first;
   }
 
   /// Descuento por regla, siguiendo la intencion ya documentada de cada una
@@ -134,6 +172,39 @@ class AdaptationEngine {
   /// mismo numero que termina congelado en `detalleVenta.precioUnitarioCentavos`
   /// cuando la venta se cierra. Un descuento que solo existiera en el texto
   /// del popup no cuadraria con lo que registra la base.
+  /// Cada estrategia es un *mecanismo de persuasion distinto*, no una
+  /// etiqueta: por eso modifica la oferta. Sin esto el UCB1 estaria
+  /// optimizando sobre nombres sin efecto, y no habria nada que aprender.
+  ///
+  /// Los codigos son los sembrados en `catalogo_demo.dart`; una estrategia
+  /// desconocida cae al descuento de la emocion, sin modificarlo.
+  int _descuentoConEstrategia(int base, Estrategia? estrategia) {
+    switch (estrategia?.codEstrategia) {
+      case 'E0000002': // Envio gratis: da valor sin tocar el precio
+      case 'E0000003': // Recomendacion premium: apela al producto, no al precio
+        return 0;
+      case 'E0000004': // Oferta relampago: mas agresiva que el descuento base
+        return base == 0 ? 10 : base + 5;
+      default: // Descuento directo (E0000001) y cualquier otra
+        return base;
+    }
+  }
+
+  /// Beneficio que la estrategia agrega al mensaje, cuando no pasa por el
+  /// precio.
+  String _beneficioDe(Estrategia? estrategia) {
+    switch (estrategia?.codEstrategia) {
+      case 'E0000002':
+        return ' Ademas te lo llevamos con envio gratis.';
+      case 'E0000003':
+        return ' Es de lo mejor que tenemos en su categoria.';
+      case 'E0000004':
+        return ' Precio relampago: solo por hoy.';
+      default:
+        return '';
+    }
+  }
+
   int _descuentoPara(_TipoRegla regla) {
     switch (regla) {
       case _TipoRegla.enojo:
@@ -229,22 +300,22 @@ class AdaptationEngine {
     switch (regla) {
       case _TipoRegla.triste: // sustituto mas economico
         return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true))
+              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
               ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
             .get();
       case _TipoRegla.feliz: // premium, sin descuento
         return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true))
+              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
               ..orderBy([(p) => OrderingTerm.desc(p.precioUnitarioCentavos)]))
             .get();
       case _TipoRegla.sorpresa: // novedad: lo menos mostrado
         return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true))
+              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
               ..orderBy([(p) => OrderingTerm.asc(p.totalVecesMostrado)]))
             .get();
       case _TipoRegla.neutral: // estandar: lo mas mostrado
         return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true))
+              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
               ..orderBy([(p) => OrderingTerm.desc(p.totalVecesMostrado)]))
             .get();
       case _TipoRegla.enojo: // cambia de categoria + descuento agresivo
@@ -258,7 +329,7 @@ class AdaptationEngine {
   /// disponible, queda el catalogo entero por precio ascendente.
   Future<List<Producto>> _catalogoOtraCategoria(String codCliente) async {
     final activos = await (_db.select(_db.productos)
-          ..where((p) => p.activo.equals(true))
+          ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
           ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
         .get();
     if (activos.isEmpty) return const [];

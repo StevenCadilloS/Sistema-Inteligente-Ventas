@@ -28,6 +28,7 @@ void main() {
           nombreProducto: 'Audifonos',
           precioUnitarioCentavos: 1000,
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ));
     await db.into(db.estrategias).insert(EstrategiasCompanion.insert(
           codEstrategia: 'E0000001',

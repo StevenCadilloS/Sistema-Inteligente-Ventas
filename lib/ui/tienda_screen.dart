@@ -62,6 +62,13 @@ class _TiendaScreenState extends State<TiendaScreen>
   /// la expresion del cliente cambia mientras la mira.
   Producto? _productoEnOferta;
 
+  /// Paso de la negociacion en curso: 0 precio de lista, 1 contraoferta con
+  /// descuento, 2 bien sustituto. Es un contador explicito y no se deduce del
+  /// descuento de la oferta, porque hay estrategias (envio gratis, premium)
+  /// que persuaden sin tocar el precio: inferirlo dejaria la escalada en
+  /// bucle sobre el mismo paso.
+  int _pasoNegociacion = 0;
+
   String? _productoSeleccionadoId;
   Timer? _seleccionTimer;
 
@@ -244,9 +251,10 @@ class _TiendaScreenState extends State<TiendaScreen>
         return;
       }
 
-      // Dijo que no a precio de lista: se responde bajando el precio segun su
-      // expresion, sobre el mismo producto que ya mostro querer.
-      if (!oferta.tieneDescuento) {
+      // Paso 0 -> 1: dijo que no a precio de lista, se responde con la
+      // mejor oferta que permita su expresion y la estrategia elegida.
+      if (_pasoNegociacion == 0) {
+        _pasoNegociacion = 1;
         await Future<void>.delayed(const Duration(milliseconds: 500));
         if (mounted && !_ofertaBloqueada) {
           await _ofertarRetencion(oferta.producto, conDescuento: true);
@@ -254,13 +262,40 @@ class _TiendaScreenState extends State<TiendaScreen>
         return;
       }
 
-      // Rechazo tambien el precio rebajado: se deja de insistir con este
-      // producto. Cada intento quedo registrado como su propio proceso de
-      // persuasion, que es lo que alimenta al UCB1.
+      // Rechazo tambien el precio rebajado. Insistir con el mismo producto ya
+      // no tiene sentido, pero si ofrecerle un bien sustituto: otra cosa de su
+      // misma categoria, mas economica. Cada intento quedo registrado como su
+      // propio proceso de persuasion, que es lo que alimenta al UCB1.
       _rechazados.add(oferta.producto.codLoteProducto);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
-      );
+
+      if (_pasoNegociacion == 1) {
+        final sustituto = await widget.adaptationEngine.sustitutoPara(
+          oferta.producto,
+          excluir: {
+            ..._rechazados,
+            ..._compras.map((c) => c.producto.codLoteProducto),
+          },
+        );
+
+        if (sustituto != null && mounted && !_ofertaBloqueada) {
+          _pasoNegociacion = 2;
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          if (mounted) {
+            await _ofertarRetencion(
+              sustituto,
+              conDescuento: true,
+              mensaje: 'Quiza este te acomode mejor:',
+            );
+          }
+          return;
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -288,6 +323,8 @@ class _TiendaScreenState extends State<TiendaScreen>
       return;
     }
 
+    _pasoNegociacion = 0;
+
     setState(() {
       _productoSeleccionadoId = producto.codLoteProducto;
     });
@@ -311,6 +348,7 @@ class _TiendaScreenState extends State<TiendaScreen>
   Future<void> _ofertarRetencion(
     Producto producto, {
     bool conDescuento = false,
+    String? mensaje,
   }) async {
     final codCliente = _codCliente;
     if (codCliente == null || _ofertaBloqueada || _yaComprado(producto)) return;
@@ -323,10 +361,11 @@ class _TiendaScreenState extends State<TiendaScreen>
         productoObjetivo: producto,
         conDescuento: conDescuento,
       );
-      final mensaje = oferta.tieneDescuento
-          ? 'Espera, te mejoro el precio:'
-          : '¿Te lo llevas?';
-      if (mounted) _mostrarPopupOferta(oferta, mensaje);
+      final texto = mensaje ??
+          (oferta.tieneDescuento
+              ? 'Espera, te mejoro el precio:'
+              : '¿Te lo llevas?');
+      if (mounted) _mostrarPopupOferta(oferta, texto);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

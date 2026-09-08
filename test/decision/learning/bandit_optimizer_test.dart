@@ -53,6 +53,7 @@ void main() {
           nombreProducto: 'Audifonos',
           precioUnitarioCentavos: 15000,
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ));
     await db.batch((b) {
       b.insertAll(db.estrategias, [

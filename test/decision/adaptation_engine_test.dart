@@ -1,4 +1,4 @@
-import 'package:drift/drift.dart' hide isNull;
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tienda_adaptativa/data/database/app_database.dart';
@@ -40,6 +40,7 @@ void main() {
           tipoProducto: const Value('T00001'),
           precioUnitarioCentavos: 5000, // el mas economico
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ),
         ProductosCompanion.insert(
           codLoteProducto: 'P0000002',
@@ -47,6 +48,7 @@ void main() {
           tipoProducto: const Value('T00001'),
           precioUnitarioCentavos: 25000, // el mas caro
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ),
         ProductosCompanion.insert(
           codLoteProducto: 'P0000003',
@@ -54,6 +56,7 @@ void main() {
           tipoProducto: const Value('T00002'), // otra categoria
           precioUnitarioCentavos: 8000,
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
           totalVecesMostrado: const Value(50), // el mas mostrado
         ),
       ]);
@@ -95,6 +98,38 @@ void main() {
       detalle.precioUnitarioCentavos,
       lessThan(oferta.producto.precioUnitarioCentavos),
     );
+  });
+
+  test('el sustituto es de la misma categoria y mas economico', () async {
+    // P0000002 (Audifonos Premium, 25000, T00001). Su sustituto debe salir
+    // de T00001 y costar menos: P0000001 (5000), no el Mouse de otra
+    // categoria.
+    final rechazado = await (db.select(db.productos)
+          ..where((p) => p.codLoteProducto.equals('P0000002')))
+        .getSingle();
+
+    final sustituto = await engine.sustitutoPara(rechazado);
+
+    expect(sustituto, isNotNull);
+    expect(sustituto!.tipoProducto, rechazado.tipoProducto);
+    expect(
+      sustituto.precioUnitarioCentavos,
+      lessThan(rechazado.precioUnitarioCentavos),
+    );
+  });
+
+  test('el sustituto respeta lo ya rechazado', () async {
+    final rechazado = await (db.select(db.productos)
+          ..where((p) => p.codLoteProducto.equals('P0000002')))
+        .getSingle();
+
+    // Excluido el unico candidato de su categoria, no queda alternativa.
+    final sustituto = await engine.sustitutoPara(
+      rechazado,
+      excluir: {'P0000001'},
+    );
+
+    expect(sustituto, isNull);
   });
 
   test('la primera oferta va a precio de lista (conDescuento: false)',
@@ -262,6 +297,7 @@ void main() {
           nombreProducto: 'Producto sin categoria',
           precioUnitarioCentavos: 100, // el mas barato del catalogo
           fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
+          totalDisponible: const Value(10),
         ));
 
     final oferta = await engine.decidirOferta(

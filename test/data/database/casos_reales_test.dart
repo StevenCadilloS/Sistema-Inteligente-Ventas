@@ -149,6 +149,7 @@ Future<void> _cargarPrimerCaso(AppDatabase db) async {
         nombreProducto: 'Camiseta basica',
         precioUnitarioCentavos: 2500, // no viene en el documento (G5)
         fechaCreacionStock: DateTime(2023, 5, 2).millisecondsSinceEpoch,
+        totalDisponible: const Value(10),
       ));
 
   await db.batch((b) {
@@ -225,12 +226,14 @@ Future<void> _cargarSegundoCaso(AppDatabase db) async {
         nombreProducto: 'Pantalon gris',
         precioUnitarioCentavos: 4500, // no viene en el documento (G5)
         fechaCreacionStock: DateTime(2025, 2, 2).millisecondsSinceEpoch,
+        totalDisponible: const Value(10),
       ),
       ProductosCompanion.insert(
         codLoteProducto: 'P0000024',
         nombreProducto: 'Jean clasico',
         precioUnitarioCentavos: 6000,
         fechaCreacionStock: DateTime(2025, 7, 1).millisecondsSinceEpoch,
+        totalDisponible: const Value(10),
       ),
     ]);
   });
