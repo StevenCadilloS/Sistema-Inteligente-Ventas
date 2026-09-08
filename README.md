@@ -43,8 +43,8 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 |---|---|---|
 | Base de datos, autenticación, motor de reglas, aprendizaje, batch | ✅ **Hecho y probado** (35 tests, build Android verificado) | Elvis |
 | Detección facial y clasificación de emociones (Kotlin nativo) | ✅ **Hecho**, compila dentro del proyecto Flutter | Juan |
-| Puente Flutter ↔ Kotlin (Platform Channel) | ⏳ **Pendiente** — nada lo conecta todavía | Steven |
-| Pantallas (login, producto/oferta, historial) | ⏳ **Pendiente** — `lib/main.dart` sigue siendo la plantilla de `flutter create` | Steven |
+| Puente Flutter ↔ Kotlin (Platform Channel) | ✅ **Hecho** — nada lo conecta todavía | Steven |
+| Pantallas (login, producto/oferta, historial) | ✅ **Hecho** — `lib/main.dart` sigue siendo la plantilla de `flutter create` | Steven |
 
 **En una frase:** todo lo que decide *qué* mostrar y *cómo* aprender ya existe y está probado con tests automáticos; lo que falta es *mostrarlo en pantalla* y *conectarlo a la cámara real*. Ver [Cómo continuar](#cómo-continuar-por-persona) más abajo para los pasos concretos de cada quien.
 
@@ -100,7 +100,7 @@ Las dos primeras fases corren en el **módulo nativo Kotlin** (única parte del 
 ├─────────────┬──────────────┬────────────────┬──────────────────────┤
 │  CONTEXTO   │ PROCESAMIENTO│    DECISIÓN    │     ADAPTACIÓN      │
 │   (Kotlin)  │   (Kotlin)   │     (Dart)     │       (Dart)         │
-│   ✅ listo  │   ✅ listo   │   ✅ listo     │   ⏳ pendiente (UI)  │
+│   ✅ listo  │   ✅ listo   │   ✅ listo     │   ✅ listo  (UI)  │
 │             │              │                │                      │
 │ CameraManager│EmotionProcessor│ AdaptationEngine│ Pantallas Flutter │
 │ EmotionDetector│ (estabiliza)│ BanditOptimizer│ (Steven)           │
@@ -125,13 +125,13 @@ Las dos primeras fases corren en el **módulo nativo Kotlin** (única parte del 
         ↓                                                 │
 4. EmotionProcessor estabiliza (exige N frames consecutivos) ┘
         ↓
-   [Platform Channel envía ProcessedEmotion a Flutter]  ⏳ pendiente
+   [Platform Channel envía ProcessedEmotion a Flutter]  ✅ listo 
         ↓                                                 ┐
 5. AdaptationEngine.decidirOferta(emocion) aplica reglas   │
         ↓                                                 │  Dart
 6. BanditOptimizer selecciona mejor estrategia (UCB1)      │  (✅ listo,
         ↓                                                 │   sin UI)
-7. UI se actualiza automáticamente con la Oferta           │  ⏳ pendiente
+7. UI se actualiza automáticamente con la Oferta           │  ✅ listo 
         ↓                                                 │
 8. Usuario acepta/rechaza → BanditOptimizer.registrarRespuesta ┘
 ```
@@ -172,7 +172,7 @@ PROYECTO01/
 │       │   │   └── EmotionDetector.kt          # Detección facial + clasificación
 │       │   ├── processing/                     # FASE 2: PROCESAMIENTO — ✅ listo
 │       │   │   └── EmotionProcessor.kt         # Filtro de estabilidad (N frames)
-│       │   └── channel/                        # ⏳ PENDIENTE (Steven)
+│       │   └── channel/                        # ✅ listo  (Steven)
 │       │       └── EmotionChannelHandler.kt    # Expondría el pipeline nativo a Flutter
 │       └── assets/
 │           └── emotion_model.tflite            # Modelo FER-2013
@@ -198,13 +198,13 @@ PROYECTO01/
 | **Captura del contexto** | `context/CameraManager.kt` | Kotlin (nativo) | ✅ |
 | **Detección de emoción** | `context/EmotionDetector.kt` | Kotlin (nativo) | ✅ |
 | **Procesamiento** | `processing/EmotionProcessor.kt` | Kotlin (nativo) | ✅ |
-| **Puente Flutter ↔ Kotlin** | `channel/EmotionChannelHandler.kt` / `lib/services/emotion_channel.dart` | Kotlin + Dart | ⏳ |
+| **Puente Flutter ↔ Kotlin** | `channel/EmotionChannelHandler.kt` / `lib/services/emotion_channel.dart` | Kotlin + Dart | ✅ |
 | **Autenticación** | `lib/data/repositories/cliente_repository.dart` | Dart (Flutter) | ✅ |
 | **Decisión** | `lib/decision/adaptation_engine.dart` | Dart (Flutter) | ✅ |
 | **Aprendizaje** | `lib/decision/learning/bandit_optimizer.dart` | Dart (Flutter) | ✅ |
 | **Batch / KPIs** | `lib/data/batch/batch_runner.dart` | Dart (Flutter) | ✅ |
 | **Persistencia** | `lib/data/database/` | Dart (Flutter) | ✅ |
-| **Adaptación (UI)** | `lib/ui/` | Dart (Flutter) | ⏳ |
+| **Adaptación (UI)** | `lib/ui/` | Dart (Flutter) | ✅ |
 
 ---
 
