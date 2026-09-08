@@ -51,7 +51,8 @@ que se juega cuando el cliente dice que no.
 | Dice "No, gracias" | Contraoferta: **mismo producto, con el descuento que decide su expresión** ("Espera, te mejoro el precio") |
 | Vuelve a rechazar | Se le ofrece un **bien sustituto**: otro de la misma categoría y más económico |
 | Rechaza también el sustituto | Se deja de insistir |
-| Su cara cambia con la oferta abierta | Al cerrarse, se le reofrece mejorando el precio según la emoción nueva |
+| Vuelve a tocar lo que rechazó | *"Listo, no insistimos. Mira otra cosa"* — no se reabre |
+| Se agotan los 10 s con la cara cambiada | Se le reofrece mejorando el precio, **una sola vez**: consume el paso 0 → 1 |
 | Ya compró ese producto | Queda marcado **"Comprado"** y sale del circuito de ofertas |
 
 Los dos pasos se registran como procesos de persuasión distintos, que es justo la señal
@@ -59,6 +60,24 @@ que el UCB1 necesita: ese producto a precio de lista no convierte, con descuento
 
 **Por qué lo ya comprado se excluye:** sin ese bloqueo el sistema le vendía el mismo
 producto el mismo día dos veces, y la segunda más barata que la primera.
+
+**Por qué la negociación siempre termina** (pregunta probable: *"¿y si rechazo veinte
+veces?"*). Tres mecanismos, en `tienda_screen.dart`:
+
+| Mecanismo | Qué garantiza |
+|---|---|
+| `_pasoNegociacion` solo avanza: 0 → 1 → 2 | Máximo dos ofertas del mismo producto, más un sustituto |
+| La tienda queda bloqueada **toda** la negociación | Tocar otro producto no la reinicia desde cero |
+| `_rechazados` veta lo ya rechazado | Volver a tocarlo no abre nada |
+
+El del medio es el que costó encontrar y el que más impresiona explicar: el bloqueo
+empieza **antes** de consultar la base, no al mostrar el popup. `decidirOferta` tarda
+cerca de un segundo calculando el UCB1; si la tienda sigue viva en esa ventana, un toque
+arranca otra negociación en paralelo y reinicia el peldaño. Se detectó midiendo, no
+leyendo: dos ofertas de productos distintos separadas por 0.2 s en `interacciones`.
+
+Los rechazos se olvidan cuando cambia la expresión, así que la puerta no se cierra para
+siempre: lo que no quiso neutral puede ofrecérsele de nuevo si se ríe.
 
 ---
 
@@ -204,6 +223,26 @@ Verificado en dispositivo real (Redmi, Android 12): **45 tests Dart + 9 Kotlin**
 `flutter analyze` sin issues, y la base con interacciones y ventas escribiéndose
 durante el uso.
 
+**La app está fijada en vertical** (`AndroidManifest.xml` con
+`screenOrientation="portrait"` y `SystemChrome.setPreferredOrientations` en
+`main.dart`). No es capricho: en horizontal la cámara frontal queda a un costado y el
+rostro se sale del encuadre — sin rostro no hay contexto, y sin contexto no hay
+adaptación. Si preguntan por el *diseño responsivo* del PDF, la respuesta es que
+responsivo no significa rotar sino adaptarse al espacio: la grilla recalcula columnas
+por ancho real (`LayoutBuilder` + `clamp(2, 4)`).
+
+**Dos APKs, no una.** GitHub Actions publica ambas en el release `steven1-1-latest`:
+
+| APK | Cuándo usarla |
+|---|---|
+| `...steven1.1.apk` (release) | **La de la presentación.** Dart compilado (AOT): responde mucho más rápido, que es justo lo que puntúa *Procesamiento en tiempo real* |
+| `...steven1.1-debug.apk` | Solo para diagnosticar: es la única que permite leer la base del celular, porque Android bloquea `adb run-as` en release |
+
+Se ven idénticas (`debugShowCheckedModeBanner: false`), así que no hay motivo para
+llevar la lenta. Detalle por si preguntan por qué release no minifica: R8 eliminaba los
+`ComponentRegistrar` que ML Kit descubre por reflexión y la app se cerraba al arrancar,
+así que `isMinifyEnabled = false` está puesto a propósito y comentado en el Gradle.
+
 **Semántica del carrito, por si preguntan:** la pantalla "Tus compras" no es un carrito
 pendiente — aceptar la oferta *es* lo que cierra el proceso de persuasión, así que en
 ese momento ya se escribió `venta` + `detalleVenta`. Por eso no se pueden eliminar
@@ -227,6 +266,8 @@ esa venta.
 | Que detecte el rostro desde más lejos | `android/.../context/EmotionDetector.kt` | `setMinFaceSize(0.10f)` |
 | Que la contraoferta salga con o sin descuento | `lib/ui/tienda_screen.dart` | El parámetro `conDescuento` en `_ofertarRetencion()` |
 | Que vuelva a ofrecer algo ya comprado | `lib/ui/tienda_screen.dart` | `_yaComprado()` |
+| Que vuelva a insistir con lo ya rechazado | `lib/ui/tienda_screen.dart` | La guarda `_rechazados.contains(...)` en `_seleccionarProducto()` |
+| Cuántas ofertas aguanta la escalera | `lib/ui/tienda_screen.dart` | Los peldaños de `_siguientePeldano()` |
 | Cuánto dura el popup de oferta | `lib/ui/tienda_screen.dart` | `_segundosRestantes = 10` en `_mostrarPopupOferta()` |
 | Cambiar la fórmula de exploración del aprendizaje | `lib/decision/learning/bandit_optimizer.dart` | Método `_ucb1()` |
 | Cambiar la frecuencia del cierre diario | `lib/data/batch/cierre_diario_scheduler.dart` | `Duration(days: 1)` en `programarCierreDiario()` |
@@ -293,14 +334,27 @@ Para justificar este punto de la rúbrica con ejemplos concretos:
   oferta (interacción + contador), registrar una venta (venta + detalle), registrar un
   cliente nuevo (evita choques si dos llamadas concurrentes generan el mismo código).
 - **El stream de emociones es un `EventChannel`**, no un `MethodChannel` — porque es un
-  flujo continuo de eventos, no una llamada única (pendiente de conectar, ver §7).
-- **Ciclo de vida / liberación de recursos** (evita fugas, parte de la regla
-  eliminatoria):
-  - `CameraManager.stopCamera()` / `.release()` — libera la cámara y el executor.
-  - `EmotionDetector.close()` — libera el detector de ML Kit y el intérprete TFLite.
-  - En Dart: cancelar la suscripción al `EventChannel` (`StreamSubscription.cancel()`)
-    al salir de la pantalla principal — **esto todavía no existe** porque la pantalla
-    no existe; es parte de lo pendiente.
+  flujo continuo de eventos, no una llamada única.
+- **El puente vuelve al hilo principal a propósito**: `EventSink.success()` está anotado
+  `@UiThread`, y llamarlo desde el hilo de la cámara lanza excepción. Por eso
+  `EmotionChannelHandler` emite dentro de `Handler(Looper.getMainLooper()).post`. Eso es
+  *concurrencia controlada*, la frase exacta del PDF.
+
+**Ciclo de vida / liberación de recursos.** El PDF pide *registro y liberación de
+listeners o sensores*. Está cubierto en los dos lados, y conviene saberlo de memoria
+porque es punto seguro:
+
+| Lado | Dónde | Qué libera |
+|---|---|---|
+| Dart | `TiendaScreen.dispose()` | Cancela el `StreamSubscription` y los dos `Timer` |
+| Kotlin | `EmotionChannelHandler.onCancel()` | Suelta cámara y detector al cerrarse el stream |
+| Kotlin | `CameraManager.release()` | `unbindAll()` + `analyzerExecutor.shutdown()` |
+| Kotlin | `EmotionDetector.close()` | Cierra ML Kit, el intérprete TFLite y su worker |
+| Kotlin | `MainActivity.onDestroy()` | Cierre atado al ciclo de vida de la Activity |
+| Kotlin | `EmotionDetector` | `frame.close()` en **cada** frame |
+
+Ese último importa más de lo que parece: si no se cierra cada `ImageProxy`, CameraX deja
+de entregar frames a los pocos segundos. Es la fuga clásica de CameraX, y está resuelta.
 
 ---
 
@@ -350,7 +404,21 @@ explorador de archivos del celular. Con el celular conectado:
 ```
 python tools/ver_base.py            # resumen de todas las tablas
 python tools/ver_base.py ventas     # vuelca una tabla completa
+python tools/ver_base.py esquema    # los CREATE TABLE tal cual corren
 ```
+
+**Sin celular, y esto es lo que conviene llevar a clase:** hay una instantánea real
+guardada en el repo (`tools/base_evidencia_2026-09-08.sqlite`, 339 interacciones y 35
+ventas). Se lee igual, desde la laptop y sin cable:
+
+```
+python tools/ver_base.py --evidencia
+python tools/ver_base.py --evidencia ventas
+```
+
+Dos razones para preferirla: `adb run-as` solo funciona con la APK de depuración —si
+llevas la de release, el celular no deja leer nada—, y desinstalar la app borra la base.
+Así se perdió la primera vez.
 
 Imprime cuántas filas tiene cada tabla, las últimas interacciones con su emoción,
 estrategia y si convirtieron, y las ventas comparando lo cobrado contra el precio de
@@ -372,3 +440,7 @@ pestaña *Browse Data*.
 - [ ] Puedes justificar al menos 3 de las decisiones/trampas de la sección 9 sin leerlas.
 - [ ] Sabes señalar, en el código, un ejemplo de `async/await` y uno de liberación de recursos.
 - [ ] Sabes explicar por qué el sistema NO requiere intervención manual (regla eliminatoria).
+- [ ] Probaste rechazar la misma oferta muchas veces: sale el mensaje de cierre y no vuelve.
+- [ ] Llevas la APK de **release** instalada (la debug solo si vas a leer la base).
+- [ ] Probaste `python tools/ver_base.py --evidencia` en la laptop, sin el celular conectado.
+- [ ] Sabes responder por qué la app está fijada en vertical.
