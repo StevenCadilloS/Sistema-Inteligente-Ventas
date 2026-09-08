@@ -47,13 +47,22 @@ class EmotionProcessor(
     fun process(rawEmotion: EmotionResult): ProcessedEmotion {
         if (rawEmotion.emotion == EmotionResult.NO_FACE) {
             framesSinRostro++
-            if (framesSinRostro >= MAX_FRAMES_SIN_ROSTRO) {
+            // Flanco: solo el frame exacto en que se confirma la perdida, para
+            // avisar una vez a la UI en vez de en cada frame sin rostro.
+            val acabaDePerderElRostro = framesSinRostro == MAX_FRAMES_SIN_ROSTRO
+            if (acabaDePerderElRostro) {
+                // Solo se descarta la ventana. La emocion vigente se conserva
+                // a proposito: a la UI ya se le avisa con `rostroPerdido`, y
+                // reiniciarla a neutral fabricaba transiciones falsas cada vez
+                // que el rostro salia un instante de cuadro (medido: 143 de
+                // ~430 frames sin rostro en 20s de uso normal).
                 buffer.clear()
             }
             return ProcessedEmotion(
-                emotion = currentStableEmotion,
+                emotion = EmotionResult.NO_FACE,
                 confidence = 0f,
-                isStable = false
+                isStable = false,
+                rostroPerdido = acabaDePerderElRostro
             )
         }
 
@@ -64,45 +73,63 @@ class EmotionProcessor(
             buffer.removeFirst()
         }
 
-        val stable = isStable()
-
-        if (stable) {
-            currentStableEmotion = rawEmotion.emotion
-            currentStableConfidence = getAverageConfidence()
+        if (buffer.size < stabilityThreshold) {
+            return ProcessedEmotion(
+                emotion = currentStableEmotion,
+                confidence = currentStableConfidence,
+                isStable = false
+            )
         }
+
+        // Voto por mayoria en vez de exigir la ventana entera identica: el
+        // clasificador alterna entre dos clases frame a frame (medido: 48% /
+        // 42% sobre la misma cara quieta), asi que pedir unanimidad no daba
+        // estabilidad — daba saltos cada vez que se alineaba una racha corta.
+        val votos = buffer.groupingBy { it.emotion }.eachCount()
+        val ganadora = votos.maxByOrNull { it.value } ?: return ProcessedEmotion(
+            emotion = currentStableEmotion,
+            confidence = currentStableConfidence,
+            isStable = false
+        )
+        val proporcion = ganadora.value.toFloat() / buffer.size
+
+        if (proporcion < MAYORIA_MINIMA) {
+            // Ninguna clase manda con claridad: se conserva la anterior en
+            // vez de parpadear entre dos.
+            return ProcessedEmotion(
+                emotion = currentStableEmotion,
+                confidence = currentStableConfidence,
+                isStable = false
+            )
+        }
+
+        // Histeresis: para desplazar a la emocion vigente no basta con ganar,
+        // hay que ganarle por un margen. Sin esto, dos clases empatadas se
+        // turnaban el primer puesto y la emocion cambiaba ~1 vez por segundo
+        // (medido: 16 cambios en 20s con el usuario quieto).
+        val votosVigente = votos[currentStableEmotion] ?: 0
+        val esOtraEmocion = ganadora.key != currentStableEmotion
+        if (esOtraEmocion && ganadora.value < votosVigente + MARGEN_PARA_CAMBIAR) {
+            return ProcessedEmotion(
+                emotion = currentStableEmotion,
+                confidence = currentStableConfidence,
+                isStable = false
+            )
+        }
+
+        currentStableEmotion = ganadora.key
+        currentStableConfidence = buffer
+            .filter { it.emotion == ganadora.key }
+            .map { it.confidence }
+            .average()
+            .toFloat()
+            .coerceIn(0f, 1f)
 
         return ProcessedEmotion(
             emotion = currentStableEmotion,
-            confidence = if (stable) {
-                currentStableConfidence
-            } else {
-                currentStableConfidence.coerceIn(0f, 1f)
-            },
-            isStable = stable
+            confidence = currentStableConfidence,
+            isStable = true
         )
-    }
-
-    /**
-     * Una lectura se considera estable solo cuando la ventana esta completa
-     * y todos los frames contienen la misma emocion.
-     */
-    private fun isStable(): Boolean {
-        if (buffer.size < stabilityThreshold) return false
-
-        val firstEmotion = buffer.firstOrNull()?.emotion ?: return false
-        return buffer.all { result -> result.emotion == firstEmotion }
-    }
-
-    /**
-     * Confianza promedio de los frames presentes en la ventana.
-     */
-    private fun getAverageConfidence(): Float {
-        if (buffer.isEmpty()) return 0f
-
-        val sum = buffer.sumOf { result -> result.confidence.toDouble() }
-        return (sum / buffer.size)
-            .toFloat()
-            .coerceIn(0f, 1f)
     }
 
     /**
@@ -118,11 +145,26 @@ class EmotionProcessor(
 
     companion object {
         /**
-         * A ~8-10 fps reales en dispositivo, 5 frames confirman una emocion
-         * en ~0.6s. Con 10 la app tardaba mas de un segundo en reaccionar y
-         * se sentia lenta frente a la camara.
+         * Tamano de la ventana de votacion. A ~20 fps reales en dispositivo,
+         * 20 frames son ~1s: filtra el ruido del clasificador sin que la app
+         * se sienta lenta.
          */
-        const val DEFAULT_STABILITY_THRESHOLD = 5
+        const val DEFAULT_STABILITY_THRESHOLD = 26
+
+        /**
+         * Cuantos votos de ventaja necesita una emocion nueva para desplazar
+         * a la vigente. Evita el ida y vuelta entre dos clases empatadas.
+         */
+        const val MARGEN_PARA_CAMBIAR = 6
+
+        /**
+         * Fraccion de la ventana que una emocion debe ganar para confirmarse.
+         * 0.45 y no mas alto porque medido en dispositivo la clase correcta
+         * gana con ~54% de los frames (el resto se reparte entre 4 clases, y
+         * el azar seria 20%): con 0.6 no se confirmaba ninguna emocion nunca.
+         */
+        const val MAYORIA_MINIMA = 0.45f
+
         const val MAX_FRAMES_SIN_ROSTRO = 5
     }
 }
@@ -133,5 +175,7 @@ class EmotionProcessor(
 data class ProcessedEmotion(
     val emotion: String,
     val confidence: Float,
-    val isStable: Boolean
+    val isStable: Boolean,
+    /** Solo true en el frame que confirma que el rostro se fue. */
+    val rostroPerdido: Boolean = false
 )

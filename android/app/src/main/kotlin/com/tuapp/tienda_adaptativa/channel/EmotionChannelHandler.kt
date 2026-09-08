@@ -6,6 +6,7 @@ import android.util.Log
 import io.flutter.embedding.android.FlutterFragmentActivity
 import com.tuapp.tienda_adaptativa.context.CameraManager
 import com.tuapp.tienda_adaptativa.context.EmotionDetector
+import com.tuapp.tienda_adaptativa.context.EmotionResult
 import com.tuapp.tienda_adaptativa.processing.EmotionProcessor
 import io.flutter.plugin.common.EventChannel
 
@@ -24,14 +25,19 @@ class EmotionChannelHandler(
                 frame,
                 onResult = { crudo ->
                     val procesado = emotionProcessor.process(crudo)
-                    // Log temporal de diagnostico: sin preview de camara, es la
-                    // unica forma de ver que esta detectando frame a frame.
-                    Log.d(
-                        TAG,
-                        "crudo=${crudo.emotion}(${crudo.confidence}) -> " +
-                            "procesado=${procesado.emotion} estable=${procesado.isStable}",
-                    )
-                    if (procesado.isStable) {
+                    if (procesado.rostroPerdido) {
+                        // Sin este aviso la UI se quedaba con la ultima
+                        // emocion para siempre (celular sobre la mesa
+                        // mostrando "triste 97%" sin nadie delante).
+                        mainHandler.post {
+                            events?.success(
+                                mapOf(
+                                    "emotion" to EmotionResult.NO_FACE,
+                                    "confidence" to 0.0f,
+                                )
+                            )
+                        }
+                    } else if (procesado.isStable) {
                         // EventSink.success() es @UiThread, pero este callback
                         // corre en el executor de ML Kit: sin el post al hilo
                         // principal, Flutter lanza "Methods marked with
