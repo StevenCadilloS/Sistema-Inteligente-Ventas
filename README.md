@@ -43,8 +43,8 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 |---|---|---|
 | Base de datos, autenticación, motor de reglas, aprendizaje, batch | ✅ **Hecho y probado** (35 tests, build Android verificado) | Elvis |
 | Detección facial y clasificación de emociones (Kotlin nativo) | ✅ **Hecho**, compila dentro del proyecto Flutter | Juan |
-| Puente Flutter ↔ Kotlin (Platform Channel) | ✅ **Hecho** — nada lo conecta todavía | Steven |
-| Pantallas (login, producto/oferta, historial) | ✅ **Hecho** — `lib/main.dart` sigue siendo la plantilla de `flutter create` | Steven |
+| Puente Flutter ↔ Kotlin (Platform Channel) | ✅ **Hecho** — conectado | Steven |
+| Pantallas (login, producto/oferta, historial) | ✅ **Hecho**  | Steven |
 
 **En una frase:** todo lo que decide *qué* mostrar y *cómo* aprender ya existe y está probado con tests automáticos; lo que falta es *mostrarlo en pantalla* y *conectarlo a la cámara real*. Ver [Cómo continuar](#cómo-continuar-por-persona) más abajo para los pasos concretos de cada quien.
 
@@ -111,7 +111,6 @@ Las dos primeras fases corren en el **módulo nativo Kotlin** (única parte del 
 │ TFLite      │              │ Aprendizaje    │ textos              │
 └──────┬──────┴──────┬───────┴────────────────┴──────────────────────┘
        └──────────────┘
-     ⏳ Platform Channel Flutter ↔ Kotlin (pendiente — ver "Cómo continuar")
 ```
 
 ### Flujo de ejecución completo
@@ -130,7 +129,7 @@ Las dos primeras fases corren en el **módulo nativo Kotlin** (única parte del 
 5. AdaptationEngine.decidirOferta(emocion) aplica reglas   │
         ↓                                                 │  Dart
 6. BanditOptimizer selecciona mejor estrategia (UCB1)      │  (✅ listo,
-        ↓                                                 │   sin UI)
+        ↓                                                 │   con UI)
 7. UI se actualiza automáticamente con la Oferta           │  ✅ listo 
         ↓                                                 │
 8. Usuario acepta/rechaza → BanditOptimizer.registrarRespuesta ┘
