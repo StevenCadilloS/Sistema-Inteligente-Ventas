@@ -44,6 +44,7 @@ class PopupOferta extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final precio =
         (oferta.producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+    final precioFinal = (oferta.precioFinalCentavos / 100).toStringAsFixed(2);
     final imagen = _imagenes[oferta.producto.codLoteProducto];
 
     return Stack(
@@ -151,18 +152,60 @@ class PopupOferta extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    'S/$precio',
-                    style: textTheme.headlineMedium?.copyWith(
-                      color: AppTheme.success,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Con descuento se muestra el precio de lista tachado
+                      // junto al final: el que se cobra y se registra en
+                      // detalleVenta es el final.
+                      if (oferta.tieneDescuento) ...[
+                        Text(
+                          'S/$precio',
+                          style: textTheme.titleMedium?.copyWith(
+                            color: AppTheme.mutedText,
+                            decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        'S/$precioFinal',
+                        style: textTheme.headlineMedium?.copyWith(
+                          color: AppTheme.success,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (oferta.tieneDescuento) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppTheme.danger,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '-${oferta.descuentoPorcentaje}%',
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 8),
                   Text(
                     oferta.texto,
                     style: textTheme.bodyMedium,
                     textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${oferta.producto.totalDisponible} disponibles',
+                    style: textTheme.bodyMedium?.copyWith(fontSize: 12),
                   ),
                   if (oferta.estrategia != null) ...[
                     const SizedBox(height: 4),
@@ -190,17 +233,21 @@ class PopupOferta extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
                           onPressed: onRechazar,
+                          icon: const Icon(Icons.close, size: 18),
+                          label: const Text('No, gracias'),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: AppTheme.mutedText,
+                            foregroundColor: AppTheme.danger,
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
-                            side: const BorderSide(color: AppTheme.border),
+                            side: const BorderSide(
+                              color: AppTheme.danger,
+                              width: 1.5,
+                            ),
                           ),
-                          child: const Text('Ahora no'),
                         ),
                       ),
                     ],

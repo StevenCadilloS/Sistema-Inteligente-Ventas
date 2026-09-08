@@ -9,9 +9,8 @@ import '../decision/learning/bandit_optimizer.dart';
 import '../services/emotion_channel.dart';
 import '../theme/app_theme.dart';
 import 'widgets/banner_esperando.dart';
-import 'widgets/carrito_compras.dart';
+import 'widgets/compras_realizadas.dart';
 import 'widgets/chip_emocion.dart';
-import 'widgets/detalle_producto.dart';
 import 'widgets/popup_oferta.dart';
 import 'widgets/producto_card.dart';
 import 'widgets/titulo_feed.dart';
@@ -20,8 +19,8 @@ import 'widgets/titulo_feed.dart';
 /// cada vez que cambia la emocion estable del cliente, el feed se reordena y
 /// se destaca una oferta nueva — sin que el usuario toque nada, que es el
 /// requisito eliminatorio del taller.
-class PrincipalScreen extends StatefulWidget {
-  const PrincipalScreen({
+class TiendaScreen extends StatefulWidget {
+  const TiendaScreen({
     super.key,
     required this.clienteRepository,
     required this.adaptationEngine,
@@ -35,10 +34,10 @@ class PrincipalScreen extends StatefulWidget {
   final EmotionChannel emotionChannel;
 
   @override
-  State<PrincipalScreen> createState() => _PrincipalScreenState();
+  State<TiendaScreen> createState() => _TiendaScreenState();
 }
 
-class _PrincipalScreenState extends State<PrincipalScreen>
+class _TiendaScreenState extends State<TiendaScreen>
     with SingleTickerProviderStateMixin {
   List<Producto> _catalogo = const [];
   String? _emocionDetectada;
@@ -53,7 +52,15 @@ class _PrincipalScreenState extends State<PrincipalScreen>
   bool _emocionCambioDurantePopup = false;
   String? _emocionAntesDelPopup;
 
-  final List<Producto> _carrito = [];
+  /// Compras cerradas en esta sesion, con lo realmente pagado por cada una.
+  final List<CompraRealizada> _compras = [];
+
+  /// Productos que el cliente ya rechazo: la siguiente oferta los salta.
+  final Set<String> _rechazados = {};
+
+  /// Producto de la oferta abierta, para reofrecerlo con mejor descuento si
+  /// la expresion del cliente cambia mientras la mira.
+  Producto? _productoEnOferta;
 
   String? _productoSeleccionadoId;
   Timer? _seleccionTimer;
@@ -97,6 +104,16 @@ class _PrincipalScreenState extends State<PrincipalScreen>
     _subscription = widget.emotionChannel.emociones.listen((emocion) {
       if (!mounted) return;
 
+      // El rostro salio de cuadro: el chip vuelve a "Leyendo..." en vez de
+      // quedarse congelado con la ultima emocion detectada.
+      if (emocion.emotion == 'no_face') {
+        setState(() {
+          _emocionDetectada = null;
+          _confianza = 0;
+        });
+        return;
+      }
+
       final cambioDeEmocion = emocion.emotion != _emocionDetectada;
       setState(() {
         _emocionDetectada = emocion.emotion;
@@ -111,6 +128,9 @@ class _PrincipalScreenState extends State<PrincipalScreen>
       }
 
       if (cambioDeEmocion) {
+        // Lo que no quiso estando enojado puede quererlo contento: los
+        // rechazos se olvidan al cambiar de expresion.
+        _rechazados.clear();
         _adaptarA(emocion, codCliente);
       }
     });
@@ -121,11 +141,15 @@ class _PrincipalScreenState extends State<PrincipalScreen>
       final catalogo = await widget.adaptationEngine
           .catalogoPara(codCliente: codCliente, emocion: emocion.emotion);
 
-      if (mounted) {
-        setState(() {
-          _catalogo = catalogo;
-        });
-      }
+      // El feed se reordena solo al cambiar la emocion, sin que el cliente
+      // toque nada: esa es la adaptacion automatica que exige el taller. La
+      // oferta no se dispara aqui — interrumpir cada cambio de cara es
+      // molesto; nace cuando el cliente toca un producto (ver
+      // [_seleccionarProducto]).
+      if (!mounted) return;
+      setState(() {
+        _catalogo = catalogo;
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -141,6 +165,7 @@ class _PrincipalScreenState extends State<PrincipalScreen>
 
     _emocionAntesDelPopup = _emocionDetectada;
     _emocionCambioDurantePopup = false;
+    _productoEnOferta = oferta.producto;
 
     setState(() {
       _ofertaBloqueada = true;
@@ -154,18 +179,11 @@ class _PrincipalScreenState extends State<PrincipalScreen>
         segundosRestantes: _segundosRestantes,
         onAceptar: () {
           _cerrarPopup();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('¡${oferta.producto.nombreProducto} agregado!'),
-              backgroundColor: AppTheme.success,
-            ),
-          );
+          _responderOferta(oferta, aceptada: true);
         },
         onRechazar: () {
           _cerrarPopup();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Oferta descartada')),
-          );
+          _responderOferta(oferta, aceptada: false);
         },
         onCerrar: _cerrarPopup,
       ),
@@ -199,19 +217,77 @@ class _PrincipalScreenState extends State<PrincipalScreen>
       _ofertaBloqueada = false;
     });
 
-    if (_emocionCambioDurantePopup) {
+    // Su cara cambio mientras miraba la oferta: se reacciona mejorando el
+    // precio del mismo producto, con el descuento de la emocion nueva.
+    final producto = _productoEnOferta;
+    if (_emocionCambioDurantePopup && producto != null) {
       _emocionCambioDurantePopup = false;
-      _generarOfertaPorEmocion();
+      _ofertarRetencion(producto, conDescuento: true);
     }
   }
 
-  void _generarOfertaPorEmocion() {
-    if (_codCliente == null || _catalogo.isEmpty) return;
-    final oferta = _crearOferta(_catalogo.first, _emocionDetectada ?? 'neutral');
-    _mostrarPopupOferta(oferta.oferta, oferta.mensaje);
+  /// Cierra el proceso de persuasion. Aceptar crea la venta con el precio
+  /// realmente ofrecido (con descuento); rechazar no escribe nada, porque la
+  /// ausencia de venta para ese idProcesoPersuasion *es* el rechazo — asi lo
+  /// mide el KPI 2 (ver queries.drift).
+  Future<void> _responderOferta(Oferta oferta, {required bool aceptada}) async {
+    try {
+      await widget.banditOptimizer.registrarRespuesta(
+        idProcesoPersuasion: oferta.idProcesoPersuasion,
+        aceptada: aceptada,
+        precioFinalCentavos: oferta.precioFinalCentavos,
+      );
+
+      if (!mounted) return;
+      if (aceptada) {
+        _registrarCompra(oferta.producto, oferta.precioFinalCentavos);
+        return;
+      }
+
+      // Dijo que no a precio de lista: se responde bajando el precio segun su
+      // expresion, sobre el mismo producto que ya mostro querer.
+      if (!oferta.tieneDescuento) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (mounted && !_ofertaBloqueada) {
+          await _ofertarRetencion(oferta.producto, conDescuento: true);
+        }
+        return;
+      }
+
+      // Rechazo tambien el precio rebajado: se deja de insistir con este
+      // producto. Cada intento quedo registrado como su propio proceso de
+      // persuasion, que es lo que alimenta al UCB1.
+      _rechazados.add(oferta.producto.codLoteProducto);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo registrar la respuesta: $e')),
+        );
+      }
+    }
   }
 
-  void _abrirDetalle(Producto producto) {
+  bool _yaComprado(Producto producto) =>
+      _compras.any((c) => c.producto.codLoteProducto == producto.codLoteProducto);
+
+  /// Tocar un producto es la senal de interes: se le propone de inmediato, a
+  /// precio de lista. Si dice que no, ahi entra el descuento segun su cara.
+  Future<void> _seleccionarProducto(Producto producto) async {
+    // Lo que ya compro sale del circuito de ofertas: insistir con el mismo
+    // producto terminaba vendiendoselo dos veces el mismo dia, y la segunda
+    // mas barata que la primera.
+    if (_yaComprado(producto)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ya compraste ${producto.nombreProducto}'),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _productoSeleccionadoId = producto.codLoteProducto;
     });
@@ -225,28 +301,44 @@ class _PrincipalScreenState extends State<PrincipalScreen>
       }
     });
 
-    _ofertarProducto(producto);
-
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) => DetalleProducto(
-        producto: producto,
-        onComprar: () {
-          Navigator.pop(sheetContext);
-          _agregarAlCarrito(producto);
-        },
-      ),
-    );
+    await _ofertarRetencion(producto);
   }
 
-  void _agregarAlCarrito(Producto producto) {
+  /// Oferta sobre el producto que el cliente acaba de mostrar interes.
+  ///
+  /// [conDescuento] escala la negociacion: la primera va a precio de lista, y
+  /// solo si dice que no se le mejora el precio segun su expresion.
+  Future<void> _ofertarRetencion(
+    Producto producto, {
+    bool conDescuento = false,
+  }) async {
+    final codCliente = _codCliente;
+    if (codCliente == null || _ofertaBloqueada || _yaComprado(producto)) return;
+
+    try {
+      final oferta = await widget.adaptationEngine.decidirOferta(
+        codCliente: codCliente,
+        emocion: _emocionDetectada ?? 'neutral',
+        nivelDeInteres: (_confianza * 100).round(),
+        productoObjetivo: producto,
+        conDescuento: conDescuento,
+      );
+      final mensaje = oferta.tieneDescuento
+          ? 'Espera, te mejoro el precio:'
+          : '¿Te lo llevas?';
+      if (mounted) _mostrarPopupOferta(oferta, mensaje);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo generar la oferta: $e')),
+        );
+      }
+    }
+  }
+
+  void _registrarCompra(Producto producto, int pagadoCentavos) {
     setState(() {
-      _carrito.add(producto);
+      _compras.add((producto: producto, pagadoCentavos: pagadoCentavos));
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -266,98 +358,10 @@ class _PrincipalScreenState extends State<PrincipalScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       isScrollControlled: true,
-      builder: (sheetContext) => CarritoCompras(
-        carrito: _carrito,
-        onEliminar: (index) {
-          Navigator.pop(sheetContext);
-          setState(() {
-            _carrito.removeAt(index);
-          });
-        },
-      ),
+      builder: (sheetContext) => ComprasRealizadas(compras: _compras),
     );
   }
 
-  void _ofertarProducto(Producto producto) {
-    final oferta = _crearOferta(producto, _emocionDetectada ?? 'neutral');
-    _mostrarPopupOferta(oferta.oferta, oferta.mensaje);
-  }
-
-  /// Crea una oferta basada en la emoción y el producto dado.
-  ({Oferta oferta, String mensaje}) _crearOferta(Producto producto, String emocion) {
-    String tipoOferta;
-    String mensaje;
-    double? descuentoPorcentaje;
-    Producto? productoSustituto;
-
-    switch (emocion) {
-      case 'feliz':
-        tipoOferta = 'combo';
-        mensaje = '¡Veo que te gusta! Te muestro esta nueva opción:';
-        break;
-      case 'sorpresa':
-        tipoOferta = 'descuento';
-        descuentoPorcentaje = 15;
-        mensaje = '¡Oferta sorpresa! 15% de descuento solo para ti:';
-        break;
-      case 'triste':
-        tipoOferta = 'sustituto';
-        productoSustituto = _buscarSustituto(producto);
-        mensaje = 'Veo que no estás muy animado. Mira esta alternativa:';
-        break;
-      case 'enojo':
-        tipoOferta = 'descuento';
-        descuentoPorcentaje = 25;
-        mensaje = 'Tranquilo, te ofrezco 25% de descuento:';
-        break;
-      default:
-        tipoOferta = 'descuento';
-        descuentoPorcentaje = 10;
-        mensaje = 'Te tenemos una oferta especial:';
-        break;
-    }
-
-    final precio = producto.precioUnitarioCentavos / 100;
-    String textoOferta;
-
-    if (tipoOferta == 'combo') {
-      final precio2 = (precio * 1.8).toStringAsFixed(2);
-      textoOferta = 'Lleva 2 por S/$precio2 (ahorras S/${(precio * 0.2).toStringAsFixed(2)})';
-    } else if (tipoOferta == 'sustituto' && productoSustituto != null) {
-      final precioSust = (productoSustituto.precioUnitarioCentavos / 100).toStringAsFixed(2);
-      textoOferta = '${productoSustituto.nombreProducto} por S/$precioSust';
-    } else {
-      final precioConDescuento = (precio * (1 - (descuentoPorcentaje ?? 10) / 100)).toStringAsFixed(2);
-      textoOferta = 'S/$precioConDescuento (antes S/${precio.toStringAsFixed(2)})';
-    }
-
-    return (
-      oferta: Oferta(
-        idProcesoPersuasion: 'popup_${DateTime.now().millisecondsSinceEpoch}',
-        producto: productoSustituto ?? producto,
-        estrategia: null,
-        texto: textoOferta,
-      ),
-      mensaje: mensaje,
-    );
-  }
-
-  Producto? _buscarSustituto(Producto producto) {
-    final mismosTipos = _catalogo
-        .where((p) =>
-            p.tipoProducto == producto.tipoProducto &&
-            p.codLoteProducto != producto.codLoteProducto &&
-            p.precioUnitarioCentavos < producto.precioUnitarioCentavos)
-        .toList()
-      ..sort((a, b) => a.precioUnitarioCentavos.compareTo(b.precioUnitarioCentavos));
-
-    if (mismosTipos.isNotEmpty) return mismosTipos.first;
-
-    final todosOrdenados = List<Producto>.from(_catalogo)
-      ..sort((a, b) => a.precioUnitarioCentavos.compareTo(b.precioUnitarioCentavos));
-
-    return todosOrdenados.isNotEmpty ? todosOrdenados.first : null;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -382,7 +386,7 @@ class _PrincipalScreenState extends State<PrincipalScreen>
                 tooltip: 'Mi carrito',
                 onPressed: _abrirCarrito,
               ),
-              if (_carrito.isNotEmpty)
+              if (_compras.isNotEmpty)
                 Positioned(
                   top: 6,
                   right: 6,
@@ -393,7 +397,7 @@ class _PrincipalScreenState extends State<PrincipalScreen>
                       shape: BoxShape.circle,
                     ),
                     child: Text(
-                      '${_carrito.length}',
+                      '${_compras.length}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -464,8 +468,9 @@ class _PrincipalScreenState extends State<PrincipalScreen>
                                     destacado: index == 0 && detectando,
                                     seleccionado:
                                         _productoSeleccionadoId == producto.codLoteProducto,
+                                    comprado: _yaComprado(producto),
                                     estilo: estilo,
-                                    onTap: () => _abrirDetalle(producto),
+                                    onTap: () => _seleccionarProducto(producto),
                                   );
                                 },
                                 childCount: _catalogo.length,

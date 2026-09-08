@@ -42,7 +42,7 @@ class _LoginScreenState extends State<LoginScreen> {
         apellido: apellido,
       );
       if (mounted) {
-        Navigator.pushReplacementNamed(context, '/principal');
+        Navigator.pushReplacementNamed(context, '/tienda');
       }
     } catch (e) {
       if (mounted) {

@@ -8,6 +8,7 @@ class ProductoCard extends StatelessWidget {
     required this.producto,
     required this.destacado,
     required this.seleccionado,
+    required this.comprado,
     required this.estilo,
     required this.onTap,
   });
@@ -15,6 +16,10 @@ class ProductoCard extends StatelessWidget {
   final Producto producto;
   final bool destacado;
   final bool seleccionado;
+
+  /// Ya comprado en esta sesion: no se vuelve a ofertar.
+  final bool comprado;
+
   final EmotionStyle estilo;
   final VoidCallback onTap;
 
@@ -149,6 +154,27 @@ class ProductoCard extends StatelessWidget {
                             ),
                             child: const Text(
                               'Seleccionado',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (comprado)
+                        Positioned(
+                          top: 8,
+                          left: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppTheme.success,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              'Comprado',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,
