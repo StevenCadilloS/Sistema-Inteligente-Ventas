@@ -7,6 +7,7 @@ funciona porque la build es debug.
 Uso (con el celular conectado y depuracion USB activa):
     python tools/ver_base.py            # resumen de todas las tablas
     python tools/ver_base.py ventas     # vuelca una tabla completa
+    python tools/ver_base.py esquema    # los CREATE TABLE tal cual estan
 """
 import os
 import sqlite3
@@ -87,6 +88,27 @@ def resumen(con):
               f"   lista S/{lista / 100:>8.2f}{marca}")
 
 
+def esquema(con):
+    """Muestra el DDL real: como quedaron creadas las tablas en el celular.
+
+    Es la fuente de verdad, no la declaracion de Dart: drift genera este SQL a
+    partir de `lib/data/database/tables.dart` y es lo que SQLite ejecuto.
+    """
+    consulta = """
+        SELECT type, name, sql FROM sqlite_master
+        WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+        ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name
+    """
+    for tipo, nombre, sql in con.execute(consulta):
+        print(f"-- {tipo}: {nombre}")
+        print(sql.strip() + ";")
+        print()
+
+    # Ojo: no se consulta `PRAGMA foreign_keys` aqui porque es por conexion,
+    # y esta es la de lectura, no la de la app. Las FK se ven declaradas
+    # arriba (REFERENCES) y AppDatabase las activa al abrir cada conexion.
+
+
 def volcar(con, tabla):
     columnas = [c[1] for c in con.execute(f"PRAGMA table_info({tabla})")]
     if not columnas:
@@ -101,7 +123,9 @@ def main():
     extraer()
     con = sqlite3.connect(LOCAL)
     try:
-        if len(sys.argv) > 1:
+        if len(sys.argv) > 1 and sys.argv[1] == "esquema":
+            esquema(con)
+        elif len(sys.argv) > 1:
             volcar(con, sys.argv[1])
         else:
             resumen(con)
