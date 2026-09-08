@@ -51,7 +51,7 @@ class EmotionDetector(context: Context) : Closeable {
             // brazo de distancia) dejaban la app usable solo pegada a la
             // cara. 0.10 es el default de ML Kit y cubre la distancia normal
             // de uso de un celular.
-            .setMinFaceSize(0.10f)
+            .setMinFaceSize(0.08f)
             .enableTracking()
             .build()
     )
