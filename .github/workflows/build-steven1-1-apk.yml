@@ -42,20 +42,32 @@ jobs:
       - name: Ejecutar pruebas
         run: flutter test
 
-      - name: Compilar APK instalable
+      # La de release es la que se instala para usar y demostrar: Dart va
+      # compilado (AOT) y responde bastante mas rapido que la de depuracion.
+      # R8 queda desactivado a proposito (ver android/app/build.gradle.kts):
+      # eliminaba los ComponentRegistrar que ML Kit busca por reflexion.
+      - name: Compilar APK de release
         run: flutter build apk --release
 
-      - name: Preparar archivo de descarga
+      # La de depuracion se publica solo como herramienta: es la unica que
+      # deja leer la base del celular con `adb run-as`, que es como funciona
+      # tools/ver_base.py. En release Android bloquea ese acceso.
+      - name: Compilar APK de depuracion
+        run: flutter build apk --debug
+
+      - name: Preparar archivos de descarga
         run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
             dist/Sistema-Inteligente-Ventas-steven1.1.apk
+          cp build/app/outputs/flutter-apk/app-debug.apk \
+            dist/Sistema-Inteligente-Ventas-steven1.1-debug.apk
 
       - name: Guardar APK en la ejecución
         uses: actions/upload-artifact@v7
         with:
           name: apk-steven1-1-${{ github.run_number }}
-          path: dist/Sistema-Inteligente-Ventas-steven1.1.apk
+          path: dist/*.apk
           retention-days: 14
           if-no-files-found: error
 
@@ -73,8 +85,16 @@ jobs:
 
           gh release upload steven1-1-latest \
             dist/Sistema-Inteligente-Ventas-steven1.1.apk \
+            dist/Sistema-Inteligente-Ventas-steven1.1-debug.apk \
             --clobber
 
           gh release edit steven1-1-latest \
             --title "APK automática de steven1.1" \
-            --notes "Última compilación correcta de steven1.1: $GITHUB_SHA"
+            --notes "Última compilación correcta de steven1.1: $GITHUB_SHA
+
+Cuál descargar:
+- Sistema-Inteligente-Ventas-steven1.1.apk — release. La normal: instalar, usar y demostrar.
+- Sistema-Inteligente-Ventas-steven1.1-debug.apk — solo si hace falta leer la base
+  del celular con 'python tools/ver_base.py' (adb run-as no funciona en release).
+
+No instales las dos: la segunda reemplaza a la primera."
