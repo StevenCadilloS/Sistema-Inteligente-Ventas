@@ -315,6 +315,8 @@ class _TiendaScreenState extends State<TiendaScreen>
   Future<void> _siguientePeldano(Oferta oferta) async {
     // Dijo que no a precio de lista: se responde con la mejor oferta que
     // permitan su expresion y la estrategia elegida.
+    _rechazados.add(oferta.producto.codLoteProducto);
+
     if (_pasoNegociacion == 0) {
       _pasoNegociacion = 1;
       await _ofertarTrasPausa(oferta.producto);
@@ -323,8 +325,6 @@ class _TiendaScreenState extends State<TiendaScreen>
 
     // Rechazo tambien el precio rebajado. Cada intento quedo registrado como
     // su propio proceso de persuasion, que es lo que alimenta al UCB1.
-    _rechazados.add(oferta.producto.codLoteProducto);
-
     if (_pasoNegociacion == 1 && await _ofrecerSustituto(oferta.producto)) {
       return;
     }
@@ -386,6 +386,21 @@ class _TiendaScreenState extends State<TiendaScreen>
     // cada toque en el hueco entre dos popups reiniciaba _pasoNegociacion a 0
     // y la escalada no llegaba nunca a su tope: ese era el bucle.
     if (_ofertaBloqueada) return;
+
+    // Lo que acaba de rechazar no se vuelve a ofrecer. Al cerrarse la
+    // negociacion la tarjeta queda justo donde estaba el boton "No, gracias",
+    // asi que el toque siguiente caia sobre ella y arrancaba otra ronda: para
+    // el cliente eso es el mismo bucle, aunque cada ronda termine bien.
+    // Los rechazos se olvidan cuando cambia su expresion (ver _iniciarDeteccion).
+    if (_rechazados.contains(producto.codLoteProducto)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Listo, no insistimos. Mira otra cosa'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
 
     // Lo que ya compro sale del circuito de ofertas: insistir con el mismo
     // producto terminaba vendiendoselo dos veces el mismo dia, y la segunda
