@@ -41,12 +41,23 @@ El PDF exige el flujo: **Entrada (contexto) → Procesamiento → Decisión → 
 
 **Cómo se ve la adaptación en la app (lo que vas a demostrar):**
 
+Es una **negociación en dos pasos**: el descuento no se regala de entrada, es la carta
+que se juega cuando el cliente dice que no.
+
 | Momento | Qué hace el sistema |
 |---|---|
 | El cliente navega el feed | El catálogo se **reordena solo** según su expresión — sin tocar nada, que es lo que exige la regla eliminatoria |
-| Abre un producto y lo cierra **sin comprar** | Ahí entra la oferta de retención: mismo producto, con el descuento que decide su emoción |
-| Rechaza la oferta | Se registra el intento fallido y se propone otro producto (máx. 2 veces seguidas) |
-| Su cara cambia con la oferta abierta | Al cerrarse, se le reofrece el mismo producto con el descuento de la emoción nueva |
+| Toca un producto | Sale el popup **a precio de lista**: "¿Te lo llevas?" |
+| Dice "No, gracias" | Contraoferta: **mismo producto, con el descuento que decide su expresión** ("Espera, te mejoro el precio") |
+| Vuelve a rechazar | Se deja de insistir con ese producto |
+| Su cara cambia con la oferta abierta | Al cerrarse, se le reofrece mejorando el precio según la emoción nueva |
+| Ya compró ese producto | Queda marcado **"Comprado"** y sale del circuito de ofertas |
+
+Los dos pasos se registran como procesos de persuasión distintos, que es justo la señal
+que el UCB1 necesita: ese producto a precio de lista no convierte, con descuento sí.
+
+**Por qué lo ya comprado se excluye:** sin ese bloqueo el sistema le vendía el mismo
+producto el mismo día dos veces, y la segunda más barata que la primera.
 
 ---
 
@@ -62,6 +73,9 @@ ordena el catálogo y `_descuentoPara()` fija la rebaja.
 | `sorpresa` | Novedad | `totalVecesMostrado` ascendente | 15% |
 | `neutral` | Estándar del catálogo | `totalVecesMostrado` descendente | 0% |
 | `enojo` | Cambio de categoría + descuento agresivo | Otra categoría primero, cada bloque por precio ascendente | 25% |
+
+El descuento de la tabla es el de la **contraoferta**; la primera propuesta siempre va a
+precio de lista (`decidirOferta(conDescuento: false)`).
 
 **El descuento es real, no decorativo:** el mismo número que ve el cliente en el popup
 es el que se congela en `detalleVenta.precioUnitarioCentavos` al cerrar la venta
@@ -166,8 +180,9 @@ para la nota de este taller.
 | Batch / KPIs | Elvis | Implementado, probado (no puntúa) |
 | `main.dart` conectando todo | Steven | Implementado |
 
-Verificado en dispositivo real (Redmi, Android 12): 38/38 tests, `flutter analyze` sin
-issues, y la base con interacciones y ventas escribiéndose durante el uso.
+Verificado en dispositivo real (Redmi, Android 12): **43 tests Dart + 9 Kotlin**,
+`flutter analyze` sin issues, y la base con interacciones y ventas escribiéndose
+durante el uso.
 
 **Semántica del carrito, por si preguntan:** la pantalla "Tus compras" no es un carrito
 pendiente — aceptar la oferta *es* lo que cierra el proceso de persuasión, así que en
@@ -188,7 +203,8 @@ esa venta.
 | Hacer que tarde más/menos en confirmar una emoción | `android/.../processing/EmotionProcessor.kt` | `DEFAULT_STABILITY_THRESHOLD` (26 frames ≈ 1.3 s) |
 | Que la emoción cambie más/menos fácil (parpadeo) | `android/.../processing/EmotionProcessor.kt` | `MAYORIA_MINIMA` (0.45) y `MARGEN_PARA_CAMBIAR` (6 votos) |
 | Que detecte el rostro desde más lejos | `android/.../context/EmotionDetector.kt` | `setMinFaceSize(0.10f)` |
-| Cuántas veces insiste tras un rechazo | `lib/ui/tienda_screen.dart` | `_maxInsistencias` (hoy 2) |
+| Que la contraoferta salga con o sin descuento | `lib/ui/tienda_screen.dart` | El parámetro `conDescuento` en `_ofertarRetencion()` |
+| Que vuelva a ofrecer algo ya comprado | `lib/ui/tienda_screen.dart` | `_yaComprado()` |
 | Cuánto dura el popup de oferta | `lib/ui/tienda_screen.dart` | `_segundosRestantes = 10` en `_mostrarPopupOferta()` |
 | Cambiar la fórmula de exploración del aprendizaje | `lib/decision/learning/bandit_optimizer.dart` | Método `_ucb1()` |
 | Cambiar la frecuencia del cierre diario | `lib/data/batch/cierre_diario_scheduler.dart` | `Duration(days: 1)` en `programarCierreDiario()` |
@@ -282,11 +298,33 @@ Para justificar este punto de la rúbrica con ejemplos concretos:
 
 ---
 
-## 12. Checklist final antes de la presentación
+## 12. Pruebas automatizadas
+
+Dos suites, ninguna necesita celular ni emulador:
+
+| Suite | Cuántas | Cómo correrla |
+|---|---|---|
+| Dart (BD, repositorio, motor, bandit, batch, arranque) | 43 | `flutter test` |
+| Kotlin (`EmotionProcessor`) | 9 | `cd android && ./gradlew :app:testDebugUnitTest` |
+
+Las de Kotlin cubren la lógica más delicada del pipeline, y cada caso fija un bug que ya
+ocurrió en dispositivo: que un frame `no_face` suelto no descarte la ventana, que la
+pérdida real de rostro avise una sola vez, y que la histéresis impida el parpadeo entre
+dos clases empatadas.
+
+**Detalle que vale contar si preguntan por el proceso:** la primera vez que se corrieron
+las pruebas de Kotlin, Gradle reportó `BUILD SUCCESSFUL`… sin haber ejecutado ninguna. El
+directorio `src/test/kotlin` no estaba registrado y la tarea pasó en vacío. Se detectó
+recién al abrir `build/app/test-results/`, donde el XML dice cuántos casos corrieron de
+verdad. Un build verde no equivale a pruebas ejecutadas.
+
+---
+
+## 13. Checklist final antes de la presentación
 
 - [ ] El puente Kotlin→Flutter está conectado y las 3 pantallas existen.
 - [ ] Corriste la app y viste la oferta cambiar sola al cambiar de expresión, sin tocar nada.
-- [ ] Corriste `flutter test` y todos los tests pasan.
+- [ ] Corriste `flutter test` (43) y `cd android && ./gradlew :app:testDebugUnitTest` (9).
 - [ ] Puedes explicar de memoria las 5 reglas de emoción sin mirar el código.
 - [ ] Sabes en qué archivo y método tocar para cada fila de la tabla de la sección 8.
 - [ ] Puedes justificar al menos 3 de las decisiones/trampas de la sección 9 sin leerlas.
