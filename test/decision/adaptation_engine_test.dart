@@ -97,6 +97,41 @@ void main() {
     );
   });
 
+  test('la primera oferta va a precio de lista (conDescuento: false)',
+      () async {
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'enojo', // la regla daria 25%
+      nivelDeInteres: 70,
+      conDescuento: false,
+    );
+
+    expect(oferta.descuentoPorcentaje, 0);
+    expect(oferta.tieneDescuento, isFalse);
+    expect(
+      oferta.precioFinalCentavos,
+      oferta.producto.precioUnitarioCentavos,
+    );
+    // El texto no puede anunciar "0% de descuento".
+    expect(oferta.texto, isNot(contains('0%')));
+  });
+
+  test('productoObjetivo fuerza la oferta sobre ese producto', () async {
+    // 'triste' elegiria el mas economico (P0000001, 5000); se pide el caro.
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'triste',
+      nivelDeInteres: 50,
+      productoObjetivo: await (db.select(db.productos)
+            ..where((p) => p.codLoteProducto.equals('P0000002')))
+          .getSingle(),
+    );
+
+    expect(oferta.producto.codLoteProducto, 'P0000002');
+    // La emocion sigue decidiendo el descuento aunque el producto sea fijo.
+    expect(oferta.descuentoPorcentaje, 10);
+  });
+
   test('tras un rechazo insiste con otro producto, no con el mismo', () async {
     final primera = await engine.decidirOferta(
       codCliente: codCliente,

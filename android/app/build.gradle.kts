@@ -60,4 +60,9 @@ dependencies {
     // declaran el mismo namespace de manifest, lo que rompe el manifest
     // merger con AGP moderno. 2.16.1 lo corrige; misma API (org.tensorflow.lite.*).
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
+
+    // Pruebas JVM del modulo nativo (no requieren emulador ni dispositivo):
+    // EmotionProcessor es logica pura y se puede verificar aqui.
+    // Ejecutar con: ./gradlew :app:testDebugUnitTest
+    testImplementation("junit:junit:4.13.2")
 }
