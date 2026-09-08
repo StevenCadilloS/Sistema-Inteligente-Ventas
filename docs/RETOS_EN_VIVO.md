@@ -362,7 +362,7 @@ convierte en punto a favor.
 | El modelo confunde `triste` con `enojo` | Es el techo del modelo FER a 48×48: ambas bajan las cejas. El preprocesamiento (grises, ecualización, recorte cuadrado) ya bajó el error de "enojo con cara neutra" del 49% al 5% |
 | `tipo_cliente` nunca se asigna | La tabla y la FK existen; falta la regla que clasifica Nuevo/Frecuente/VIP. Es trabajo pendiente, no un error de diseño |
 | `total_vendidos` está en 0 | Es un derivado que actualiza el módulo batch en el cierre diario, no la transacción en línea |
-| El informe tiene 7 secciones y 2 páginas | El PDF (pág. 11) dice **1 página máx.** y lista **6 secciones**. Si el docente se ciñe al PDF, tienes de más, no de menos — pero confirma qué versión rige |
+| El informe ocupa ~2 páginas | Ya cubre las **6 secciones que exige el PDF** más 3 propias (arquitectura, tecnologías, ubicación). El PDF dice *1 página máx.*: si el docente lo exige, borras las secciones **7, 8 y 9** y queda exacto |
 
 **Lo que el PDF pide y quizá no tengas a la vista:** la sección *"Evidencia de adaptación
 — capturas o descripción de cambios dinámicos"* (pág. 12). Si la piden, tu evidencia es
