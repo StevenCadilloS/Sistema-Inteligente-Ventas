@@ -3,14 +3,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/batch/cierre_diario_scheduler.dart';
 import 'data/database/app_database.dart';
-import 'data/database/demo_seed.dart';
+import 'data/database/catalogo_demo.dart';
 import 'data/repositories/cliente_repository.dart';
 import 'decision/adaptation_engine.dart';
 import 'decision/learning/bandit_optimizer.dart';
 import 'services/emotion_channel.dart';
 import 'theme/app_theme.dart';
 import 'ui/login_screen.dart';
-import 'ui/principal_screen.dart';
+import 'ui/tienda_screen.dart';
 import 'ui/historial_screen.dart';
 
 Future<void> main() async {
@@ -60,10 +60,10 @@ class MyApp extends StatelessWidget {
       title: 'Tienda Adaptativa',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      initialRoute: clienteActivo != null ? '/principal' : '/',
+      initialRoute: clienteActivo != null ? '/tienda' : '/',
       routes: {
         '/': (context) => LoginScreen(clienteRepository: clienteRepository),
-        '/principal': (context) => PrincipalScreen(
+        '/tienda': (context) => TiendaScreen(
               clienteRepository: clienteRepository,
               adaptationEngine: adaptationEngine,
               banditOptimizer: bandit,
