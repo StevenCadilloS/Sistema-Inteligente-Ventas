@@ -195,14 +195,19 @@ class _TiendaScreenState extends State<TiendaScreen>
         oferta: oferta,
         mensaje: mensaje,
         segundosRestantes: _segundosRestantes,
+        // seguira: responder no termina la negociacion, sigue en
+        // _responderOferta. Si se soltara el bloqueo aqui, el hueco hasta el
+        // popup siguiente dejaria la tienda viva y cualquier toque en ese
+        // hueco arrancaria otra negociacion desde el peldano 0.
         onAceptar: () {
-          _cerrarPopup();
+          _cerrarPopup(seguira: true);
           _responderOferta(oferta, aceptada: true);
         },
         onRechazar: () {
-          _cerrarPopup();
+          _cerrarPopup(seguira: true);
           _responderOferta(oferta, aceptada: false);
         },
+        // Descartar el popup si termina la negociacion.
         onCerrar: _cerrarPopup,
       ),
     );
@@ -236,13 +241,10 @@ class _TiendaScreenState extends State<TiendaScreen>
   /// expresion cambio mientras miraba. Si fue el quien cerro — la X, el fondo,
   /// "lo quiero" o "no, gracias" — reabrir la oferta es un bucle: cerraba y
   /// volvia a salir, sin salida posible.
-  void _cerrarPopup({bool porTimeout = false}) {
+  void _cerrarPopup({bool porTimeout = false, bool seguira = false}) {
     _ofertaTimer?.cancel();
     _overlayEntry?.remove();
     _overlayEntry = null;
-    setState(() {
-      _ofertaBloqueada = false;
-    });
 
     final producto = _productoEnOferta;
     // La mejora por cambio de expresion es un peldano mas de la escalera, no
@@ -257,8 +259,13 @@ class _TiendaScreenState extends State<TiendaScreen>
     _emocionCambioDurantePopup = false;
     _emocionAntesDelPopup = null;
 
+    setState(() {
+      _ofertaBloqueada = seguira || mejorar;
+    });
+
     if (!mejorar) {
       _productoEnOferta = null;
+      if (!seguira) _pasoNegociacion = 0;
       return;
     }
 
@@ -285,11 +292,13 @@ class _TiendaScreenState extends State<TiendaScreen>
       if (!mounted) return;
       if (aceptada) {
         _registrarCompra(oferta.producto, oferta.precioFinalCentavos);
+        _terminarNegociacion();
         return;
       }
 
       await _siguientePeldano(oferta);
     } catch (e) {
+      _terminarNegociacion();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('No se pudo registrar la respuesta: $e')),
@@ -320,10 +329,22 @@ class _TiendaScreenState extends State<TiendaScreen>
       return;
     }
 
+    _terminarNegociacion();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
       );
+    }
+  }
+
+  /// Fin de la negociacion: se reabre la tienda y la escalera vuelve a cero.
+  void _terminarNegociacion() {
+    _pasoNegociacion = 0;
+    _productoEnOferta = null;
+    if (mounted) {
+      setState(() {
+        _ofertaBloqueada = false;
+      });
     }
   }
 
@@ -339,7 +360,7 @@ class _TiendaScreenState extends State<TiendaScreen>
         ..._compras.map((c) => c.producto.codLoteProducto),
       },
     );
-    if (sustituto == null || !mounted || _ofertaBloqueada) return false;
+    if (sustituto == null || !mounted) return false;
 
     _pasoNegociacion = 2;
     await _ofertarTrasPausa(sustituto, mensaje: 'Quiza este te acomode mejor:');
@@ -350,7 +371,7 @@ class _TiendaScreenState extends State<TiendaScreen>
   /// pausa se ve como un parpadeo del popup, no como una respuesta.
   Future<void> _ofertarTrasPausa(Producto producto, {String? mensaje}) async {
     await Future<void>.delayed(const Duration(milliseconds: 500));
-    if (!mounted || _ofertaBloqueada) return;
+    if (!mounted) return;
     await _ofertarRetencion(producto, conDescuento: true, mensaje: mensaje);
   }
 
@@ -361,6 +382,11 @@ class _TiendaScreenState extends State<TiendaScreen>
   /// Tocar un producto es la senal de interes: se le propone de inmediato, a
   /// precio de lista. Si dice que no, ahi entra el descuento segun su cara.
   Future<void> _seleccionarProducto(Producto producto) async {
+    // Durante una negociacion la tienda no acepta otro producto. Sin esto,
+    // cada toque en el hueco entre dos popups reiniciaba _pasoNegociacion a 0
+    // y la escalada no llegaba nunca a su tope: ese era el bucle.
+    if (_ofertaBloqueada) return;
+
     // Lo que ya compro sale del circuito de ofertas: insistir con el mismo
     // producto terminaba vendiendoselo dos veces el mismo dia, y la segunda
     // mas barata que la primera.
@@ -399,7 +425,17 @@ class _TiendaScreenState extends State<TiendaScreen>
     String? mensaje,
   }) async {
     final codCliente = _codCliente;
-    if (codCliente == null || _ofertaBloqueada || _yaComprado(producto)) return;
+    if (codCliente == null || _yaComprado(producto)) {
+      _terminarNegociacion();
+      return;
+    }
+
+    // Se bloquea antes de consultar, no al mostrar el popup: decidirOferta
+    // tarda cerca de un segundo calculando el UCB1, y en esa ventana la
+    // tienda seguia aceptando toques.
+    setState(() {
+      _ofertaBloqueada = true;
+    });
 
     try {
       final oferta = await widget.adaptationEngine.decidirOferta(
@@ -416,6 +452,8 @@ class _TiendaScreenState extends State<TiendaScreen>
               : '¿Te lo llevas?');
       if (mounted) _mostrarPopupOferta(oferta, texto);
     } catch (e) {
+      // Sin esto un fallo de consulta dejaria la tienda bloqueada para siempre.
+      _terminarNegociacion();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('No se pudo generar la oferta: $e')),
