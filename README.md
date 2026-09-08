@@ -73,7 +73,7 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 | **Base de datos** | SQLite vía [`drift`](https://drift.simonbinder.eu/) | Persistencia local (clientes, productos, estrategias, historial) — tablas tipadas, DAOs por codegen, migraciones |
 | **Cámara** | CameraX (Kotlin) | Captura de video en tiempo real |
 | **Detección facial** | Google ML Kit (Kotlin) | Detectar rostro y landmarks faciales |
-| **Clasificación de emociones** | TensorFlow Lite - FER-2013 (Kotlin) | Clasificar emoción desde imagen de cara |
+| **Clasificación de emociones** | EmotiScan FaceExpressionNet en TensorFlow Lite (Kotlin) | Clasificar la expresión desde el recorte facial |
 | **Aprendizaje** | Multi-Armed Bandit - UCB1 (Dart) | Seleccionar la mejor estrategia según historial, recalculado en vivo |
 | **Sesión** | `shared_preferences` (Dart) | Cliente activo, persistido en el dispositivo |
 | **Batch periódico** | `workmanager` (Dart) | Cierre diario de KPIs, una vez al día |
@@ -175,7 +175,8 @@ PROYECTO01/
 │       │   └── channel/                        # ⏳ PENDIENTE (Steven)
 │       │       └── EmotionChannelHandler.kt    # Expondría el pipeline nativo a Flutter
 │       └── assets/
-│           ├── emotion_model.tflite            # FER MobileNetV2 calibrado
+│           ├── emotion_model.tflite            # EmotiScan FaceExpressionNet float16
+│           ├── LICENSE-emotiscan-face-api.txt  # Licencia de los pesos originales
 │           └── README.md                       # Fuente, licencia y contrato
 │
 ├── test/                                       # Espejo de lib/ — 35 tests, todos en verde
@@ -351,8 +352,8 @@ adb logcat | grep "EmotionDetector"
 
 ## Créditos
 
-- **Dataset de emociones**: [FER-2013](https://www.kaggle.com/datasets/msambare/fer2013) (Facial Expression Recognition)
-- **Modelo TensorFlow Lite**: `maftuh-main/meme-emotion-detector` (MIT)
+- **Modelo TensorFlow Lite**: EmotiScan FaceExpressionNet, convertido desde
+  [`@vladmandic/face-api`](https://github.com/vladmandic/face-api) 1.7.15 (MIT)
 - **Modelo de detección facial**: Google ML Kit
 - **Algoritmo de aprendizaje**: Multi-Armed Bandit con UCB1
 

@@ -12,15 +12,13 @@ import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import java.io.Closeable
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlin.math.abs
-import kotlin.math.exp
-import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -31,8 +29,8 @@ import kotlin.math.roundToInt
  * - Recibir frames producidos por CameraManager/CameraX.
  * - Detectar el rostro principal con Google ML Kit.
  * - Recortar la region facial.
- * - Preparar la imagen con el pipeline exacto FER-2013 -> MobileNetV2.
- * - Ejecutar el modelo FER MobileNetV2 calibrado con TensorFlow Lite.
+ * - Preparar el rostro con el contrato RGB 112x112 de EmotiScan.
+ * - Ejecutar EmotiScan FaceExpressionNet con TensorFlow Lite.
  * - Devolver un EmotionResult crudo para EmotionProcessor.
  *
  * Flujo:
@@ -215,15 +213,22 @@ class EmotionDetector(context: Context) : Closeable {
 
             interpreter = Interpreter(modelBuffer, options)
 
-            require(
-                interpreter.getInputTensor(0).numElements() ==
-                    INPUT_SIZE * INPUT_SIZE * INPUT_CHANNELS
-            ) {
-                "El modelo debe recibir una imagen de $INPUT_SIZE x $INPUT_SIZE x $INPUT_CHANNELS; " +
-                    "tensor real=${interpreter.getInputTensor(0).shape().contentToString()}."
+            val inputTensor = interpreter.getInputTensor(0)
+            val outputTensor = interpreter.getOutputTensor(0)
+
+            require(inputTensor.shape().contentEquals(INPUT_SHAPE)) {
+                "EmotiScan debe recibir ${INPUT_SHAPE.contentToString()}; " +
+                    "tensor real=${inputTensor.shape().contentToString()}."
             }
-            require(interpreter.getOutputTensor(0).numElements() == FER_CLASS_COUNT) {
-                "El modelo debe devolver $FER_CLASS_COUNT clases FER-2013."
+            require(inputTensor.dataType() == DataType.FLOAT32) {
+                "La entrada de EmotiScan debe ser FLOAT32; tipo real=${inputTensor.dataType()}."
+            }
+            require(outputTensor.shape().contentEquals(OUTPUT_SHAPE)) {
+                "EmotiScan debe devolver ${OUTPUT_SHAPE.contentToString()}; " +
+                    "tensor real=${outputTensor.shape().contentToString()}."
+            }
+            require(outputTensor.dataType() == DataType.FLOAT32) {
+                "La salida de EmotiScan debe ser FLOAT32; tipo real=${outputTensor.dataType()}."
             }
         }
 
@@ -234,141 +239,82 @@ class EmotionDetector(context: Context) : Closeable {
             }
 
             val input = preprocess(faceBitmap)
-            val rawOutput = Array(1) { FloatArray(FER_CLASS_COUNT) }
-            interpreter.run(input, rawOutput)
+            val output = Array(1) { FloatArray(EMOTION_CLASS_COUNT) }
+            interpreter.run(input, output)
 
-            val probs = toProbabilities(rawOutput[0])
-            Log.d(TAG, "raw_logits=${rawOutput[0].map { "%.3f".format(it) }}")
+            val probs = output[0]
+            require(probs.all { it.isFinite() }) {
+                "EmotiScan devolvio probabilidades no finitas."
+            }
             Log.d(TAG, "probs=${probs.map { "%.3f".format(it) }}")
 
             val bestIndex = probs.indices.maxByOrNull { probs[it] }
                 ?: return EmotionResult(EmotionResult.NEUTRAL, 0f)
 
             return EmotionResult(
-                emotion = mapFerClass(bestIndex),
+                emotion = mapEmotiScanClass(bestIndex),
                 confidence = probs[bestIndex].coerceIn(0f, 1f)
             )
         }
 
         /**
-         * Reproduce el contrato publicado del modelo:
-         * gris -> 48x48 uint8 -> 96x96 float32 -> RGB -> [-1, 1].
-         *
-         * El segundo escalado se calcula en float para no volver a redondear
-         * los valores interpolados a enteros.
+         * Reproduce el contrato de EmotiScan:
+         * rostro -> RGB 112x112 -> float32 en rango 0..255.
+         * La resta de la media RGB y la division entre 255 forman parte del
+         * propio grafo TFLite, por lo que no se normaliza aqui.
          */
         private fun preprocess(bitmap: Bitmap): ByteBuffer {
-            val scaled48 = Bitmap.createScaledBitmap(
+            val resized = Bitmap.createScaledBitmap(
                 bitmap,
-                SOURCE_SIZE,
-                SOURCE_SIZE,
+                INPUT_SIZE,
+                INPUT_SIZE,
                 true
             )
 
             try {
-                val pixels = IntArray(SOURCE_SIZE * SOURCE_SIZE)
-                scaled48.getPixels(
+                val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
+                resized.getPixels(
                     pixels,
                     0,
-                    SOURCE_SIZE,
+                    INPUT_SIZE,
                     0,
                     0,
-                    SOURCE_SIZE,
-                    SOURCE_SIZE
+                    INPUT_SIZE,
+                    INPUT_SIZE
                 )
-
-                val grayscale48 = FloatArray(SOURCE_SIZE * SOURCE_SIZE) { index ->
-                    val pixel = pixels[index]
-                    val red = (pixel shr 16) and 0xFF
-                    val green = (pixel shr 8) and 0xFF
-                    val blue = pixel and 0xFF
-                    (GRAYSCALE_RED * red +
-                        GRAYSCALE_GREEN * green +
-                        GRAYSCALE_BLUE * blue)
-                        .roundToInt()
-                        .coerceIn(0, 255)
-                        .toFloat()
-                }
 
                 val buffer = ByteBuffer
                     .allocateDirect(INPUT_SIZE * INPUT_SIZE * INPUT_CHANNELS * FLOAT_BYTES)
                     .order(ByteOrder.nativeOrder())
 
-                for (y in 0 until INPUT_SIZE) {
-                    for (x in 0 until INPUT_SIZE) {
-                        val gray = bilinearSample(grayscale48, x, y)
-                        val normalized = gray / NORMALIZATION_DIVISOR - 1f
-                        repeat(INPUT_CHANNELS) {
-                            buffer.putFloat(normalized)
-                        }
-                    }
+                pixels.forEach { color ->
+                    buffer.putFloat(((color shr 16) and 0xFF).toFloat())
+                    buffer.putFloat(((color shr 8) and 0xFF).toFloat())
+                    buffer.putFloat((color and 0xFF).toFloat())
                 }
 
                 buffer.rewind()
                 return buffer
             } finally {
-                if (scaled48 !== bitmap && !scaled48.isRecycled) {
-                    scaled48.recycle()
+                if (resized !== bitmap && !resized.isRecycled) {
+                    resized.recycle()
                 }
             }
         }
 
-        private fun bilinearSample(source: FloatArray, outputX: Int, outputY: Int): Float {
-            val sourceX = (outputX + 0.5f) * SOURCE_SIZE / INPUT_SIZE - 0.5f
-            val sourceY = (outputY + 0.5f) * SOURCE_SIZE / INPUT_SIZE - 0.5f
-            val x0 = floor(sourceX).toInt()
-            val y0 = floor(sourceY).toInt()
-            val x1 = x0 + 1
-            val y1 = y0 + 1
-            val xWeight = sourceX - x0
-            val yWeight = sourceY - y0
-
-            fun pixel(x: Int, y: Int): Float = source[
-                y.coerceIn(0, SOURCE_SIZE - 1) * SOURCE_SIZE +
-                    x.coerceIn(0, SOURCE_SIZE - 1)
-            ]
-
-            val top = pixel(x0, y0) * (1f - xWeight) + pixel(x1, y0) * xWeight
-            val bottom = pixel(x0, y1) * (1f - xWeight) + pixel(x1, y1) * xWeight
-            return top * (1f - yWeight) + bottom * yWeight
-        }
-
         /**
-         * Conserva probabilidades si el modelo ya aplica Softmax; de lo
-         * contrario convierte logits a probabilidades con Softmax estable.
-         */
-        private fun toProbabilities(values: FloatArray): FloatArray {
-            val sum = values.sum()
-            val alreadyProbabilities =
-                values.all { it in 0f..1f } &&
-                    abs(sum - 1f) <= PROBABILITY_EPSILON
-
-            if (alreadyProbabilities) return values.copyOf()
-
-            val max = values.maxOrNull() ?: 0f
-            val exponentials = DoubleArray(values.size) { index ->
-                exp((values[index] - max).toDouble())
-            }
-            val denominator = exponentials.sum().takeIf { it > 0.0 } ?: 1.0
-
-            return FloatArray(values.size) { index ->
-                (exponentials[index] / denominator).toFloat()
-            }
-        }
-
-        /**
-         * Orden publicado por el modelo:
-         * angry, disgust, fear, happy, neutral, sad, surprise.
+         * Orden publicado por EmotiScan:
+         * neutral, happy, sad, angry, fearful, disgusted, surprised.
          *
          * El pipeline del proyecto usa cinco emociones de negocio.
          */
-        private fun mapFerClass(index: Int): String = when (index) {
-            0 -> EmotionResult.ANGRY      // angry
-            1 -> EmotionResult.UNKNOWN    // disgust: no existe regla propia
-            2 -> EmotionResult.UNKNOWN    // fear: no existe regla propia
-            3 -> EmotionResult.HAPPY
-            4 -> EmotionResult.NEUTRAL
-            5 -> EmotionResult.SAD
+        private fun mapEmotiScanClass(index: Int): String = when (index) {
+            0 -> EmotionResult.NEUTRAL
+            1 -> EmotionResult.HAPPY
+            2 -> EmotionResult.SAD
+            3 -> EmotionResult.ANGRY
+            4 -> EmotionResult.UNKNOWN    // fearful: no existe regla propia
+            5 -> EmotionResult.UNKNOWN    // disgusted: no existe regla propia
             6 -> EmotionResult.SURPRISE
             else -> EmotionResult.NEUTRAL
         }
@@ -401,18 +347,12 @@ class EmotionDetector(context: Context) : Closeable {
         const val FACE_PADDING_RATIO = 0.12f
 
         const val MODEL_ASSET = "emotion_model.tflite"
-        const val SOURCE_SIZE = 48
-        const val INPUT_SIZE = 96
+        const val INPUT_SIZE = 112
         const val INPUT_CHANNELS = 3
-        const val FER_CLASS_COUNT = 7
+        const val EMOTION_CLASS_COUNT = 7
         const val FLOAT_BYTES = 4
-
-        const val GRAYSCALE_RED = 0.299f
-        const val GRAYSCALE_GREEN = 0.587f
-        const val GRAYSCALE_BLUE = 0.114f
-        const val NORMALIZATION_DIVISOR = 127.5f
-
-        const val PROBABILITY_EPSILON = 0.05f
+        val INPUT_SHAPE = intArrayOf(1, INPUT_SIZE, INPUT_SIZE, INPUT_CHANNELS)
+        val OUTPUT_SHAPE = intArrayOf(1, EMOTION_CLASS_COUNT)
     }
 }
 

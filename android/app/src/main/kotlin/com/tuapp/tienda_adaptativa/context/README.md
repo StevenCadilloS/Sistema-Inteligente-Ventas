@@ -37,10 +37,10 @@ Responsable de detectar el rostro y clasificar la expresión facial.
 - Selección del rostro principal cuando aparecen varias caras
 - Corrección de orientación del frame según `rotationDegrees`
 - Recorte seguro de la región facial con un pequeño margen
-- Preprocesamiento de la cara a gris `48 x 48` y luego RGB `96 x 96`
-- Segundo escalado bilineal en `float32` y normalización a `[-1, 1]`
+- Preprocesamiento del recorte facial como RGB `float32` de `112 x 112`
+- Entrada en rango `0..255`; la normalización está incluida dentro del modelo
 - Carga y ejecución del modelo TensorFlow Lite `emotion_model.tflite`
-- Clasificación basada en FER-2013
+- Clasificación mediante EmotiScan FaceExpressionNet
 - Conversión de las clases del modelo a las emociones del proyecto:
   - `feliz`
   - `triste`
@@ -63,7 +63,7 @@ ML Kit detecta rostro
      ↓
 Recorte facial
      ↓
-48x48 gris -> 96x96 RGB float32
+112x112 RGB float32 (0..255)
      ↓
 TensorFlow Lite
      ↓
@@ -80,9 +80,9 @@ El modelo se encuentra en:
 app/src/main/assets/emotion_model.tflite
 ```
 
-Usa MaternaLink FER MobileNetV2 (variante float16), con entrada RGB `96 x 96`
-y siete probabilidades calibradas en el orden `angry`, `disgust`, `fear`,
-`happy`, `neutral`, `sad`, `surprise`.
+Usa EmotiScan FaceExpressionNet (variante float16), con entrada RGB `112 x 112`
+y siete probabilidades Softmax en el orden `neutral`, `happy`, `sad`, `angry`,
+`fearful`, `disgusted`, `surprised`.
 
 La procedencia, licencia, hash y contrato del modelo están documentados en
 `app/src/main/assets/README.md`.

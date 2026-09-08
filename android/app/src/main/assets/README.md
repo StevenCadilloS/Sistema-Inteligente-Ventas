@@ -1,19 +1,25 @@
-# Modelo de expresiones faciales
+# Modelo de expresiones faciales EmotiScan
 
-`emotion_model.tflite` es la variante float16 de **MaternaLink FER —
-MobileNetV2, 7-class calibrated**.
+`emotion_model.tflite` es la variante float16 de **EmotiScan
+FaceExpressionNet for Android**, convertida desde los pesos de
+`@vladmandic/face-api` 1.7.15.
 
-- Fuente: https://huggingface.co/mykkularathne/maternalink-fer-mobilenetv2
-- Archivo original: `fer_mobilenetv2_96_float16.tflite`
-- Licencia declarada por el autor: MIT
-- SHA-256: `a83946afed5043953d03a00eb239c8cc3584fe9f28eed74ba7ac9456a79ca78d`
-- Entrada: `float32 [1, 96, 96, 3]`, rango `[-1, 1]`
-- Salida: `float32 [1, 7]`, Softmax calibrado
-- Clases: `angry`, `disgust`, `fear`, `happy`, `neutral`, `sad`, `surprise`
+- Archivo original: `emotiscan_expression_float16.tflite`
+- Licencia de la red original: MIT (ver `LICENSE-emotiscan-face-api.txt`)
+- SHA-256: `df4ed33f86a398fe28466c1969388b5fc048cc5132e9f94a9c9b05ef8230bd6e`
+- Entrada: `float32 [1, 112, 112, 3]`, RGB en rango `0..255`
+- Salida: `float32 [1, 7]`, probabilidades Softmax
+- Clases: `neutral`, `happy`, `sad`, `angry`, `fearful`, `disgusted`,
+  `surprised`
 
-El preprocesamiento del autor se reproduce en `EmotionDetector.kt`: conversión
-a gris, escalado bilineal a 48 x 48 con redondeo a `uint8`, réplica a tres
-canales, escalado bilineal a 96 x 96 en `float32` y normalización a `[-1, 1]`.
+El preprocesamiento se reproduce en `EmotionDetector.kt`: recorte facial con
+un margen del 12 %, escalado a 112 x 112 y escritura RGB `float32` sin
+normalización externa. La resta de la media RGB `[122.782, 117.001, 104.298]`
+y la división entre 255 están incluidas dentro del modelo.
+
+El proyecto mantiene cinco emociones de negocio. `fearful` y `disgusted` se
+traducen a `unknown` y el estabilizador las ignora hasta recibir una predicción
+compatible.
 
 El modelo estima expresiones visibles en una imagen. No determina el estado
 emocional interno de una persona ni debe usarse como diagnóstico.
