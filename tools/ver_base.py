@@ -8,6 +8,13 @@ Uso (con el celular conectado y depuracion USB activa):
     python tools/ver_base.py            # resumen de todas las tablas
     python tools/ver_base.py ventas     # vuelca una tabla completa
     python tools/ver_base.py esquema    # los CREATE TABLE tal cual estan
+
+Sin celular, sobre la evidencia guardada en el repo (ver EVIDENCIA):
+    python tools/ver_base.py --evidencia
+    python tools/ver_base.py --evidencia ventas
+
+Ojo: `run-as` solo funciona con la build de depuracion. El APK que publica
+GitHub Actions es `--release` y no deja leer la base; para eso esta --evidencia.
 """
 import os
 import sqlite3
@@ -17,6 +24,10 @@ import sys
 PAQUETE = "com.tuapp.tienda_adaptativa"
 REMOTO = "app_flutter/tienda_adaptativa.sqlite"
 LOCAL = os.path.join(os.path.dirname(__file__), "base_extraida.sqlite")
+
+# Instantanea real tomada de un celular tras una sesion de uso. Es la evidencia
+# de adaptacion del informe (seccion 5): sobrevive a desinstalar la app.
+EVIDENCIA = os.path.join(os.path.dirname(__file__), "base_evidencia_2026-09-08.sqlite")
 
 TABLAS = [
     "clientes",
@@ -120,13 +131,26 @@ def volcar(con, tabla):
 
 
 def main():
-    extraer()
-    con = sqlite3.connect(LOCAL)
+    argumentos = sys.argv[1:]
+
+    if "--evidencia" in argumentos:
+        argumentos.remove("--evidencia")
+        if not os.path.exists(EVIDENCIA):
+            sys.exit(f"No existe {EVIDENCIA}")
+        base = EVIDENCIA
+        tam = os.path.getsize(base) / 1024
+        print(f"Leyendo la evidencia guardada ({tam:.0f} KB)")
+        print()
+    else:
+        extraer()
+        base = LOCAL
+
+    con = sqlite3.connect(base)
     try:
-        if len(sys.argv) > 1 and sys.argv[1] == "esquema":
+        if argumentos and argumentos[0] == "esquema":
             esquema(con)
-        elif len(sys.argv) > 1:
-            volcar(con, sys.argv[1])
+        elif argumentos:
+            volcar(con, argumentos[0])
         else:
             resumen(con)
     finally:
