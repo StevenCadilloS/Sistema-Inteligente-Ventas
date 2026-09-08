@@ -1,0 +1,80 @@
+name: Generar APK de steven1.1
+
+on:
+  push:
+    branches:
+      - steven1.1
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: steven1-1-apk
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Probar, compilar y publicar APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurar Flutter 3.47.2
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.2
+          channel: stable
+          cache: true
+
+      - name: Descargar dependencias
+        run: flutter pub get
+
+      - name: Ejecutar pruebas
+        run: flutter test
+
+      - name: Compilar APK instalable
+        run: flutter build apk --release
+
+      - name: Preparar archivo de descarga
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            dist/Sistema-Inteligente-Ventas-steven1.1.apk
+
+      - name: Guardar APK en la ejecución
+        uses: actions/upload-artifact@v7
+        with:
+          name: apk-steven1-1-${{ github.run_number }}
+          path: dist/Sistema-Inteligente-Ventas-steven1.1.apk
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Crear o actualizar la descarga permanente
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view steven1-1-latest >/dev/null 2>&1; then
+            gh release create steven1-1-latest \
+              --target steven1.1 \
+              --title "APK automática de steven1.1" \
+              --notes "APK instalable generada automáticamente desde la rama steven1.1." \
+              --prerelease
+          fi
+
+          gh release upload steven1-1-latest \
+            dist/Sistema-Inteligente-Ventas-steven1.1.apk \
+            --clobber
+
+          gh release edit steven1-1-latest \
+            --title "APK automática de steven1.1" \
+            --notes "Última compilación correcta de steven1.1: $GITHUB_SHA"
