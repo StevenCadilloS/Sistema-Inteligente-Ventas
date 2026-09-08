@@ -34,6 +34,12 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+
+            // ML Kit descubre sus ComponentRegistrar mediante reflexión.
+            // Con R8 activo en AGP 9, esos constructores se eliminan y la APK
+            // release se cierra al iniciar aunque la variante debug funcione.
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
