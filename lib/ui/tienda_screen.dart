@@ -211,12 +211,19 @@ class _TiendaScreenState extends State<TiendaScreen>
       _overlayEntry?.markNeedsBuild();
 
       if (_segundosRestantes <= 0) {
-        _cerrarPopup();
+        _cerrarPopup(porTimeout: true);
       }
     });
   }
 
-  void _cerrarPopup() {
+  /// Cierra la oferta abierta.
+  ///
+  /// [porTimeout] distingue quien cerro: si se agotaron los 10 segundos el
+  /// cliente no respondio nada, y ahi si vale mejorarle el precio cuando su
+  /// expresion cambio mientras miraba. Si fue el quien cerro — la X, el fondo,
+  /// "lo quiero" o "no, gracias" — reabrir la oferta es un bucle: cerraba y
+  /// volvia a salir, sin salida posible.
+  void _cerrarPopup({bool porTimeout = false}) {
     _ofertaTimer?.cancel();
     _overlayEntry?.remove();
     _overlayEntry = null;
@@ -224,13 +231,29 @@ class _TiendaScreenState extends State<TiendaScreen>
       _ofertaBloqueada = false;
     });
 
-    // Su cara cambio mientras miraba la oferta: se reacciona mejorando el
-    // precio del mismo producto, con el descuento de la emocion nueva.
     final producto = _productoEnOferta;
-    if (_emocionCambioDurantePopup && producto != null) {
-      _emocionCambioDurantePopup = false;
-      _ofertarRetencion(producto, conDescuento: true);
+    // La mejora por cambio de expresion es un peldano mas de la escalera, no
+    // una via paralela: consume el paso 0 -> 1 y por eso termina, igual que
+    // el rechazo explicito.
+    final mejorar = porTimeout &&
+        _emocionCambioDurantePopup &&
+        _pasoNegociacion == 0 &&
+        producto != null;
+
+    _emocionCambioDurantePopup = false;
+    _emocionAntesDelPopup = null;
+
+    if (!mejorar) {
+      _productoEnOferta = null;
+      return;
     }
+
+    _pasoNegociacion = 1;
+    _ofertarRetencion(
+      producto,
+      conDescuento: true,
+      mensaje: 'Veo que lo dudas, te mejoro el precio:',
+    );
   }
 
   /// Cierra el proceso de persuasion. Aceptar crea la venta con el precio
