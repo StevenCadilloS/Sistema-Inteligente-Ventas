@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.graphics.Rect
 import androidx.camera.core.ImageProxy
-import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
@@ -43,9 +42,16 @@ class EmotionDetector(context: Context) : Closeable {
 
     private val faceDetector: FaceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            // FAST, no ACCURATE: con un solo rostro cercano la precision es
+            // equivalente y ACCURATE bajaba los fps.
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE)
-            .setMinFaceSize(0.35f)
+            // Fraccion minima del ancho del frame que debe ocupar la cara.
+            // 0.35 (376 frames sin una sola deteccion) y 0.15 (0 de 257 a un
+            // brazo de distancia) dejaban la app usable solo pegada a la
+            // cara. 0.10 es el default de ML Kit y cubre la distancia normal
+            // de uso de un celular.
+            .setMinFaceSize(0.10f)
             .enableTracking()
             .build()
     )
@@ -127,22 +133,34 @@ class EmotionDetector(context: Context) : Closeable {
         }
 
     /**
-     * Recorta la cara conservando un pequeno margen alrededor.
+     * Recorta un CUADRADO centrado en la cara, con un margen alrededor.
+     *
+     * Cuadrado y no el rectangulo de ML Kit: despues esto se escala a 48x48,
+     * y un recorte mas alto que ancho se aplastaba al hacerlo, deformando el
+     * rostro. Como la proporcion del rectangulo cambia con la distancia y el
+     * angulo, la deformacion variaba frame a frame y las predicciones se
+     * volvian inestables (misma cara neutral: 5% de "angry" de cerca contra
+     * 63% a un brazo de distancia).
      */
     private fun extractFaceFromFrame(
         frameBitmap: Bitmap,
         face: Face
     ): Bitmap {
         val box = face.boundingBox
-        val horizontalPadding = (box.width() * FACE_PADDING_RATIO).roundToInt()
-        val verticalPadding = (box.height() * FACE_PADDING_RATIO).roundToInt()
-
-        val safeRect = Rect(
-            (box.left - horizontalPadding).coerceAtLeast(0),
-            (box.top - verticalPadding).coerceAtLeast(0),
-            (box.right + horizontalPadding).coerceAtMost(frameBitmap.width),
-            (box.bottom + verticalPadding).coerceAtMost(frameBitmap.height)
+        val ladoDeseado =
+            (maxOf(box.width(), box.height()) * (1f + 2 * FACE_PADDING_RATIO))
+                .roundToInt()
+        val lado = ladoDeseado.coerceAtMost(
+            minOf(frameBitmap.width, frameBitmap.height)
         )
+
+        val left = (box.centerX() - lado / 2)
+            .coerceIn(0, frameBitmap.width - lado)
+        val top = (box.centerY() - lado / 2)
+            .coerceIn(0, frameBitmap.height - lado)
+
+        val safeRect = Rect(left, top, left + lado, top + lado)
+
 
         require(safeRect.width() > 0 && safeRect.height() > 0) {
             "ML Kit devolvio una region facial invalida: $safeRect"
@@ -225,8 +243,6 @@ class EmotionDetector(context: Context) : Closeable {
             interpreter.run(input, rawOutput)
 
             val probs = toProbabilities(rawOutput[0])
-            Log.d(TAG, "raw_logits=${rawOutput[0].map { "%.3f".format(it) }}")
-            Log.d(TAG, "probs=${probs.map { "%.3f".format(it) }}")
 
             val bestIndex = probs.indices.maxByOrNull { probs[it] }
                 ?: return EmotionResult(EmotionResult.NEUTRAL, 0f)
@@ -238,11 +254,16 @@ class EmotionDetector(context: Context) : Closeable {
         }
 
         /**
-         * Convierte el rostro a 48x48 RGB y normaliza cada canal a [0, 1].
-         * El modelo (emotion_model.tflite) espera shape [1, 48, 48, 3], no
-         * escala de grises - verificado inspeccionando el tensor de entrada
-         * real del .tflite (input.shape=[1,48,48,3]), distinto de lo que
-         * asumia el codigo original.
+         * Convierte el rostro a 48x48, lo pasa a gris y replica ese gris en
+         * los 3 canales que exige el tensor de entrada ([1,48,48,3],
+         * verificado sobre el .tflite), normalizando a [0, 1].
+         *
+         * El gris replicado no es un capricho: FER-2013 es un dataset en
+         * escala de grises, asi que un modelo con entrada de 3 canales
+         * entrenado sobre el vio gris replicado (Keras con color_mode='rgb').
+         * Pasarle el color real de la camara era entrada fuera de
+         * distribucion: el modelo respondia sesgado y exigia expresiones
+         * exageradas para cambiar de clase.
          */
         private fun preprocess(bitmap: Bitmap): ByteBuffer {
             val scaled = Bitmap.createScaledBitmap(
@@ -268,14 +289,22 @@ class EmotionDetector(context: Context) : Closeable {
                     .allocateDirect(INPUT_SIZE * INPUT_SIZE * INPUT_CHANNELS * FLOAT_BYTES)
                     .order(ByteOrder.nativeOrder())
 
-                pixels.forEach { pixel ->
+                val grises = IntArray(pixels.size) { i ->
+                    val pixel = pixels[i]
                     val red = (pixel shr 16) and 0xFF
                     val green = (pixel shr 8) and 0xFF
                     val blue = pixel and 0xFF
 
-                    buffer.putFloat(red / 255f)
-                    buffer.putFloat(green / 255f)
-                    buffer.putFloat(blue / 255f)
+                    (RED_WEIGHT * red + GREEN_WEIGHT * green + BLUE_WEIGHT * blue)
+                        .roundToInt()
+                        .coerceIn(0, 255)
+                }
+
+                ecualizar(grises)
+
+                grises.forEach { gris ->
+                    val valor = gris / 255f
+                    repeat(INPUT_CHANNELS) { buffer.putFloat(valor) }
                 }
 
                 buffer.rewind()
@@ -284,6 +313,42 @@ class EmotionDetector(context: Context) : Closeable {
                 if (scaled !== bitmap && !scaled.isRecycled) {
                     scaled.recycle()
                 }
+            }
+        }
+
+        /**
+         * Ecualizacion de histograma sobre el recorte, in situ.
+         *
+         * Reparte los niveles de gris sobre todo el rango disponible, asi el
+         * mismo rostro produce una entrada parecida con luz buena o mala. Sin
+         * esto, a contraluz (el caso medido: paneles de techo detras del
+         * usuario) la cara llegaba oscura y aplanada, y el modelo necesitaba
+         * expresiones exageradas para distinguirlas.
+         */
+        private fun ecualizar(grises: IntArray) {
+            val histograma = IntArray(256)
+            grises.forEach { histograma[it]++ }
+
+            val acumulado = IntArray(256)
+            var suma = 0
+            for (nivel in 0..255) {
+                suma += histograma[nivel]
+                acumulado[nivel] = suma
+            }
+
+            val minimo = acumulado.firstOrNull { it > 0 } ?: return
+            val total = grises.size
+            // Recorte de un solo tono: no hay rango que repartir.
+            if (total == minimo) return
+
+            val mapa = IntArray(256) { nivel ->
+                ((acumulado[nivel] - minimo).toFloat() / (total - minimo) * 255f)
+                    .roundToInt()
+                    .coerceIn(0, 255)
+            }
+
+            for (i in grises.indices) {
+                grises[i] = mapa[grises[i]]
             }
         }
 
@@ -311,19 +376,28 @@ class EmotionDetector(context: Context) : Closeable {
         }
 
         /**
-         * Orden FER-2013 del modelo:
-         * angry, disgust, fear, happy, sad, surprise, neutral.
+         * Orden de clases del modelo: alfabetico por carpeta, que es como
+         * Keras arma las etiquetas con flow_from_directory —
+         * angry, disgust, fear, happy, neutral, sad, surprise — y NO el
+         * orden canonico de FER-2013 (que pone sad, surprise, neutral al
+         * final) que asumia el codigo original.
+         *
+         * Medido en dispositivo con el vector de probabilidades: una cara
+         * relajada da indice 4 en el 56% de los frames, y hacer cara triste
+         * lo hunde al 18% en vez de subirlo. Si el 4 fuera "sad" pasaria lo
+         * contrario. Por eso antes una cara en reposo se mostraba como
+         * "triste 97%".
          *
          * El pipeline del proyecto usa cinco emociones de negocio.
          */
         private fun mapFerClass(index: Int): String = when (index) {
             0 -> EmotionResult.ANGRY      // angry
-            1 -> EmotionResult.ANGRY      // disgust
-            2 -> EmotionResult.NEUTRAL    // fear: no existe regla propia en el proyecto
-            3 -> EmotionResult.HAPPY
-            4 -> EmotionResult.SAD
-            5 -> EmotionResult.SURPRISE
-            6 -> EmotionResult.NEUTRAL
+            1 -> EmotionResult.ANGRY      // disgust: sin regla propia, va a enojo
+            2 -> EmotionResult.NEUTRAL    // fear: sin regla propia en el proyecto
+            3 -> EmotionResult.HAPPY      // happy
+            4 -> EmotionResult.NEUTRAL    // neutral
+            5 -> EmotionResult.SAD        // sad
+            6 -> EmotionResult.SURPRISE   // surprise
             else -> EmotionResult.NEUTRAL
         }
 
@@ -349,9 +423,6 @@ class EmotionDetector(context: Context) : Closeable {
             interpreter.close()
         }
 
-        private companion object {
-            const val TAG = "EmotionDetector"
-        }
     }
 
     private companion object {
@@ -364,6 +435,11 @@ class EmotionDetector(context: Context) : Closeable {
         const val FLOAT_BYTES = 4
 
         const val PROBABILITY_EPSILON = 0.05f
+
+        // Luminancia ITU-R BT.601, la conversion a gris estandar.
+        const val RED_WEIGHT = 0.299f
+        const val GREEN_WEIGHT = 0.587f
+        const val BLUE_WEIGHT = 0.114f
     }
 }
 
