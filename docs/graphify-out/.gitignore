@@ -4,3 +4,6 @@
 cache/
 manifest.json
 cost.json
+
+# Intermedios de conversion: nombres con hash, se regeneran solos
+converted/

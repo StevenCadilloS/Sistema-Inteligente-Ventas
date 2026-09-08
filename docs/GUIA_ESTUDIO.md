@@ -33,31 +33,41 @@ El PDF exige el flujo: **Entrada (contexto) → Procesamiento → Decisión → 
 |---|---|---|---|---|---|
 | 1 | Entrada (contexto) | Captura frames de la cámara frontal | `android/.../context/CameraManager.kt` | `CameraManager.startCamera()` | Implementado |
 | 1 | Entrada (contexto) | Detecta rostro (ML Kit) y clasifica la emoción (TFLite, modelo FER-2013) | `android/.../context/EmotionDetector.kt` | `EmotionDetector.detectEmotion()` | Implementado |
-| 2 | Procesamiento | Filtra ruido: solo confirma una emoción si se repite 10 frames seguidos | `android/.../processing/EmotionProcessor.kt` | `EmotionProcessor.process()` | Implementado |
-| — | Puente nativo → Flutter | Envía la emoción estable a Dart como stream continuo | `channel/EmotionChannelHandler.kt` (nuevo) + registro en `MainActivity.kt` + `lib/services/emotion_channel.dart` (nuevo) | `EventChannel` | **Pendiente** |
+| 2 | Procesamiento | Filtra ruido: confirma una emoción por voto de mayoría sobre 26 frames | `android/.../processing/EmotionProcessor.kt` | `EmotionProcessor.process()` | Implementado |
+| — | Puente nativo → Flutter | Envía la emoción estable a Dart como stream continuo | `channel/EmotionChannelHandler.kt` + registro en `MainActivity.kt` + `lib/services/emotion_channel.dart` | `EventChannel` | Implementado |
 | 3 | Decisión | Elige producto según la regla de la emoción + elige estrategia (bandit) + registra el intento | `lib/decision/adaptation_engine.dart` | `AdaptationEngine.decidirOferta()` | Implementado y probado |
 | 3 | Decisión | Aprendizaje: cuál estrategia está funcionando mejor (UCB1) | `lib/decision/learning/bandit_optimizer.dart` | `BanditOptimizer.seleccionarEstrategia()` | Implementado y probado |
-| 4 | Adaptación | Pinta la oferta nueva en pantalla sin que el usuario haga nada | Pantallas Flutter (login, principal, historial) | — | **Pendiente** |
+| 4 | Adaptación | Reordena el feed de productos solo, y ofrece con descuento en el momento de duda | `lib/ui/tienda_screen.dart` | `_adaptarA()`, `_ofertarRetencion()` | Implementado |
 
-**Importante para la charla con el docente:** el flujo entero ya existe *como código
-probado* excepto el tramo "puente + pantallas", que es trabajo de Steven descrito en
-`docs/GUIA_STEVEN.md`. Si te preguntan "muéstrame que se adapta", hoy eso solo se puede
-demostrar corriendo los tests (`flutter test`), no la app en pantalla, hasta que ese
-tramo se conecte.
+**Cómo se ve la adaptación en la app (lo que vas a demostrar):**
+
+| Momento | Qué hace el sistema |
+|---|---|
+| El cliente navega el feed | El catálogo se **reordena solo** según su expresión — sin tocar nada, que es lo que exige la regla eliminatoria |
+| Abre un producto y lo cierra **sin comprar** | Ahí entra la oferta de retención: mismo producto, con el descuento que decide su emoción |
+| Rechaza la oferta | Se registra el intento fallido y se propone otro producto (máx. 2 veces seguidas) |
+| Su cara cambia con la oferta abierta | Al cerrarse, se le reofrece el mismo producto con el descuento de la emoción nueva |
 
 ---
 
 ## 2. Las 5 reglas de adaptación (el corazón de los 8 puntos)
 
-Viven en `AdaptationEngine._productoPara()` (`lib/decision/adaptation_engine.dart`).
+Viven en `AdaptationEngine` (`lib/decision/adaptation_engine.dart`): `_catalogoPara()`
+ordena el catálogo y `_descuentoPara()` fija la rebaja.
 
-| Emoción (string que llega de Kotlin) | Regla de negocio | Qué producto elige | Texto mostrado (`_textoPara`) |
+| Emoción (string que llega de Kotlin) | Regla de negocio | Orden del catálogo | Descuento |
 |---|---|---|---|
-| `triste` | Sustituto más económico | El producto activo con menor precio | "Tal vez esto te anime: [producto] a S/[precio]" |
-| `feliz` | Premium, sin descuento | El producto activo con mayor precio | "Para ti: [producto], nuestra opción premium" |
-| `sorpresa` | Novedad | El producto activo menos mostrado (`totalVecesMostrado` más bajo) | "Oferta especial solo por hoy: [producto]" |
-| `neutral` | Estándar / default | El producto activo más mostrado | "Te recomendamos: [producto] a S/[precio]" |
-| `enojo` | Cambio de categoría + descuento agresivo | Producto de otra categoría distinta a la última mostrada a ese cliente, el más barato de ella | "Precio especial en [producto]: S/[precio]" |
+| `triste` | Sustituto más económico | Precio ascendente | 10% |
+| `feliz` | Premium, sin descuento | Precio descendente | 0% |
+| `sorpresa` | Novedad | `totalVecesMostrado` ascendente | 15% |
+| `neutral` | Estándar del catálogo | `totalVecesMostrado` descendente | 0% |
+| `enojo` | Cambio de categoría + descuento agresivo | Otra categoría primero, cada bloque por precio ascendente | 25% |
+
+**El descuento es real, no decorativo:** el mismo número que ve el cliente en el popup
+es el que se congela en `detalleVenta.precioUnitarioCentavos` al cerrar la venta
+(aritmética entera en centavos, nunca `double`). Está cubierto por el test *"el descuento
+de la oferta es real: la venta congela el precio rebajado"*. Si te preguntan "¿dónde
+queda ese descuento en tus datos?", esa es la respuesta.
 
 Notas para defender esto en vivo:
 - Si no hay rostro (`no_face`) o la emoción no está en el catálogo `Gestos`, cae a la
@@ -141,24 +151,29 @@ para la nota de este taller.
 
 ---
 
-## 7. Estado actual: qué está armado y qué falta
+## 7. Estado actual
 
 | Componente | Responsable | Estado |
 |---|---|---|
 | Cámara + detección + clasificación de emoción (Kotlin) | Juan | Implementado |
 | Filtro de estabilidad (Kotlin) | Juan | Implementado |
-| Puente `EventChannel` (Kotlin + Dart) | Steven | **Pendiente** |
-| Pantallas (login, principal, historial) | Steven | **Pendiente** |
+| Puente `EventChannel` (Kotlin + Dart) | Steven | Implementado |
+| Pantallas (login, tienda, historial) | Steven | Implementado |
 | Motor de reglas de adaptación (`AdaptationEngine`) | Elvis | Implementado, probado |
 | Aprendizaje UCB1 (`BanditOptimizer`) | Elvis | Implementado, probado |
 | Base de datos (`drift`, 10 tablas) | Elvis | Implementado, probado |
 | Autenticación (`ClienteRepository`) | Elvis | Implementado, probado |
 | Batch / KPIs | Elvis | Implementado, probado (no puntúa) |
-| `main.dart` conectando todo | Steven | **Pendiente** (hoy sigue siendo la plantilla de `flutter create`) |
+| `main.dart` conectando todo | Steven | Implementado |
 
-**Antes de la presentación, esta tabla debería quedar sin "Pendiente" en la fila del
-puente y de `main.dart` como mínimo** — sin eso no hay demo en vivo posible y se pierde
-la mayor parte de los 8 puntos de funcionalidad adaptativa.
+Verificado en dispositivo real (Redmi, Android 12): 38/38 tests, `flutter analyze` sin
+issues, y la base con interacciones y ventas escribiéndose durante el uso.
+
+**Semántica del carrito, por si preguntan:** la pantalla "Tus compras" no es un carrito
+pendiente — aceptar la oferta *es* lo que cierra el proceso de persuasión, así que en
+ese momento ya se escribió `venta` + `detalleVenta`. Por eso no se pueden eliminar
+líneas: la bitácora de ventas no se borra, y el KPI 2 mide justamente la existencia de
+esa venta.
 
 ---
 
@@ -166,14 +181,40 @@ la mayor parte de los 8 puntos de funcionalidad adaptativa.
 
 | Te puede pedir... | Archivo | Qué cambiar |
 |---|---|---|
-| Cambiar qué producto se ofrece para una emoción | `lib/decision/adaptation_engine.dart` | El `case` correspondiente dentro de `_productoPara()` |
-| Cambiar el mensaje mostrado | `lib/decision/adaptation_engine.dart` | El `case` correspondiente dentro de `_textoPara()` |
-| Agregar una emoción/regla nueva | `lib/decision/adaptation_engine.dart` | Agregar caso en el `enum _TipoRegla`, en `_reglaPara()`, en `_productoPara()` y en `_textoPara()` |
-| Hacer que tarde más/menos en confirmar una emoción | `android/.../processing/EmotionProcessor.kt` | Constante `DEFAULT_STABILITY_THRESHOLD` (hoy 10 frames) |
+| Cambiar el orden del catálogo para una emoción | `lib/decision/adaptation_engine.dart` | El `case` correspondiente en `_catalogoPara()` |
+| Cambiar el porcentaje de descuento de una emoción | `lib/decision/adaptation_engine.dart` | El `case` correspondiente en `_descuentoPara()` |
+| Cambiar el mensaje mostrado | `lib/decision/adaptation_engine.dart` | El `case` correspondiente en `_textoPara()` |
+| Agregar una emoción/regla nueva | `lib/decision/adaptation_engine.dart` | Caso en `enum _TipoRegla`, `_reglaPara()`, `_catalogoPara()`, `_descuentoPara()` y `_textoPara()` |
+| Hacer que tarde más/menos en confirmar una emoción | `android/.../processing/EmotionProcessor.kt` | `DEFAULT_STABILITY_THRESHOLD` (26 frames ≈ 1.3 s) |
+| Que la emoción cambie más/menos fácil (parpadeo) | `android/.../processing/EmotionProcessor.kt` | `MAYORIA_MINIMA` (0.45) y `MARGEN_PARA_CAMBIAR` (6 votos) |
+| Que detecte el rostro desde más lejos | `android/.../context/EmotionDetector.kt` | `setMinFaceSize(0.10f)` |
+| Cuántas veces insiste tras un rechazo | `lib/ui/tienda_screen.dart` | `_maxInsistencias` (hoy 2) |
+| Cuánto dura el popup de oferta | `lib/ui/tienda_screen.dart` | `_segundosRestantes = 10` en `_mostrarPopupOferta()` |
 | Cambiar la fórmula de exploración del aprendizaje | `lib/decision/learning/bandit_optimizer.dart` | Método `_ucb1()` |
 | Cambiar la frecuencia del cierre diario | `lib/data/batch/cierre_diario_scheduler.dart` | `Duration(days: 1)` en `programarCierreDiario()` |
-| Agregar un campo al registro de cliente | `lib/data/database/tables.dart` (tabla `Clientes`) + `lib/data/repositories/cliente_repository.dart` (`registrar()`) | Nueva columna + parámetro |
-| Agregar un nuevo tipo de cliente o producto | `AppDatabase.seedCatalogos()` en `lib/data/database/app_database.dart` | Agregar fila al `insertAll` correspondiente |
+| Agregar un campo al registro de cliente | `lib/data/database/tables.dart` (tabla `Clientes`) + `cliente_repository.dart` (`registrar()`) | Nueva columna + parámetro |
+| Agregar productos o categorías al catálogo | `lib/data/database/catalogo_demo.dart` | Agregar filas al `insertAll` correspondiente |
+
+---
+
+## 8-bis. Calibración del clasificador (medido en dispositivo, no a ojo)
+
+Si preguntan "¿cómo sabes que el modelo funciona bien?", esta es la parte más fuerte de
+la defensa: cada ajuste salió de una medición, no de intuición.
+
+| Hallazgo | Cómo se detectó | Corrección |
+|---|---|---|
+| El modelo esperaba RGB, no escala de grises | La app crasheaba al arrancar; se inspeccionó el tensor del `.tflite` (`[1,48,48,3]`) | `preprocess()` escribe 3 canales |
+| Orden de clases alfabético, no FER-2013 | Cara relajada daba índice 4 en 56% de los frames, y hacer cara triste lo *bajaba* a 18%. Si el 4 fuera "triste" pasaría lo contrario | `mapFerClass()`: 4=neutral, 5=sad, 6=surprise |
+| Entrada fuera de distribución | Con RGB real, cara neutral daba 49% "enojo"; con gris replicado bajó a 5% | Gris replicado en los 3 canales |
+| Contraluz aplanaba el rostro | A brazo extendido el falso "enojo" subía a 48% | Ecualización de histograma → bajó a 13% |
+| Recorte deformado | El rectángulo de ML Kit se aplastaba a 48×48; misma cara daba 5% vs 63% de "enojo" según distancia | Recorte **cuadrado** centrado |
+| No detectaba a distancia normal | 0 detecciones en 257 frames a un brazo | `setMinFaceSize` 0.35 → 0.10 |
+| La emoción parpadeaba | 16 cambios en 20 s con el usuario quieto | Voto por mayoría + histéresis (bajó a 7, luego se endureció el margen) |
+
+**Limitación honesta que conviene admitir tú mismo antes de que la encuentren:** el
+modelo trabaja con 48×48 píxeles (2304 valores) y confunde triste con enojo — ambas
+expresiones bajan las cejas. Es el techo del modelo, no del pipeline.
 
 ---
 
