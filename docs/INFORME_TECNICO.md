@@ -11,10 +11,10 @@ Equipo: Elvis Arboleda (base de datos, motor de reglas, autenticación) · Juan 
 Tienda móvil que **ajusta su oferta comercial en tiempo real según la expresión facial
 del cliente**.
 
-En una tienda física el vendedor nota si el cliente duda o se entusiasma, y reacciona:
-cambia el producto, baja el precio o propone una alternativa. En una tienda digital esa
-señal se pierde. La aplicación recupera ese canal: lee la expresión con la cámara frontal
-y adapta qué productos ve y a qué precio, sin que el cliente pida nada ni pulse un botón.
+En una tienda física el vendedor nota si el cliente duda y reacciona: cambia el producto,
+baja el precio o propone una alternativa. En una tienda digital esa señal se pierde. La
+aplicación la recupera con la cámara frontal y adapta qué ve y a qué precio, sin que el
+cliente pida nada ni pulse un botón.
 
 ## 2. Contexto utilizado
 
@@ -43,7 +43,7 @@ negociación de tres pasos:
 | El cliente toca un producto | Lo ofrece **a precio de lista** |
 | Rechaza | Contraoferta del mismo producto **con el descuento que decide su expresión** |
 | Rechaza de nuevo | Ofrece un **bien sustituto**: misma categoría, más económico |
-| Rechaza el sustituto | Deja de insistir |
+| Rechaza el sustituto | Deja de insistir, y no vuelve a abrir ese producto |
 
 Reglas por emoción (viven en `AdaptationEngine`):
 
@@ -57,7 +57,11 @@ Reglas por emoción (viven en `AdaptationEngine`):
 
 El descuento **no es decorativo**: el precio rebajado se congela en
 `detalleVenta.precioUnitarioCentavos` al cerrar la venta, con aritmética entera en
-centavos.
+centavos. En la medición, 4 de 35 ventas se cerraron por debajo del precio de lista.
+
+La escalada **siempre termina**: el peldaño solo avanza, la tienda queda bloqueada
+durante toda la negociación y lo ya rechazado queda vetado hasta que cambie la
+expresión. Insistir es una decisión del sistema, no un efecto secundario.
 
 ## 4. Pipeline adaptativo
 
@@ -77,16 +81,22 @@ cambios de emoción bajaron de 16 a 7 en 20 segundos.
 ## 5. Evidencia de adaptación
 
 La aplicación **registra cada oferta con la emoción que la disparó**, así que la
-evidencia es la propia base de datos (`python tools/ver_base.py`). Medición sobre 163
-interacciones reales en dispositivo:
+evidencia es la propia base de datos. Está versionada en el repositorio
+(`tools/base_evidencia_2026-09-08.sqlite`) y se consulta sin necesidad del dispositivo:
+`python tools/ver_base.py --evidencia`. Medición sobre **339 interacciones y 35 ventas**
+reales:
 
-| Estrategia | Intentos | Conversión |
-|---|---|---|
-| Oferta relámpago | 51 | 15.7% |
-| Descuento directo | 28 | 0% |
+| Estrategia | Intentos | Cierres | Conversión |
+|---|---|---|---|
+| Oferta relámpago | 100 | 10 | 10.0% |
+| Envío gratis | 84 | 5 | 6.0% |
+| Recomendación premium | 71 | 2 | 2.8% |
+| Descuento directo | 67 | 1 | 1.5% |
 
-El sistema **dejó de gastar intentos** en la estrategia que no cerraba: eso es el UCB1
-aprendiendo, no una regla escrita a mano.
+**El orden por intentos coincide exactamente con el orden por conversión.** Nadie lo
+programó así: UCB1 reparte oportunidades en proporción a lo que cada estrategia cierra,
+y la tabla es la huella de ese reparto. Es la diferencia entre un sistema que aprende y
+uno que ejecuta reglas fijas.
 
 Respaldo automatizado: 45 pruebas Dart y 9 JUnit, una de ellas fija la regla
 eliminatoria — *la oferta cambia sola sin intervención manual*.
@@ -103,7 +113,7 @@ No hay botón que dispare la adaptación. Cumple los cinco conceptos del curso:
 | Adaptación al contexto | La variable es la expresión facial, capturada de la cámara frontal |
 | Procesamiento en tiempo real | ~30 ms por frame; la emoción estable llega en 1–2 s |
 | Uso de capacidades del dispositivo | CameraX, ML Kit y TensorFlow Lite, todo en el dispositivo |
-| Diseño responsivo | La grilla recalcula columnas con `LayoutBuilder` (2 a 4 según ancho) |
+| Diseño responsivo | La grilla recalcula columnas con `LayoutBuilder` (2 a 4 según ancho real). Se fija en vertical a propósito: en horizontal el rostro sale del encuadre y sin rostro no hay contexto |
 
 ## 7. Arquitectura / componentes principales
 
@@ -127,26 +137,22 @@ Todo corre en el dispositivo, sin servidor.
 
 | Capa | Tecnología |
 |---|---|
-| Aplicación | Flutter 3.47 / Dart 3.13 (Material 3) |
-| Módulo nativo | Kotlin, `minSdk` 26 |
-| Cámara | AndroidX CameraX 1.3.4 (`ImageAnalysis`, cámara frontal) |
-| Detección de rostro | Google ML Kit Face Detection 16.1.6 |
-| Clasificación de emoción | TensorFlow Lite 2.16.1, modelo FER (48×48, 7 clases) |
+| Aplicación | Flutter 3.47 / Dart 3.13 (Material 3) · Kotlin `minSdk` 26 |
+| Contexto | CameraX 1.3.4 (`ImageAnalysis`, frontal) · ML Kit Face Detection 16.1.6 |
+| Clasificación | TensorFlow Lite 2.16.1, modelo FER (48×48, 7 clases) |
 | Puente nativo ↔ Flutter | `EventChannel` (stream continuo) |
-| Persistencia | `drift` 2.34 sobre SQLite (10 tablas, FK activas) |
-| Sesión y tareas | `shared_preferences`, `workmanager` (cierre diario) |
+| Persistencia | `drift` 2.34 sobre SQLite (10 tablas, FK activas) · `shared_preferences` · `workmanager` |
 | Pruebas | `flutter_test` (45 casos) y JUnit 4.13 (9 casos, JVM) |
 
 ## 9. Ubicación del código relevante
 
 | Elemento | Archivo / clase |
 |---|---|
-| Captura y clasificación del contexto | `android/.../context/CameraManager.kt` · `EmotionDetector.kt` |
-| Procesamiento (estabilización) | `android/.../processing/EmotionProcessor.kt` |
+| Entrada: captura y clasificación | `android/.../context/CameraManager.kt` · `EmotionDetector.kt` |
+| Procesamiento: estabilización | `android/.../processing/EmotionProcessor.kt` |
 | Puente nativo ↔ Flutter | `android/.../channel/EmotionChannelHandler.kt` · `lib/services/emotion_channel.dart` |
-| Decisión (reglas y descuentos) | `lib/decision/adaptation_engine.dart` |
-| Aprendizaje (UCB1) | `lib/decision/learning/bandit_optimizer.dart` |
-| Adaptación (interfaz) | `lib/ui/tienda_screen.dart` |
+| Decisión: reglas, descuentos y UCB1 | `lib/decision/adaptation_engine.dart` · `learning/bandit_optimizer.dart` |
+| Adaptación e interfaz | `lib/ui/tienda_screen.dart` |
 | Persistencia | `lib/data/database/app_database.dart` · `tables.dart` |
 
 ---
