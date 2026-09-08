@@ -2,15 +2,15 @@
 
 Aplicación Android (Flutter + Kotlin) que detecta emociones faciales en tiempo real y adapta automáticamente las ofertas comerciales para maximizar la persuasión de ventas.
 
-## APK automática de la rama `steven1.1`
+## APK automática de la rama `main`
 
-Cada cambio enviado a `steven1.1` ejecuta las pruebas, compila una APK Android
+Cada cambio enviado a `main` ejecuta las pruebas, compila una APK Android
 y reemplaza la descarga permanente de esta rama:
 
 [Descargar la APK más reciente de `steven1.1`](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/steven1-1-latest/Sistema-Inteligente-Ventas-steven1.1.apk)
 
 También puede generarse manualmente desde **Actions**, eligiendo
-**Generar APK de steven1.1** y luego **Run workflow**.
+**Generar APK de main** y luego **Run workflow**.
 
 ---
 
