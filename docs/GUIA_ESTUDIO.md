@@ -49,7 +49,8 @@ que se juega cuando el cliente dice que no.
 | El cliente navega el feed | El catálogo se **reordena solo** según su expresión — sin tocar nada, que es lo que exige la regla eliminatoria |
 | Toca un producto | Sale el popup **a precio de lista**: "¿Te lo llevas?" |
 | Dice "No, gracias" | Contraoferta: **mismo producto, con el descuento que decide su expresión** ("Espera, te mejoro el precio") |
-| Vuelve a rechazar | Se deja de insistir con ese producto |
+| Vuelve a rechazar | Se le ofrece un **bien sustituto**: otro de la misma categoría y más económico |
+| Rechaza también el sustituto | Se deja de insistir |
 | Su cara cambia con la oferta abierta | Al cerrarse, se le reofrece mejorando el precio según la emoción nueva |
 | Ya compró ese producto | Queda marcado **"Comprado"** y sale del circuito de ofertas |
 
@@ -83,6 +84,12 @@ es el que se congela en `detalleVenta.precioUnitarioCentavos` al cerrar la venta
 de la oferta es real: la venta congela el precio rebajado"*. Si te preguntan "¿dónde
 queda ese descuento en tus datos?", esa es la respuesta.
 
+**Stock:** el catálogo solo ofrece productos con `totalDisponible > 0`, y la venta lo
+descuenta **dentro de la misma transacción** que `venta` + `detalleVenta` — si algo
+falla, no queda una venta sin su descuento de inventario. El `UPDATE` es relativo en SQL
+(`total_disponible - 1`, no leer y restar en Dart) para que dos compras a la vez no se
+pisen, con guarda para no dejarlo negativo.
+
 Notas para defender esto en vivo:
 - Si no hay rostro (`no_face`) o la emoción no está en el catálogo `Gestos`, cae a la
   regla `neutral` en vez de romper el flujo (`getSingleOrNull`, no `getSingle`).
@@ -100,6 +107,19 @@ Vive en `BanditOptimizer` (`lib/decision/learning/bandit_optimizer.dart`).
 
 - **Qué decide:** qué *estrategia* de venta usar (no qué producto — eso ya lo decide la
   regla de emoción). Se ejecuta dentro de `decidirOferta`.
+- **Qué hace cada estrategia** (`_descuentoConEstrategia` y `_beneficioDe`): no son
+  etiquetas, cada una persuade distinto, y por eso hay algo que aprender.
+
+| Estrategia | Efecto sobre la oferta |
+|---|---|
+| Descuento directo | Aplica la rebaja que corresponde a la emoción |
+| Oferta relámpago | Sube esa rebaja 5 puntos, con mensaje de urgencia |
+| Envío gratis | No toca el precio: agrega valor por otro lado |
+| Recomendación premium | No toca el precio: apela a la calidad del producto |
+
+  Si te preguntan **qué aprende el algoritmo**, la respuesta es esta: compara mecanismos
+  de persuasión reales y descubre cuál convierte más en tu base de clientes. Las dos que
+  no bajan el precio suelen convertir menos, y el UCB1 termina prefiriendo las otras.
 - **Cómo:** cada estrategia acumula un score = `exitos/intentos + sqrt(2*ln(N)/intentos)`
   (fórmula UCB1 clásica: explota lo que funciona, pero sigue probando lo que se conoce
   poco). Una estrategia nunca probada se prioriza automáticamente (evita dividir entre
@@ -180,7 +200,7 @@ para la nota de este taller.
 | Batch / KPIs | Elvis | Implementado, probado (no puntúa) |
 | `main.dart` conectando todo | Steven | Implementado |
 
-Verificado en dispositivo real (Redmi, Android 12): **43 tests Dart + 9 Kotlin**,
+Verificado en dispositivo real (Redmi, Android 12): **45 tests Dart + 9 Kotlin**,
 `flutter analyze` sin issues, y la base con interacciones y ventas escribiéndose
 durante el uso.
 
@@ -198,6 +218,8 @@ esa venta.
 |---|---|---|
 | Cambiar el orden del catálogo para una emoción | `lib/decision/adaptation_engine.dart` | El `case` correspondiente en `_catalogoPara()` |
 | Cambiar el porcentaje de descuento de una emoción | `lib/decision/adaptation_engine.dart` | El `case` correspondiente en `_descuentoPara()` |
+| Cambiar qué hace una estrategia | `lib/decision/adaptation_engine.dart` | `_descuentoConEstrategia()` y `_beneficioDe()` |
+| Cambiar cómo se elige el bien sustituto | `lib/decision/adaptation_engine.dart` | `sustitutoPara()` |
 | Cambiar el mensaje mostrado | `lib/decision/adaptation_engine.dart` | El `case` correspondiente en `_textoPara()` |
 | Agregar una emoción/regla nueva | `lib/decision/adaptation_engine.dart` | Caso en `enum _TipoRegla`, `_reglaPara()`, `_catalogoPara()`, `_descuentoPara()` y `_textoPara()` |
 | Hacer que tarde más/menos en confirmar una emoción | `android/.../processing/EmotionProcessor.kt` | `DEFAULT_STABILITY_THRESHOLD` (26 frames ≈ 1.3 s) |
@@ -304,7 +326,7 @@ Dos suites, ninguna necesita celular ni emulador:
 
 | Suite | Cuántas | Cómo correrla |
 |---|---|---|
-| Dart (BD, repositorio, motor, bandit, batch, arranque) | 43 | `flutter test` |
+| Dart (BD, repositorio, motor, bandit, batch, arranque) | 45 | `flutter test` |
 | Kotlin (`EmotionProcessor`) | 9 | `cd android && ./gradlew :app:testDebugUnitTest` |
 
 Las de Kotlin cubren la lógica más delicada del pipeline, y cada caso fija un bug que ya
@@ -320,11 +342,31 @@ verdad. Un build verde no equivale a pruebas ejecutadas.
 
 ---
 
+## 12-bis. Cómo mostrar los datos reales en la presentación
+
+La base vive en el almacenamiento privado de la app, así que no se puede abrir desde el
+explorador de archivos del celular. Con el celular conectado:
+
+```
+python tools/ver_base.py            # resumen de todas las tablas
+python tools/ver_base.py ventas     # vuelca una tabla completa
+```
+
+Imprime cuántas filas tiene cada tabla, las últimas interacciones con su emoción,
+estrategia y si convirtieron, y las ventas comparando lo cobrado contra el precio de
+lista — que es la prueba visible de que el descuento es real.
+
+Para verlo como tablas navegables, el script deja el archivo en
+`tools/base_extraida.sqlite`: ábrelo con **DB Browser for SQLite** (gratuito) y usa la
+pestaña *Browse Data*.
+
+---
+
 ## 13. Checklist final antes de la presentación
 
 - [ ] El puente Kotlin→Flutter está conectado y las 3 pantallas existen.
 - [ ] Corriste la app y viste la oferta cambiar sola al cambiar de expresión, sin tocar nada.
-- [ ] Corriste `flutter test` (43) y `cd android && ./gradlew :app:testDebugUnitTest` (9).
+- [ ] Corriste `flutter test` (45) y `cd android && ./gradlew :app:testDebugUnitTest` (9).
 - [ ] Puedes explicar de memoria las 5 reglas de emoción sin mirar el código.
 - [ ] Sabes en qué archivo y método tocar para cada fila de la tabla de la sección 8.
 - [ ] Puedes justificar al menos 3 de las decisiones/trampas de la sección 9 sin leerlas.
