@@ -54,9 +54,14 @@ class BanditOptimizer {
   /// Aceptar crea la `venta` (con su `detalleVenta`) que cierra el proceso
   /// de persuasion - rechazar no crea nada: la ausencia de venta con ese
   /// mismo id ES el rechazo (asi lo lee el KPI 2, ver queries.drift).
+  /// [precioFinalCentavos] es el precio que realmente se le mostro al cliente
+  /// (con el descuento de la oferta ya aplicado). Se congela tal cual en
+  /// `detalleVenta`: la venta debe registrar lo que se ofrecio, no el precio
+  /// de lista. Si se omite, se usa el precio vigente del producto.
   Future<void> registrarRespuesta({
     required String idProcesoPersuasion,
     required bool aceptada,
+    int? precioFinalCentavos,
   }) async {
     if (!aceptada) return;
 
@@ -97,7 +102,9 @@ class BanditOptimizer {
             ventaId: ventaId,
             codLoteProducto: producto.codLoteProducto,
             cantidad: 1,
-            precioUnitarioCentavos: producto.precioUnitarioCentavos, // snapshot
+            // snapshot: el precio ofrecido, con descuento si lo hubo
+            precioUnitarioCentavos:
+                precioFinalCentavos ?? producto.precioUnitarioCentavos,
           ));
     });
   }
