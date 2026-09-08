@@ -250,11 +250,29 @@ final columnas = (constraints.maxWidth / 190).floor().clamp(2, 4);
 ```
 (en el archivo va partido en tres líneas por el formateador)
 
-**En vivo:** rota el celular. Pasa de 2 columnas a 3 o 4 sin recargar.
+**Ojo: la app está bloqueada en vertical**, así que rotar el celular ya no sirve como
+demostración. Es una decisión de producto, y la respuesta si te preguntan es directa:
+*en horizontal la cámara frontal queda a un costado y el rostro se sale del encuadre; sin
+rostro no hay contexto, y sin contexto no hay adaptación.* Está en
+`AndroidManifest.xml` (`screenOrientation="portrait"`) y en `lib/main.dart`
+(`setPreferredOrientations`).
+
+**En vivo, sin rotar:** Ajustes → Pantalla → *Tamaño de pantalla* (o *Display size*). Al
+agrandar o reducir cambia el ancho en dp y la grilla **recalcula las columnas sola** al
+volver a la app. Si tienes el cable a mano, lo mismo en un comando:
+
+```bash
+adb shell wm density 280      # pantalla mas "ancha" en dp -> mas columnas
+adb shell wm density reset
+```
 
 El `clamp(2, 4)` es lo que explicas: nunca una sola columna (desperdicia pantalla ancha)
 ni más de cuatro (las tarjetas quedan ilegibles). Además hay `maxWidth: 900`
 (línea 510) para que en tablet no se estire sin límite.
+
+Y el argumento de fondo: responsivo no significa *rotar*, significa **adaptarse al
+espacio disponible**. La grilla lo hace por ancho real, que es lo que cambia de un
+teléfono a otro.
 
 ---
 
@@ -266,6 +284,7 @@ Ordenados de más fácil a más riesgoso. **Si puedes elegir, elige de arriba.**
 |---|---|---|---|---|
 | C1 | Cambiar un descuento por emoción | `adaptation_engine.dart:208` | 10 s | ninguno |
 | C2 | Cambiar los segundos del popup | `tienda_screen.dart:184` | 10 s | ninguno |
+| C2b | Permitir horizontal otra vez | `AndroidManifest.xml` + `main.dart` | 2 min | alto: recompila |
 | C3 | Cambiar el texto de una oferta | `adaptation_engine.dart:195` | 10 s | ninguno |
 | C4 | Cambiar el orden del catálogo de una emoción | `adaptation_engine.dart:286` | 30 s | bajo |
 | C5 | Agregar un producto al catálogo | `data/database/catalogo_demo.dart` | 1 min | medio: necesita `pm clear` |

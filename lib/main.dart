@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'data/batch/cierre_diario_scheduler.dart';
@@ -15,6 +16,13 @@ import 'ui/historial_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Solo vertical: en horizontal la camara frontal queda a un costado y el
+  // rostro se sale del encuadre, que es de donde sale todo el contexto.
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
 
   await programarCierreDiario();
 
