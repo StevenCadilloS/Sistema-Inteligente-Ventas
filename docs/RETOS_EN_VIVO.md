@@ -13,10 +13,22 @@ Solo texto y tablas, imprimible.
 |---|---|
 | Dejar la app corriendo con hot reload | `flutter run` (déjalo abierto: la tecla `r` recarga en 1 s) |
 | Ver la base del celular | `python tools/ver_base.py` |
+| Ver la base **sin celular** | `python tools/ver_base.py --evidencia` |
 | Ver el esquema SQL real | `python tools/ver_base.py esquema` |
 | Volcar una tabla | `python tools/ver_base.py ventas` |
 | Limpiar datos para demo desde cero | `adb shell pm clear com.tuapp.tienda_adaptativa` |
 | Correr pruebas | `flutter test` (45) · `cd android && ./gradlew testDebugUnitTest` (9) |
+
+**Cual APK llevar.** GitHub Actions publica dos en el release `steven1-1-latest`:
+
+| APK | Cuando |
+|---|---|
+| `...steven1.1.apk` (release) | **La normal.** Dart compilado (AOT): responde mucho más rápido, y eso es justo lo que puntúa *Procesamiento en tiempo real* |
+| `...steven1.1-debug.apk` | Solo si necesitas leer la base desde el celular: Android bloquea `adb run-as` en release |
+
+Se ven identicas (`debugShowCheckedModeBanner: false`), asi que llevar la de release no
+cuesta nada. Y si llevas esa, la base la muestras igual con `--evidencia`, desde la
+laptop y sin cable.
 
 **La regla de oro del cambio en vivo:**
 
@@ -124,6 +136,35 @@ histéresis bajó a 7. Un vendedor tampoco cambia de oferta cada 200 ms.
 
 ---
 
+### A6. "Voy a rechazar la oferta veinte veces"
+
+Es lo primero que hace cualquiera que quiera romper una demo, y la app tiene respuesta.
+
+**Que pasa:** salen **dos** ofertas —precio de lista y precio rebajado—, luego un bien
+sustituto si lo hay, y despues el mensaje *"Listo, te dejamos seguir mirando"*. Si
+vuelves a tocar ese mismo producto, responde *"Listo, no insistimos. Mira otra cosa"*
+sin abrir nada.
+
+**Por que termina siempre**, que es lo que te pueden pedir que expliques:
+
+| Mecanismo | Donde |
+|---|---|
+| `_pasoNegociacion` solo avanza (0 → 1 → 2), nunca retrocede | `tienda_screen.dart:315` |
+| La tienda queda bloqueada **toda** la negociacion, no solo mientras el popup se ve | `tienda_screen.dart:452` |
+| Lo ya rechazado no se vuelve a ofrecer | `tienda_screen.dart:395` |
+| El bloqueo se libera en los cuatro finales posibles | `_terminarNegociacion`, `tienda_screen.dart:341` |
+
+El segundo es el que importa y es contraintuitivo: el bloqueo empieza **antes** de
+consultar la base, no al mostrar el popup. `decidirOferta` tarda cerca de un segundo
+calculando el UCB1, y si la tienda sigue viva en esa ventana, un toque arranca otra
+negociacion en paralelo y reinicia el peldano a cero. Se detecto midiendo: dos ofertas
+de productos distintos separadas por 0.2 s en la tabla `interacciones`.
+
+El cuarto tambien vale mencionarlo: uno de los cuatro finales es el fallo de consulta.
+Sin liberar ahi, un error de base dejaria el catalogo bloqueado para siempre.
+
+---
+
 ## Bloque B — Diseño e Implementación Técnica (6 pts)
 
 ### B1. "Señálame el pipeline: Entrada → Procesamiento → Decisión → Adaptación"
@@ -226,10 +267,10 @@ líneas y se partió en cuatro, cada uno con una responsabilidad:
 
 | Método | Línea | Qué hace |
 |---|---|---|
-| `_responderOferta` | 277 | registra la respuesta y enruta |
-| `_siguientePeldano` | 306 | decide el peldaño de la escalada |
-| `_ofrecerSustituto` | 334 | busca la alternativa de la misma categoría |
-| `_ofertarTrasPausa` | 351 | espera 500 ms y reofrece |
+| `_responderOferta` | 284 | registra la respuesta y enruta |
+| `_siguientePeldano` | 315 | decide el peldaño de la escalada |
+| `_ofrecerSustituto` | 355 | busca la alternativa de la misma categoría |
+| `_ofertarTrasPausa` | 372 | espera 500 ms y reofrece |
 
 Cómo verificarlo delante de él, si lo pide:
 
@@ -243,7 +284,7 @@ Está en los conceptos aplicados del PDF (pág. 3).
 
 | | |
 |---|---|
-| **Dónde** | `lib/ui/tienda_screen.dart:511` |
+| **Dónde** | `lib/ui/tienda_screen.dart:564` |
 
 ```dart
 final columnas = (constraints.maxWidth / 190).floor().clamp(2, 4);
@@ -268,7 +309,7 @@ adb shell wm density reset
 
 El `clamp(2, 4)` es lo que explicas: nunca una sola columna (desperdicia pantalla ancha)
 ni más de cuatro (las tarjetas quedan ilegibles). Además hay `maxWidth: 900`
-(línea 510) para que en tablet no se estire sin límite.
+(línea 563) para que en tablet no se estire sin límite.
 
 Y el argumento de fondo: responsivo no significa *rotar*, significa **adaptarse al
 espacio disponible**. La grilla lo hace por ancho real, que es lo que cambia de un
@@ -286,6 +327,7 @@ Ordenados de más fácil a más riesgoso. **Si puedes elegir, elige de arriba.**
 | C2 | Cambiar los segundos del popup | `tienda_screen.dart:184` | 10 s | ninguno |
 | C2b | Permitir horizontal otra vez | `AndroidManifest.xml` + `main.dart` | 2 min | alto: recompila |
 | C3 | Cambiar el texto de una oferta | `adaptation_engine.dart:195` | 10 s | ninguno |
+| C3b | Cambiar cuantas ofertas aguanta la escalera | `tienda_screen.dart:315` | 30 s | bajo |
 | C4 | Cambiar el orden del catálogo de una emoción | `adaptation_engine.dart:286` | 30 s | bajo |
 | C5 | Agregar un producto al catálogo | `data/database/catalogo_demo.dart` | 1 min | medio: necesita `pm clear` |
 | C6 | Agregar una columna a una tabla | `data/database/tables.dart` | 2 min | medio: `build_runner` + `pm clear` |
@@ -384,10 +426,17 @@ convierte en punto a favor.
 | El informe ocupa ~2 páginas | Ya cubre las **6 secciones que exige el PDF** más 3 propias (arquitectura, tecnologías, ubicación). El PDF dice *1 página máx.*: si el docente lo exige, borras las secciones **7, 8 y 9** y queda exacto |
 
 **Lo que el PDF pide y quizá no tengas a la vista:** la sección *"Evidencia de adaptación
-— capturas o descripción de cambios dinámicos"* (pág. 12). Si la piden, tu evidencia es
-la propia base de datos: `python tools/ver_base.py` muestra las interacciones con la
-emoción que las disparó y qué estrategia se usó. Eso es evidencia medida, mejor que una
-captura.
+— capturas o descripción de cambios dinámicos"* (pág. 12). Tu evidencia es la propia base
+de datos, y **ya está guardada en el repo**: `tools/base_evidencia_2026-09-08.sqlite`, una
+instantánea real de 339 interacciones y 35 ventas.
+
+```bash
+python tools/ver_base.py --evidencia
+```
+
+Funciona sin celular y sin cable: cada oferta aparece con la emoción que la disparó y la
+estrategia que se usó. Es evidencia medida, mejor que una captura — y sobrevive a que
+alguien desinstale la app, que fue exactamente como se perdió la primera vez.
 
 ---
 
@@ -402,4 +451,6 @@ captura.
 | ¿Dónde se liberan recursos? | `tienda_screen.dart:83` (sin cambio) y `EmotionChannelHandler.kt:61` |
 | ¿Dónde está el esquema? | `data/database/tables.dart`, 10 clases |
 | ¿Dónde está el aprendizaje? | `learning/bandit_optimizer.dart:124` |
+| ¿Por qué la negociación termina? | `_pasoNegociacion` solo avanza; el bloqueo cubre toda la negociación (`tienda_screen.dart:452`) |
+| ¿Qué APK llevo? | La de **release**; la debug solo para leer la base |
 | ¿Cómo cambio algo rápido? | Editar Dart + tecla `r` |
