@@ -94,8 +94,10 @@ class _TiendaScreenState extends State<TiendaScreen>
     final codCliente = _codCliente;
     if (codCliente == null) return;
 
-    final catalogo = await widget.adaptationEngine
-        .catalogoPara(codCliente: codCliente, emocion: 'neutral');
+    final catalogo = await widget.adaptationEngine.catalogoPara(
+      codCliente: codCliente,
+      emocion: 'neutral',
+    );
     if (mounted) {
       setState(() {
         _catalogo = catalogo;
@@ -128,7 +130,8 @@ class _TiendaScreenState extends State<TiendaScreen>
       });
 
       if (_ofertaBloqueada) {
-        if (_emocionAntesDelPopup != null && emocion.emotion != _emocionAntesDelPopup) {
+        if (_emocionAntesDelPopup != null &&
+            emocion.emotion != _emocionAntesDelPopup) {
           _emocionCambioDurantePopup = true;
         }
         return;
@@ -145,8 +148,10 @@ class _TiendaScreenState extends State<TiendaScreen>
 
   Future<void> _adaptarA(EmocionDetectada emocion, String codCliente) async {
     try {
-      final catalogo = await widget.adaptationEngine
-          .catalogoPara(codCliente: codCliente, emocion: emocion.emotion);
+      final catalogo = await widget.adaptationEngine.catalogoPara(
+        codCliente: codCliente,
+        emocion: emocion.emotion,
+      );
 
       // El feed se reordena solo al cambiar la emocion, sin que el cliente
       // toque nada: esa es la adaptacion automatica que exige el taller. La
@@ -179,7 +184,13 @@ class _TiendaScreenState extends State<TiendaScreen>
       _segundosRestantes = 10;
     });
 
-    _overlayEntry = OverlayEntry(
+    _overlayEntry = _construirOverlay(oferta, mensaje);
+    Overlay.of(context).insert(_overlayEntry!);
+    _iniciarCuentaRegresiva();
+  }
+
+  OverlayEntry _construirOverlay(Oferta oferta, String mensaje) {
+    return OverlayEntry(
       builder: (context) => PopupOferta(
         oferta: oferta,
         mensaje: mensaje,
@@ -195,9 +206,11 @@ class _TiendaScreenState extends State<TiendaScreen>
         onCerrar: _cerrarPopup,
       ),
     );
+  }
 
-    Overlay.of(context).insert(_overlayEntry!);
-
+  /// La oferta caduca a los 10 segundos. Sin esto se queda abierta bloqueando
+  /// la tienda si el cliente no responde nada.
+  void _iniciarCuentaRegresiva() {
     _ofertaTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         timer.cancel();
@@ -235,7 +248,8 @@ class _TiendaScreenState extends State<TiendaScreen>
     // La mejora por cambio de expresion es un peldano mas de la escalera, no
     // una via paralela: consume el paso 0 -> 1 y por eso termina, igual que
     // el rechazo explicito.
-    final mejorar = porTimeout &&
+    final mejorar =
+        porTimeout &&
         _emocionCambioDurantePopup &&
         _pasoNegociacion == 0 &&
         producto != null;
@@ -274,51 +288,7 @@ class _TiendaScreenState extends State<TiendaScreen>
         return;
       }
 
-      // Paso 0 -> 1: dijo que no a precio de lista, se responde con la
-      // mejor oferta que permita su expresion y la estrategia elegida.
-      if (_pasoNegociacion == 0) {
-        _pasoNegociacion = 1;
-        await Future<void>.delayed(const Duration(milliseconds: 500));
-        if (mounted && !_ofertaBloqueada) {
-          await _ofertarRetencion(oferta.producto, conDescuento: true);
-        }
-        return;
-      }
-
-      // Rechazo tambien el precio rebajado. Insistir con el mismo producto ya
-      // no tiene sentido, pero si ofrecerle un bien sustituto: otra cosa de su
-      // misma categoria, mas economica. Cada intento quedo registrado como su
-      // propio proceso de persuasion, que es lo que alimenta al UCB1.
-      _rechazados.add(oferta.producto.codLoteProducto);
-
-      if (_pasoNegociacion == 1) {
-        final sustituto = await widget.adaptationEngine.sustitutoPara(
-          oferta.producto,
-          excluir: {
-            ..._rechazados,
-            ..._compras.map((c) => c.producto.codLoteProducto),
-          },
-        );
-
-        if (sustituto != null && mounted && !_ofertaBloqueada) {
-          _pasoNegociacion = 2;
-          await Future<void>.delayed(const Duration(milliseconds: 500));
-          if (mounted) {
-            await _ofertarRetencion(
-              sustituto,
-              conDescuento: true,
-              mensaje: 'Quiza este te acomode mejor:',
-            );
-          }
-          return;
-        }
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
-        );
-      }
+      await _siguientePeldano(oferta);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -328,8 +298,65 @@ class _TiendaScreenState extends State<TiendaScreen>
     }
   }
 
-  bool _yaComprado(Producto producto) =>
-      _compras.any((c) => c.producto.codLoteProducto == producto.codLoteProducto);
+  /// Escalada tras un rechazo: precio de lista -> precio rebajado -> bien
+  /// sustituto -> dejar de insistir.
+  ///
+  /// El peldano vive en [_pasoNegociacion] y solo avanza, nunca retrocede: por
+  /// eso la escalada siempre termina, aunque el cliente rechace todo.
+  Future<void> _siguientePeldano(Oferta oferta) async {
+    // Dijo que no a precio de lista: se responde con la mejor oferta que
+    // permitan su expresion y la estrategia elegida.
+    if (_pasoNegociacion == 0) {
+      _pasoNegociacion = 1;
+      await _ofertarTrasPausa(oferta.producto);
+      return;
+    }
+
+    // Rechazo tambien el precio rebajado. Cada intento quedo registrado como
+    // su propio proceso de persuasion, que es lo que alimenta al UCB1.
+    _rechazados.add(oferta.producto.codLoteProducto);
+
+    if (_pasoNegociacion == 1 && await _ofrecerSustituto(oferta.producto)) {
+      return;
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
+      );
+    }
+  }
+
+  /// Insistir con lo que ya rechazo dos veces no tiene sentido, pero si
+  /// ofrecerle otra cosa de su misma categoria y mas economica.
+  ///
+  /// Devuelve si habia sustituto que ofrecer; si no, la negociacion termina.
+  Future<bool> _ofrecerSustituto(Producto rechazado) async {
+    final sustituto = await widget.adaptationEngine.sustitutoPara(
+      rechazado,
+      excluir: {
+        ..._rechazados,
+        ..._compras.map((c) => c.producto.codLoteProducto),
+      },
+    );
+    if (sustituto == null || !mounted || _ofertaBloqueada) return false;
+
+    _pasoNegociacion = 2;
+    await _ofertarTrasPausa(sustituto, mensaje: 'Quiza este te acomode mejor:');
+    return true;
+  }
+
+  /// Medio segundo entre el rechazo y la oferta siguiente: encadenarlas sin
+  /// pausa se ve como un parpadeo del popup, no como una respuesta.
+  Future<void> _ofertarTrasPausa(Producto producto, {String? mensaje}) async {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted || _ofertaBloqueada) return;
+    await _ofertarRetencion(producto, conDescuento: true, mensaje: mensaje);
+  }
+
+  bool _yaComprado(Producto producto) => _compras.any(
+    (c) => c.producto.codLoteProducto == producto.codLoteProducto,
+  );
 
   /// Tocar un producto es la senal de interes: se le propone de inmediato, a
   /// precio de lista. Si dice que no, ahi entra el descuento segun su cara.
@@ -339,9 +366,7 @@ class _TiendaScreenState extends State<TiendaScreen>
     // mas barata que la primera.
     if (_yaComprado(producto)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Ya compraste ${producto.nombreProducto}'),
-        ),
+        SnackBar(content: Text('Ya compraste ${producto.nombreProducto}')),
       );
       return;
     }
@@ -384,7 +409,8 @@ class _TiendaScreenState extends State<TiendaScreen>
         productoObjetivo: producto,
         conDescuento: conDescuento,
       );
-      final texto = mensaje ??
+      final texto =
+          mensaje ??
           (oferta.tieneDescuento
               ? 'Espera, te mejoro el precio:'
               : '¿Te lo llevas?');
@@ -423,7 +449,6 @@ class _TiendaScreenState extends State<TiendaScreen>
       builder: (sheetContext) => ComprasRealizadas(compras: _compras),
     );
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -485,8 +510,9 @@ class _TiendaScreenState extends State<TiendaScreen>
                   constraints: const BoxConstraints(maxWidth: 900),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      final columnas =
-                          (constraints.maxWidth / 190).floor().clamp(2, 4);
+                      final columnas = (constraints.maxWidth / 190)
+                          .floor()
+                          .clamp(2, 4);
 
                       return CustomScrollView(
                         slivers: [
@@ -516,27 +542,28 @@ class _TiendaScreenState extends State<TiendaScreen>
                             sliver: SliverGrid(
                               gridDelegate:
                                   SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: columnas,
-                                mainAxisSpacing: 12,
-                                crossAxisSpacing: 12,
-                                childAspectRatio: 0.72,
-                              ),
-                              delegate: SliverChildBuilderDelegate(
-                                (context, index) {
-                                  final producto = _catalogo[index];
-                                  return ProductoCard(
-                                    key: ValueKey(producto.codLoteProducto),
-                                    producto: producto,
-                                    destacado: index == 0 && detectando,
-                                    seleccionado:
-                                        _productoSeleccionadoId == producto.codLoteProducto,
-                                    comprado: _yaComprado(producto),
-                                    estilo: estilo,
-                                    onTap: () => _seleccionarProducto(producto),
-                                  );
-                                },
-                                childCount: _catalogo.length,
-                              ),
+                                    crossAxisCount: columnas,
+                                    mainAxisSpacing: 12,
+                                    crossAxisSpacing: 12,
+                                    childAspectRatio: 0.72,
+                                  ),
+                              delegate: SliverChildBuilderDelegate((
+                                context,
+                                index,
+                              ) {
+                                final producto = _catalogo[index];
+                                return ProductoCard(
+                                  key: ValueKey(producto.codLoteProducto),
+                                  producto: producto,
+                                  destacado: index == 0 && detectando,
+                                  seleccionado:
+                                      _productoSeleccionadoId ==
+                                      producto.codLoteProducto,
+                                  comprado: _yaComprado(producto),
+                                  estilo: estilo,
+                                  onTap: () => _seleccionarProducto(producto),
+                                );
+                              }, childCount: _catalogo.length),
                             ),
                           ),
                         ],

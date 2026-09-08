@@ -43,7 +43,7 @@ Solo texto y tablas, imprimible.
 
 | | |
 |---|---|
-| **Dónde** | `lib/ui/tienda_screen.dart:146` → `_adaptarA()` |
+| **Dónde** | `lib/ui/tienda_screen.dart:149` → `_adaptarA()` |
 | **Prueba que lo respalda** | `test/decision/adaptation_engine_test.dart` → *"la regla eliminatoria: la oferta cambia sola sin intervención manual"* |
 
 **En vivo:**
@@ -54,7 +54,7 @@ Solo texto y tablas, imprimible.
 Frase para acompañar: *"no toqué la pantalla; el único disparador fue mi cara."*
 
 Si te piden verlo en el código, muestra que `_adaptarA` se llama desde el `listen` del
-stream (`tienda_screen.dart:141`), no desde ningún `onPressed`.
+stream (`tienda_screen.dart:144`), no desde ningún `onPressed`.
 
 ### A2. "Cambia una regla de adaptación"
 
@@ -89,7 +89,7 @@ Cada emoción tiene su consulta con su `orderBy`. Para invertir el criterio de `
 | | |
 |---|---|
 | **Dónde** | `android/.../processing/EmotionProcessor.kt:168` → `MAX_FRAMES_SIN_ROSTRO = 5` |
-| | `lib/ui/tienda_screen.dart:116` → rama `no_face` |
+| | `lib/ui/tienda_screen.dart:118` → rama `no_face` |
 
 **Respuesta:** tras 5 frames seguidos sin rostro se emite `no_face`, el chip vuelve a
 "Leyendo…" y el feed **se queda como está** en vez de congelarse con una emoción falsa.
@@ -137,7 +137,7 @@ Es **obligatorio** en el PDF (pág. 8). Ténlo memorizado en este orden:
 | **Procesamiento** | `android/.../processing/EmotionProcessor.kt:146` | ventana de 26 frames, voto por mayoría (45%), histéresis (6) |
 | **Decisión** | `lib/decision/adaptation_engine.dart:68` | la regla de la emoción elige y ordena el catálogo |
 | | `lib/decision/learning/bandit_optimizer.dart:124` | UCB1 elige la estrategia de persuasión |
-| **Adaptación** | `lib/ui/tienda_screen.dart:146` | reordena el feed y lanza la oferta |
+| **Adaptación** | `lib/ui/tienda_screen.dart:149` | reordena el feed y lanza la oferta |
 
 El puente entre las dos mitades es el `EventChannel` (`lib/services/emotion_channel.dart:11`).
 
@@ -181,7 +181,7 @@ Remate: por eso las pruebas inyectan un stream falso sin necesitar cámara.
 
 | Mecanismo | Dónde | Para qué |
 |---|---|---|
-| `Stream` + `listen` | `tienda_screen.dart:111` | eventos de emoción, no bloqueantes |
+| `Stream` + `listen` | `tienda_screen.dart:113` | eventos de emoción, no bloqueantes |
 | `async` / `await` | todo `adaptation_engine.dart` | consultas SQLite fuera del hilo de UI |
 | Thread pool (Kotlin) | `CameraManager.kt` → `analyzerExecutor` | el análisis de imagen no bloquea la UI |
 | `Handler(Looper.getMainLooper())` | `EmotionChannelHandler.kt` | **volver** al hilo principal para emitir |
@@ -209,22 +209,33 @@ unos segundos. Es la fuga clásica de CameraX y aquí está resuelta.
 
 ### B6. "Métodos menores a 40 líneas"
 
-El PDF lo pide explícito (pág. 9). **Sé honesto, es la respuesta que gana puntos:**
+El PDF lo pide explícito (pág. 9). **Se cumple: cero métodos de lógica sobre 40 líneas.**
 
-| Método | Líneas | Cómo defenderlo |
+Lo único largo son los `build()`, y eso tiene respuesta:
+
+| Qué | Líneas | Por qué no cuenta |
 |---|---|---|
-| `build()` en 5 pantallas/widgets | 79–220 | Son **árboles declarativos**, no lógica. La regla apunta a métodos con ramas y estado |
-| `sembrarCatalogoDemo` | 70 | Es una lista literal de 16 productos, sin bifurcaciones |
-| `_responderOferta` | 67 | **Este sí es lógica.** Reconócelo |
-| `_mostrarPopupOferta` | 49 | **También.** Reconócelo |
+| `build()` en 6 pantallas y widgets | 79–220 | Son **árboles de widgets declarativos**: composición, no lógica. No tienen ramas ni estado que seguir |
 
-Frase preparada: *"los `build()` son composición de widgets; donde la regla sí aplica es
-en `_responderOferta`, que tiene 67 líneas y debería partirse en la escalera de
-negociación y el registro."*
+Si el docente insiste en que un `build()` de 220 líneas es largo, la respuesta honesta es
+que se parte extrayendo sub-widgets (`_Encabezado`, `_Precio`, `_Botones`), pero que eso
+mueve líneas de sitio sin reducir complejidad ciclomática — que es lo que la regla busca.
 
-Reconocer un defecto real y saber cómo se arregla suele puntuar más que negarlo. Si te
-piden partirlo ahí mismo: cada peldaño (`paso 0→1`, `paso 1→2`) sale a su propio método
-privado, `r`, y quedan tres métodos de ~20 líneas.
+**El dato que sí puedes ofrecer:** la lógica de negociación estaba en un método de 67
+líneas y se partió en cuatro, cada uno con una responsabilidad:
+
+| Método | Línea | Qué hace |
+|---|---|---|
+| `_responderOferta` | 277 | registra la respuesta y enruta |
+| `_siguientePeldano` | 306 | decide el peldaño de la escalada |
+| `_ofrecerSustituto` | 334 | busca la alternativa de la misma categoría |
+| `_ofertarTrasPausa` | 351 | espera 500 ms y reofrece |
+
+Cómo verificarlo delante de él, si lo pide:
+
+```bash
+grep -n "Future<void> _siguientePeldano" lib/ui/tienda_screen.dart
+```
 
 ### B7. "¿Es responsivo?"
 
@@ -232,17 +243,18 @@ Está en los conceptos aplicados del PDF (pág. 3).
 
 | | |
 |---|---|
-| **Dónde** | `lib/ui/tienda_screen.dart:486` |
+| **Dónde** | `lib/ui/tienda_screen.dart:511` |
 
 ```dart
 final columnas = (constraints.maxWidth / 190).floor().clamp(2, 4);
 ```
+(en el archivo va partido en tres líneas por el formateador)
 
 **En vivo:** rota el celular. Pasa de 2 columnas a 3 o 4 sin recargar.
 
 El `clamp(2, 4)` es lo que explicas: nunca una sola columna (desperdicia pantalla ancha)
 ni más de cuatro (las tarjetas quedan ilegibles). Además hay `maxWidth: 900`
-(línea 485) para que en tablet no se estire sin límite.
+(línea 510) para que en tablet no se estire sin límite.
 
 ---
 
@@ -253,7 +265,7 @@ Ordenados de más fácil a más riesgoso. **Si puedes elegir, elige de arriba.**
 | # | Reto | Archivo | Tiempo | Riesgo |
 |---|---|---|---|---|
 | C1 | Cambiar un descuento por emoción | `adaptation_engine.dart:208` | 10 s | ninguno |
-| C2 | Cambiar los segundos del popup | `tienda_screen.dart:179` | 10 s | ninguno |
+| C2 | Cambiar los segundos del popup | `tienda_screen.dart:184` | 10 s | ninguno |
 | C3 | Cambiar el texto de una oferta | `adaptation_engine.dart:195` | 10 s | ninguno |
 | C4 | Cambiar el orden del catálogo de una emoción | `adaptation_engine.dart:286` | 30 s | bajo |
 | C5 | Agregar un producto al catálogo | `data/database/catalogo_demo.dart` | 1 min | medio: necesita `pm clear` |
@@ -348,7 +360,6 @@ convierte en punto a favor.
 | Debilidad | Cómo responder |
 |---|---|
 | El modelo confunde `triste` con `enojo` | Es el techo del modelo FER a 48×48: ambas bajan las cejas. El preprocesamiento (grises, ecualización, recorte cuadrado) ya bajó el error de "enojo con cara neutra" del 49% al 5% |
-| `_responderOferta` tiene 67 líneas | Reconocido arriba (B6), con el plan de partirlo |
 | `tipo_cliente` nunca se asigna | La tabla y la FK existen; falta la regla que clasifica Nuevo/Frecuente/VIP. Es trabajo pendiente, no un error de diseño |
 | `total_vendidos` está en 0 | Es un derivado que actualiza el módulo batch en el cierre diario, no la transacción en línea |
 | El informe tiene 7 secciones y 2 páginas | El PDF (pág. 11) dice **1 página máx.** y lista **6 secciones**. Si el docente se ciñe al PDF, tienes de más, no de menos — pero confirma qué versión rige |
@@ -365,11 +376,11 @@ captura.
 
 | Pregunta | Respuesta de una línea |
 |---|---|
-| ¿Dónde se adapta solo? | `tienda_screen.dart:146` `_adaptarA`, llamado desde el `listen` del stream |
+| ¿Dónde se adapta solo? | `tienda_screen.dart:149` `_adaptarA`, llamado desde el `listen` del stream |
 | ¿Dónde están las reglas? | `adaptation_engine.dart:208` (descuentos) y `:286` (orden del catálogo) |
 | ¿Dónde está el pipeline? | Kotlin `context/` → `processing/` → Dart `decision/` → `ui/` |
 | ¿Dónde se abstrae el contexto? | `services/emotion_channel.dart:10` |
-| ¿Dónde se liberan recursos? | `tienda_screen.dart:83` y `EmotionChannelHandler.kt:61` |
+| ¿Dónde se liberan recursos? | `tienda_screen.dart:83` (sin cambio) y `EmotionChannelHandler.kt:61` |
 | ¿Dónde está el esquema? | `data/database/tables.dart`, 10 clases |
 | ¿Dónde está el aprendizaje? | `learning/bandit_optimizer.dart:124` |
 | ¿Cómo cambio algo rápido? | Editar Dart + tecla `r` |
