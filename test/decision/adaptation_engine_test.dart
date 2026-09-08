@@ -67,6 +67,71 @@ void main() {
 
   tearDown(() => db.close());
 
+  test('el descuento de la oferta es real: la venta congela el precio rebajado',
+      () async {
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'enojo', // regla de descuento agresivo
+      nivelDeInteres: 70,
+    );
+
+    expect(oferta.descuentoPorcentaje, 25);
+    expect(
+      oferta.precioFinalCentavos,
+      oferta.producto.precioUnitarioCentavos * 75 ~/ 100,
+    );
+
+    await BanditOptimizer(db).registrarRespuesta(
+      idProcesoPersuasion: oferta.idProcesoPersuasion,
+      aceptada: true,
+      precioFinalCentavos: oferta.precioFinalCentavos,
+    );
+
+    final detalle = await db.select(db.detalleVenta).getSingle();
+    // Lo cobrado, no el precio de lista: si esto se rompe, el popup prometeria
+    // un descuento que la base no registra.
+    expect(detalle.precioUnitarioCentavos, oferta.precioFinalCentavos);
+    expect(
+      detalle.precioUnitarioCentavos,
+      lessThan(oferta.producto.precioUnitarioCentavos),
+    );
+  });
+
+  test('tras un rechazo insiste con otro producto, no con el mismo', () async {
+    final primera = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'triste',
+      nivelDeInteres: 60,
+    );
+
+    final segunda = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'triste', // misma emocion: la regla sola devolveria lo mismo
+      nivelDeInteres: 60,
+      excluir: {primera.producto.codLoteProducto},
+    );
+
+    expect(
+      segunda.producto.codLoteProducto,
+      isNot(primera.producto.codLoteProducto),
+    );
+  });
+
+  test('feliz es premium y va sin descuento', () async {
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'feliz',
+      nivelDeInteres: 80,
+    );
+
+    expect(oferta.descuentoPorcentaje, 0);
+    expect(oferta.tieneDescuento, isFalse);
+    expect(
+      oferta.precioFinalCentavos,
+      oferta.producto.precioUnitarioCentavos,
+    );
+  });
+
   test('triste -> el producto mas economico', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,

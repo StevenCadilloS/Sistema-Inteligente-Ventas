@@ -11,12 +11,26 @@ class Oferta {
     required this.producto,
     required this.estrategia,
     required this.texto,
+    required this.descuentoPorcentaje,
   });
 
   final String idProcesoPersuasion;
   final Producto producto;
   final Estrategia? estrategia; // C11: nullable de verdad, sin centinela
   final String texto;
+
+  /// Descuento que la regla de la emocion concede sobre este producto.
+  /// 0 cuando la regla no contempla rebaja (premium y oferta estandar).
+  final int descuentoPorcentaje;
+
+  /// Precio realmente ofrecido, que es el que se congela en `detalleVenta`
+  /// al cerrar la venta. Aritmetica entera en centavos: el dinero nunca pasa
+  /// por double (docs/PLAN_ELVIS.md, trampa #3).
+  int get precioFinalCentavos =>
+      producto.precioUnitarioCentavos -
+      (producto.precioUnitarioCentavos * descuentoPorcentaje ~/ 100);
+
+  bool get tieneDescuento => descuentoPorcentaje > 0;
 }
 
 /// Fase 3 del pipeline (DECISION). Entra un gesto ya estabilizado
@@ -42,10 +56,22 @@ class AdaptationEngine {
   static const _canal = 'A'; // app movil (vs 'W' web)
   static const _tipoTransaccion = 'TRX0001';
 
+  /// [excluir] son productos que el cliente ya rechazo en esta sesion: la
+  /// oferta salta al siguiente del ranking en vez de insistir con el mismo.
+  /// Sin esto, rechazar y volver a ofertar con la misma emocion devolvia
+  /// siempre el mismo producto, porque la regla es determinista.
+  ///
+  /// [productoObjetivo] fuerza la oferta sobre un producto concreto: es el
+  /// caso de retencion, cuando el cliente miro un producto y lo dejo ir. La
+  /// emocion sigue decidiendo el descuento y el mensaje, pero el producto es
+  /// el que el cliente ya mostro querer.
   Future<Oferta> decidirOferta({
     required String codCliente,
     required String emocion, // ej. "triste" - ProcessedEmotion.emotion en Kotlin
     required int nivelDeInteres,
+    Set<String> excluir = const {},
+    Producto? productoObjetivo,
+    bool conDescuento = true,
   }) async {
     // EmotionProcessor.kt (Juan) no conoce codigos de catalogo: solo
     // produce el nombre de la emocion (ver ProcessedEmotion.emotion en
@@ -70,7 +96,13 @@ class AdaptationEngine {
     if (catalogo.isEmpty) {
       throw StateError('No hay productos activos en el catalogo.');
     }
-    final producto = catalogo.first;
+    // Si ya rechazo todo el catalogo, se vuelve a empezar por el primero:
+    // mejor repetir que quedarse sin oferta que mostrar.
+    final producto = productoObjetivo ??
+        catalogo.firstWhere(
+          (p) => !excluir.contains(p.codLoteProducto),
+          orElse: () => catalogo.first,
+        );
     final estrategia = await _bandit.seleccionarEstrategia();
 
     final idProcesoPersuasion = await _registrarInteraccion(
@@ -81,39 +113,39 @@ class AdaptationEngine {
       nivelDeInteres: nivelDeInteres,
     );
 
+    // El descuento es la carta que se juega cuando el cliente dice que no:
+    // la primera oferta va a precio de lista.
+    final descuento = conDescuento ? _descuentoPara(regla) : 0;
+
     return Oferta(
       idProcesoPersuasion: idProcesoPersuasion,
       producto: producto,
       estrategia: estrategia,
-      texto: _textoPara(regla, producto),
+      texto: _textoPara(regla, producto, descuento),
+      descuentoPorcentaje: descuento,
     );
   }
 
-  /// El cliente elige un producto del feed por su cuenta, en vez de aceptar
-  /// la oferta sugerida. Se registra como su propio proceso de persuasion y
-  /// devuelve el `idProcesoPersuasion` para cerrarlo con
-  /// [BanditOptimizer.registrarRespuesta].
+  /// Descuento por regla, siguiendo la intencion ya documentada de cada una
+  /// (ver los comentarios de la clase): enojo lleva "descuento agresivo",
+  /// sorpresa es "oferta especial", y feliz es premium **sin** descuento.
   ///
-  /// Va sin estrategia (C11: `codEstrategia` nullable a proposito): ninguna
-  /// estrategia lo convencio, y atribuirsela le regalaria una conversion
-  /// falsa al UCB1.
-  Future<String> registrarEleccionLibre({
-    required String codCliente,
-    required Producto producto,
-    required String emocion,
-    required int nivelDeInteres,
-  }) async {
-    final gesto = await (_db.select(_db.gestos)
-          ..where((g) => g.nombreGesto.equals(emocion)))
-        .getSingleOrNull();
-
-    return _registrarInteraccion(
-      codCliente: codCliente,
-      producto: producto,
-      codEstrategia: null,
-      codGesto: gesto?.codGesto,
-      nivelDeInteres: nivelDeInteres,
-    );
+  /// Vive aqui y no en la UI a proposito: es una decision de negocio, y es el
+  /// mismo numero que termina congelado en `detalleVenta.precioUnitarioCentavos`
+  /// cuando la venta se cierra. Un descuento que solo existiera en el texto
+  /// del popup no cuadraria con lo que registra la base.
+  int _descuentoPara(_TipoRegla regla) {
+    switch (regla) {
+      case _TipoRegla.enojo:
+        return 25;
+      case _TipoRegla.sorpresa:
+        return 15;
+      case _TipoRegla.triste:
+        return 10;
+      case _TipoRegla.feliz:
+      case _TipoRegla.neutral:
+        return 0;
+    }
   }
 
   /// El calculo del siguiente correlativo/idProcesoPersuasion (leer el
@@ -255,19 +287,34 @@ class AdaptationEngine {
     ];
   }
 
-  String _textoPara(_TipoRegla regla, Producto producto) {
-    final precio = (producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+  String _textoPara(_TipoRegla regla, Producto producto, int descuento) {
+    final centavosFinales = producto.precioUnitarioCentavos -
+        (producto.precioUnitarioCentavos * descuento ~/ 100);
+    final precio = (centavosFinales / 100).toStringAsFixed(2);
+
+    // Sin rebaja no se puede usar el texto de la regla, que anuncia el
+    // porcentaje ("con 0% de descuento" quedaria absurdo).
+    if (descuento == 0) {
+      return regla == _TipoRegla.feliz
+          ? 'Para ti: ${producto.nombreProducto}, nuestra opcion premium '
+              'a S/$precio.'
+          : 'Te recomendamos: ${producto.nombreProducto} a S/$precio.';
+    }
+
     switch (regla) {
       case _TipoRegla.triste:
-        return 'Tal vez esto te anime: ${producto.nombreProducto} a S/$precio.';
+        return 'Tal vez esto te anime: ${producto.nombreProducto} con '
+            '$descuento% menos, a S/$precio.';
       case _TipoRegla.feliz:
         return 'Para ti: ${producto.nombreProducto}, nuestra opcion premium.';
       case _TipoRegla.sorpresa:
-        return 'Oferta especial solo por hoy: ${producto.nombreProducto}.';
+        return 'Oferta especial solo por hoy: ${producto.nombreProducto} con '
+            '$descuento% de descuento, a S/$precio.';
       case _TipoRegla.neutral:
         return 'Te recomendamos: ${producto.nombreProducto} a S/$precio.';
       case _TipoRegla.enojo:
-        return 'Precio especial en ${producto.nombreProducto}: S/$precio.';
+        return 'Llevate ${producto.nombreProducto} con $descuento% de '
+            'descuento: S/$precio.';
     }
   }
 
