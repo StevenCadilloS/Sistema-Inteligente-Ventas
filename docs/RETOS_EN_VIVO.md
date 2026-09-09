@@ -194,8 +194,9 @@ El puente entre las dos mitades es el `EventChannel` (`lib/services/emotion_chan
 | `android/.../context/` | solo produce la emoción | no sabe que existe una tienda |
 
 **Prueba objetiva:** en `lib/decision/adaptation_engine.dart` no hay ni un `import`
-de Flutter Material. Ábrelo y muestra la cabecera. Por eso las 45 pruebas corren sin
-emulador.
+de Flutter Material. Ábrelo y muestra la cabecera. Por eso las pruebas de Dart corren
+sin emulador y sin backend: el motor habla con una interfaz, y en pruebas se le pasa
+una implementación en memoria.
 
 ### B3. "¿Cómo abstraes el acceso al contexto?"
 
@@ -424,6 +425,7 @@ convierte en punto a favor.
 | `tipo_cliente` nunca se asigna | La tabla y la FK existen; falta la regla que clasifica Nuevo/Frecuente/VIP. Es trabajo pendiente, no un error de diseño |
 | `total_vendidos` está en 0 | Es un derivado que actualiza el módulo batch en el cierre diario, no la transacción en línea |
 | El informe ocupa ~2 páginas | Ya cubre las **6 secciones que exige el PDF** más 3 propias (arquitectura, tecnologías, ubicación). El PDF dice *1 página máx.*: si el docente lo exige, borras las secciones **7, 8 y 9** y queda exacto |
+| **"Tu app no funciona sin internet"** | No es un olvido, es el dominio: ninguna tienda en línea real funciona sin conexión, porque el precio y el stock que muestra tienen que ser los vigentes. Una copia local solo puede estar desactualizada — enseñaría un producto agotado o un precio viejo. Está declarado como FA-04 en los requisitos, y la app lo dice en pantalla en vez de quedarse en blanco. **Lo que sí corre sin red es la parte adaptativa:** cámara, clasificación y reglas de decisión son 100% on-device; ningún frame sale del teléfono (RNF-10) |
 
 **Lo que el PDF pide y quizá no tengas a la vista:** la sección *"Evidencia de adaptación
 — capturas o descripción de cambios dinámicos"* (pág. 12). Tu evidencia es la propia base

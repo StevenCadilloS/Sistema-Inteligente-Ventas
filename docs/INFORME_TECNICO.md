@@ -56,7 +56,7 @@ Reglas por emoción (viven en `AdaptationEngine`):
 | `enojo` | Otra categoría, la más económica | 25% |
 
 El descuento **no es decorativo**: el precio rebajado se congela en
-`detalleVenta.precioUnitarioCentavos` al cerrar la venta, con aritmética entera en
+`detalle_venta.precio_unitario_centavos` al cerrar la venta, con aritmética entera en
 centavos. En la medición, 4 de 35 ventas se cerraron por debajo del precio de lista.
 
 La escalada **siempre termina**: el peldaño solo avanza, la tienda queda bloqueada
@@ -98,8 +98,10 @@ programó así: UCB1 reparte oportunidades en proporción a lo que cada estrateg
 y la tabla es la huella de ese reparto. Es la diferencia entre un sistema que aprende y
 uno que ejecuta reglas fijas.
 
-Respaldo automatizado: 45 pruebas Dart y 9 JUnit, una de ellas fija la regla
-eliminatoria — *la oferta cambia sola sin intervención manual*.
+Respaldo automatizado: 39 pruebas Dart, 4 suites SQL que corren contra un PostgreSQL
+real y 9 JUnit. Una de ellas fija la regla eliminatoria — *la oferta cambia sola sin
+intervención manual*; otra comprueba que la clave que viaja dentro del APK no pueda
+cambiar un precio.
 
 ## 6. Justificación técnica
 
@@ -125,13 +127,17 @@ ANDROID NATIVO (Kotlin)
 FLUTTER (Dart)                                     ▼ {emoción, confianza}
   TiendaScreen ──► AdaptationEngine ──────► BanditOptimizer (UCB1)
   (feed+oferta)   (reglas y descuento)             │
-                            └──────► AppDatabase (drift/SQLite, 10 tablas)
-                                             └──► BatchRunner (cierre, KPIs)
+                            └──────► TiendaRepository ──► PostgreSQL compartido
+                                             (12 tablas, vistas de KPI)
+                                             └──► fn_cierre_diario() (batch)
 ```
 
 Separación de capas: el módulo nativo solo produce la emoción; el motor de decisión no
 conoce widgets ni cámara; la interfaz decide *cuándo* preguntar, nunca *qué* ofrecer.
-Todo corre en el dispositivo, sin servidor.
+El procesamiento del rostro ocurre íntegramente en el dispositivo — solo la etiqueta de
+emoción sale de él; el catálogo, el stock y las bitácoras viven en una base PostgreSQL
+compartida, de modo que la tienda se administra desde un panel y el inventario es el mismo
+para todos los usuarios.
 
 ## 8. Tecnologías utilizadas
 
@@ -141,8 +147,8 @@ Todo corre en el dispositivo, sin servidor.
 | Contexto | CameraX 1.3.4 (`ImageAnalysis`, frontal) · ML Kit Face Detection 16.1.6 |
 | Clasificación | TensorFlow Lite 2.16.1, modelo FER (48×48, 7 clases) |
 | Puente nativo ↔ Flutter | `EventChannel` (stream continuo) |
-| Persistencia | `drift` 2.34 sobre SQLite (10 tablas, FK activas) · `shared_preferences` · `workmanager` |
-| Pruebas | `flutter_test` (45 casos) y JUnit 4.13 (9 casos, JVM) |
+| Persistencia | PostgreSQL compartido vía Supabase (12 tablas, FK activas, RLS) · `supabase_flutter` 2.17 · `shared_preferences` · `workmanager` |
+| Pruebas | `flutter_test` (39 casos), SQL sobre PostgreSQL 16 (4 suites) y JUnit 4.13 (9 casos, JVM) |
 
 ## 9. Ubicación del código relevante
 

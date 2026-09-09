@@ -219,9 +219,9 @@ para la nota de este taller.
 | Batch / KPIs | Elvis | Implementado, probado (no puntúa) |
 | `main.dart` conectando todo | Steven | Implementado |
 
-Verificado en dispositivo real (Redmi, Android 12): **45 tests Dart + 9 Kotlin**,
-`flutter analyze` sin issues, y la base con interacciones y ventas escribiéndose
-durante el uso.
+Verificado en dispositivo real (Redmi, Android 12): **39 tests Dart + 4 suites SQL +
+9 Kotlin**, `flutter analyze` sin issues, y la base compartida con interacciones y
+ventas escribiéndose durante el uso.
 
 **La app está fijada en vertical** (`AndroidManifest.xml` con
 `screenOrientation="portrait"` y `SystemChrome.setPreferredOrientations` en

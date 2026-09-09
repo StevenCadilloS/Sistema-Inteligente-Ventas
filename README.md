@@ -41,7 +41,8 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 
 | Parte | Estado | Dueño |
 |---|---|---|
-| Base de datos, autenticación, motor de reglas, aprendizaje, batch | ✅ **Hecho y probado** (35 tests, build Android verificado) | Elvis |
+| Base de datos, autenticación, motor de reglas, aprendizaje, batch | ✅ **Hecho y probado** (build Android verificado) | Elvis |
+| Backend compartido: catálogo, stock y ofertas en PostgreSQL, con administración desde el panel y propagación en tiempo real | ✅ **Hecho y probado** (39 pruebas Dart + 4 suites SQL sobre PostgreSQL real) | Elvis |
 | Detección facial y clasificación de emociones (Kotlin nativo) | ✅ **Hecho**, compila dentro del proyecto Flutter | Juan |
 | Puente Flutter ↔ Kotlin (Platform Channel) | ⏳ **Pendiente** — nada lo conecta todavía | Steven |
 | Pantallas (login, producto/oferta, historial) | ⏳ **Pendiente** — `lib/main.dart` sigue siendo la plantilla de `flutter create` | Steven |
@@ -50,11 +51,39 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 
 ---
 
+## Backend compartido y administración
+
+El catálogo ya no vive dentro del APK. Está en una base **PostgreSQL
+compartida**, y eso cambia tres cosas visibles:
+
+- **El administrador publica, y todos ven.** Crear un producto o una oferta
+  desde el panel de Supabase hace que aparezca en el feed de cada usuario
+  conectado, sin que nadie refresque ni reinstale nada.
+- **El stock es uno solo.** Cuando alguien compra la última unidad, el número
+  baja en la pantalla de los demás en el momento, y el producto desaparece del
+  catálogo. La venta y el descuento de inventario ocurren en una sola
+  transacción del servidor, así que dos compras simultáneas no pueden llevarse
+  la misma unidad.
+- **El aprendizaje es de la tienda, no del teléfono.** El UCB1 se alimenta de
+  las interacciones de todos los usuarios.
+
+Las ofertas son ahora un dato con vigencia, no un cálculo efímero: conviven con
+el descuento que decide la emoción tomando **el mayor de los dos**, nunca la
+suma.
+
+> Puesta en marcha, guía del administrador y cómo levantar tu propio servidor:
+> **[supabase/README.md](supabase/README.md)**.
+
+La app necesita conexión: no guarda copia local del catálogo. Si se compila sin
+credenciales, lo dice en pantalla en vez de quedarse en blanco.
+
+---
+
 ## Equipo y Responsabilidades
 
 | Área | Responsable(s) | Detalle |
 |------|-----------------|---------|
-| Base de datos | Elvis | Esquema, migraciones, persistencia local con `drift` (SQLite) |
+| Base de datos | Elvis | Esquema, migraciones y funciones de la base compartida (PostgreSQL / Supabase) |
 | Backend (lógica de negocio, Flutter/Dart) | Elvis, Juan, Steven | Trabajo compartido entre los tres integrantes |
 | — Integración con la cámara | Steven | Puente Flutter ↔ módulo nativo Kotlin (CameraX) |
 | — Modelo de emociones | Juan | Detección facial (ML Kit) y clasificación (TensorFlow Lite) |
@@ -70,7 +99,9 @@ En lugar de mostrar las mismas ofertas a todos los usuarios, el sistema:
 | **Framework principal** | Flutter (Dart) | App orientada a Android, UI declarativa y lógica de negocio |
 | **Módulo nativo** | Kotlin | Cámara, ML Kit y TensorFlow Lite, expuestos a Flutter vía Platform Channels |
 | **UI** | Flutter Widgets | Interfaz declarativa moderna |
-| **Base de datos** | SQLite vía [`drift`](https://drift.simonbinder.eu/) | Persistencia local (clientes, productos, estrategias, historial) — tablas tipadas, DAOs por codegen, migraciones |
+| **Base de datos** | PostgreSQL vía [Supabase](https://supabase.com) (Apache-2.0, autohospedable) | Base **compartida** por todos los dispositivos: catálogo, stock, ofertas, clientes, estrategias y bitácoras. Escrituras atómicas por funciones del servidor |
+| **Tiempo real** | Supabase Realtime (WebSocket) | Empuja los cambios de catálogo, stock y ofertas a todos los usuarios conectados, sin refrescar |
+| **Administración** | Panel de Supabase (Table Editor) | Alta de productos, publicación de ofertas y reposición de stock, sin recompilar |
 | **Cámara** | CameraX (Kotlin) | Captura de video en tiempo real |
 | **Detección facial** | Google ML Kit (Kotlin) | Detectar rostro y landmarks faciales |
 | **Clasificación de emociones** | TensorFlow Lite - FER-2013 (Kotlin) | Clasificar emoción desde imagen de cara |
@@ -149,15 +180,16 @@ PROYECTO01/
 │   ├── main.dart                               # Punto de entrada — arranca el batch; UI pendiente
 │   │
 │   ├── data/
-│   │   ├── database/
-│   │   │   ├── app_database.dart              # Conexión drift, seed de catálogos, migraciones
-│   │   │   ├── tables.dart                     # Las 11 tablas (catálogos, maestras, bitácoras)
-│   │   │   └── queries.drift                   # Vista de consulta crítica + 4 KPIs + queries del batch
+│   │   ├── modelos/
+│   │   │   └── modelos.dart                    # Producto, Estrategia, InteraccionHistorial
+│   │   ├── remote/
+│   │   │   └── supabase_config.dart            # URL y clave, inyectadas al compilar
 │   │   ├── repositories/
+│   │   │   ├── tienda_repository.dart          # El puerto: todo lo que la app pide al backend
+│   │   │   ├── supabase_tienda_repository.dart # Implementación PostgREST + Realtime
 │   │   │   └── cliente_repository.dart         # registrar() / iniciarSesion() / sesión activa
 │   │   └── batch/
-│   │       ├── batch_runner.dart               # Cierre diario (6 procesos, 1 sola transacción)
-│   │       └── cierre_diario_scheduler.dart     # Programador periódico (workmanager)
+│   │       └── cierre_diario_scheduler.dart     # Dispara fn_cierre_diario() (workmanager)
 │   │
 │   └── decision/                               # FASE 3: DECISIÓN
 │       ├── adaptation_engine.dart              # decidirOferta(emocion) → Oferta
@@ -177,13 +209,24 @@ PROYECTO01/
 │       └── assets/
 │           └── emotion_model.tflite            # Modelo FER-2013
 │
-├── test/                                       # Espejo de lib/ — 35 tests, todos en verde
+├── supabase/                                   # BACKEND (la base compartida)
+│   ├── migrations/
+│   │   ├── 0001_esquema.sql                    # 12 tablas, secuencias de códigos, RLS y permisos
+│   │   ├── 0002_funciones.sql                  # Venta atómica, cierre diario, vistas, KPIs, Realtime
+│   │   └── 0003_semilla.sql                    # Catálogos base y catálogo de demostración
+│   ├── tests/                                  # 4 suites SQL sobre PostgreSQL real + ejecutar.sh
+│   ├── docker-compose.yml                      # PostgreSQL local (podman o docker)
+│   └── README.md                               # Puesta en marcha y guía del administrador
+│
+├── test/                                       # Espejo de lib/ — 39 tests de Dart, todos en verde
 │
 ├── docs/
 │   ├── ESQUEMA_CORREGIDO.md                    # Hallazgos G1-G9, correcciones C1-C11, decisiones D1-D5
 │   ├── MODELO_ANDROID_ROOM.md                  # Diseño conceptual (apunta a la implementación real)
 │   └── PLAN_ELVIS.md                           # Plan de trabajo, contratos entre partes, auditoría
 │
+├── env.example.json                            # Plantilla de credenciales (env.json no se versiona)
+├── LICENSE                                     # MIT
 └── pubspec.yaml                                # Dependencias Flutter/Dart
 ```
 
@@ -284,12 +327,16 @@ cd Sistema-Inteligente-Ventas
 # 2. Instalar las dependencias de Flutter
 flutter pub get
 
-# 3. Generar el código de drift (tablas, queries) - necesario tras clonar
-#    y despues de CUALQUIER cambio en tables.dart o queries.drift
-dart run build_runner build
+# 3. Configurar el backend: copiar env.example.json a env.json y poner ahi la
+#    URL y la clave publica del proyecto (ver supabase/README.md)
+cp env.example.json env.json
 
-# 4. Correr los tests (no requiere celular ni emulador)
+# 4. Correr los tests de Dart (no requiere celular, emulador ni backend)
 flutter test
+
+# 4b. Correr las pruebas del backend (necesita podman o docker)
+podman compose -f supabase/docker-compose.yml up -d
+bash supabase/tests/ejecutar.sh
 
 # 5. Conectar el celular Android vía USB (con depuración USB activada)
 flutter devices
@@ -339,7 +386,7 @@ adb logcat | grep "EmotionDetector"
 | Flutter | 3.47.x | Framework principal de la app |
 | Dart | 3.13.x | Lenguaje de la capa Flutter |
 | Kotlin | 1.9.x | Módulo nativo (cámara, ML Kit, TensorFlow Lite) |
-| drift | 2.34.x | Base de datos SQLite tipada en Dart |
+| supabase_flutter | 2.17.x | Cliente de la base compartida y suscripción en tiempo real |
 | shared_preferences | 2.5.x | Sesión del cliente activo |
 | workmanager | 0.10.x | Programador del cierre diario |
 | CameraX | 1.3.x | Captura de cámara (Kotlin) |

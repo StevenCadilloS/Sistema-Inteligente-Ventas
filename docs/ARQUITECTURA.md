@@ -1,8 +1,11 @@
 # Arquitectura — Sistema Inteligente de Ventas (Cierre de Ventas)
 
 App Flutter/Dart con un módulo nativo Kotlin (cámara + ML) para detectar la emoción del
-cliente en tiempo real y adaptar la oferta mostrada. Sin backend: todo corre on-device,
-persistencia local en SQLite (`drift`).
+cliente en tiempo real y adaptar la oferta mostrada. El pipeline de visión corre on-device
+(ninguna imagen sale del teléfono); el catálogo, el stock, las ofertas y las bitácoras viven
+en una base PostgreSQL compartida (Supabase), que es lo que permite administrar la tienda
+desde un panel y que el stock se vea igual en todos los dispositivos. Ver
+`supabase/README.md`.
 
 Generado leyendo el código fuente (no con herramienta externa). Ver también el grafo de
 conocimiento ya construido con `graphify` en `docs/graphify-out/` (`graph.html`,
@@ -47,7 +50,7 @@ flowchart TB
     subgraph DATOS["Datos (Dart) . Fases 2, 4"]
         direction TB
         REPO["ClienteRepository<br/>registrar / sesion"]
-        DB[("AppDatabase (drift)<br/>10 tablas SQLite")]
+        DB[("PostgreSQL compartido<br/>12 tablas + vistas de KPI")]
         PREFS["SharedPreferences<br/>sesion activa"]
         REPO --> DB
         REPO --> PREFS
@@ -119,13 +122,19 @@ sequenceDiagram
 | Puente nativo↔Flutter | `EmotionChannelHandler.kt`, canal en `MainActivity.kt`, `emotion_channel.dart` | Steven | Implementado |
 | UI | Login, Tienda (feed + ofertas), Historial | Steven | Implementado |
 | Decisión | `AdaptationEngine` (reglas por emoción), `BanditOptimizer` (UCB1) | Elvis | Implementado, probado |
-| Datos / Auth | `ClienteRepository`, `AppDatabase` (drift, 10 tablas), `SharedPreferences` | Elvis | Implementado, probado |
+| Datos / Auth | `TiendaRepository` + `SupabaseTiendaRepository` (PostgreSQL, 12 tablas), `ClienteRepository`, `SharedPreferences` | Elvis | Implementado, probado |
 | Batch | `CierreDiarioScheduler` (WorkManager), `BatchRunner` | Elvis | Implementado, probado |
 
 ## Notas de arquitectura
 
-- **Sin backend ni red**: todo el pipeline (cámara → clasificación → decisión → persistencia)
-  corre en el dispositivo. El modelo FER-2013 (`emotion_model.tflite`) va empaquetado como asset.
+- **Visión on-device, datos compartidos**: cámara, detección y clasificación corren en el
+  teléfono — el modelo FER-2013 (`emotion_model.tflite`) va empaquetado como asset y ningún
+  frame se transmite ni se guarda. Al servidor solo viaja la etiqueta de emoción. La
+  persistencia, en cambio, es remota: una sola base para todos los dispositivos.
+- **Escrituras por función, no por INSERT**: la clave que viaja dentro del APK solo concede
+  lectura. Registrar un cliente, una interacción o una venta pasa por funciones del servidor
+  que validan y ejecutan de forma atómica (`supabase/migrations/0002_funciones.sql`). Por eso
+  dos compras simultáneas no pueden vender la misma unidad.
 - **Reglas de adaptación** (`AdaptationEngine`): triste → sustituto más barato (-10%),
   feliz → premium (sin descuento), sorpresa → producto poco mostrado (-15%), neutral →
   producto más mostrado (sin descuento), enojo → cambia de categoría, el más barato de

@@ -1,0 +1,49 @@
+MIT License
+
+Copyright (c) 2026 Elvis Arboleda, Juan Medina, Steven Cadillo
+Universidad Nacional de Ingenieria - FIIS
+
+Se concede permiso, libre de cargos, a cualquier persona que obtenga una copia
+de este software y de los archivos de documentacion asociados (el "Software"),
+a utilizar el Software sin restriccion, incluyendo sin limitacion los derechos
+a usar, copiar, modificar, fusionar, publicar, distribuir, sublicenciar y/o
+vender copias del Software, y a permitir a las personas a las que se les
+proporcione el Software a hacer lo mismo, sujeto a las siguientes condiciones:
+
+El aviso de copyright anterior y este aviso de permiso se incluiran en todas
+las copias o partes sustanciales del Software.
+
+EL SOFTWARE SE PROPORCIONA "COMO ESTA", SIN GARANTIA DE NINGUN TIPO, EXPRESA O
+IMPLICITA, INCLUYENDO PERO NO LIMITADO A GARANTIAS DE COMERCIALIZACION,
+IDONEIDAD PARA UN PROPOSITO PARTICULAR E INCUMPLIMIENTO. EN NINGUN CASO LOS
+AUTORES O TITULARES DEL COPYRIGHT SERAN RESPONSABLES DE NINGUNA RECLAMACION,
+DANOS U OTRAS RESPONSABILIDADES, YA SEA EN UNA ACCION DE CONTRATO, AGRAVIO O
+CUALQUIER OTRO MOTIVO, DERIVADAS DE, FUERA DE O EN CONEXION CON EL SOFTWARE O
+SU USO U OTRO TIPO DE ACCIONES EN EL SOFTWARE.
+
+---
+
+Componentes de terceros
+-----------------------
+
+Todo lo que este proyecto necesita para funcionar es software libre, y puede
+ejecutarse de principio a fin sin depender de ningun servicio propietario:
+
+| Componente          | Licencia            | Nota                                        |
+|---------------------|---------------------|---------------------------------------------|
+| Flutter / Dart      | BSD-3-Clause        |                                             |
+| PostgreSQL          | PostgreSQL License  | El backend es Postgres, sin extensiones propietarias |
+| Supabase            | Apache-2.0          | Autohospedable; ver supabase/README.md      |
+| supabase_flutter    | MIT                 |                                             |
+| Google ML Kit       | Terminos de Google  | Binario propietario, solo deteccion facial  |
+| TensorFlow Lite     | Apache-2.0          |                                             |
+| Modelo FER-2013     | Dataset publico     |                                             |
+
+La unica pieza que no es de fuente abierta es ML Kit (deteccion de rostro).
+Se puede sustituir por MediaPipe Face Detection (Apache-2.0) si el proyecto
+necesita ser libre de punta a punta; el resto del pipeline no cambia, porque
+esa capa solo entrega las coordenadas del rostro.
+
+El backend no ata el proyecto a ningun proveedor: el esquema completo son los
+tres archivos SQL de supabase/migrations/, que corren igual en supabase.com,
+en un Supabase autohospedado o en un PostgreSQL pelado.

@@ -1,5 +1,14 @@
 """Extrae la base de datos del celular y muestra su contenido.
 
+DESACTUALIZADO PARA DATOS EN VIVO. Desde que la base es compartida
+(PostgreSQL, ver supabase/README.md), el celular ya no guarda ninguna: el
+catalogo, el stock y las ventas se consultan en el panel de Supabase o con
+las vistas de supabase/migrations/0002_funciones.sql.
+
+Lo que sigue siendo util es `--evidencia`, que lee la medicion archivada en
+tools/base_evidencia_2026-09-08.sqlite: son las 339 interacciones sobre las
+que esta escrito el informe, y no hay que volver a levantarlas.
+
 La base vive en el almacenamiento privado de la app, asi que no se puede
 copiar con el explorador de archivos: se saca con `adb run-as`, que solo
 funciona porque la build es debug.
