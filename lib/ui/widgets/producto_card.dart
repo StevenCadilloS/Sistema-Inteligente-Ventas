@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../data/database/app_database.dart';
+import '../../data/modelos/modelos.dart';
 import '../../theme/app_theme.dart';
+import 'imagen_producto.dart';
 
 class ProductoCard extends StatelessWidget {
   const ProductoCard({
@@ -23,26 +24,6 @@ class ProductoCard extends StatelessWidget {
   final EmotionStyle estilo;
   final VoidCallback onTap;
 
-  static const Map<String, String> _imagenes = {
-    'P0000001': 'assets/products/P0000001_audifonos.jpg',
-    'P0000002': 'assets/products/P0000002_smartwatch.jpg',
-    'P0000003': 'assets/products/P0000003_parlante.jpg',
-    'P0000004': 'assets/products/P0000004_cargador.jpg',
-    'P0000005': 'assets/products/P0000005_laptop.jpg',
-    'P0000006': 'assets/products/P0000006_sartenes.jpg',
-    'P0000007': 'assets/products/P0000007_lampara.jpg',
-    'P0000008': 'assets/products/P0000008_organizador.jpg',
-    'P0000009': 'assets/products/P0000009_aspiradora.jpg',
-    'P0000010': 'assets/products/P0000010_polo.jpg',
-    'P0000011': 'assets/products/P0000011_zapatillas.jpg',
-    'P0000012': 'assets/products/P0000012_mochila.jpg',
-    'P0000013': 'assets/products/P0000013_casaca.jpg',
-    'P0000014': 'assets/products/P0000014_skincare.jpg',
-    'P0000015': 'assets/products/P0000015_secadora.jpg',
-    'P0000016': 'assets/products/P0000016_perfume.jpg',
-  };
-
-  String? get _imagen => _imagenes[producto.codLoteProducto];
 
   (IconData, Color) get _visualCategoria {
     const iconos = [
@@ -70,8 +51,12 @@ class ProductoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final (icono, color) = _visualCategoria;
-    final precio =
-        (producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
+    // El precio que se anuncia es el vigente: si el administrador publico una
+    // oferta, el catalogo debe mostrarla ya aplicada. `precioLista` solo se
+    // pinta tachado al lado, como referencia.
+    final precio = (producto.precioVigenteCentavos / 100).toStringAsFixed(2);
+    final precioLista = (producto.precioUnitarioCentavos / 100)
+        .toStringAsFixed(2);
 
     final bordeColor = seleccionado
         ? Colors.amber
@@ -126,21 +111,37 @@ class ProductoCard extends StatelessWidget {
                   child: Stack(
                     children: [
                       Center(
-                        child: _imagen != null
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: Image.asset(
-                                  _imagen!,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Icon(icono, size: 40, color: color);
-                                  },
-                                ),
-                              )
-                            : Icon(icono, size: 40, color: color),
+                        child: ImagenProducto(
+                          producto: producto,
+                          respaldo: Icon(icono, size: 40, color: color),
+                        ),
                       ),
+                      // La promocion del administrador se anuncia en la
+                      // esquina opuesta a las etiquetas de estado, para que no
+                      // compitan por el mismo hueco.
+                      if (producto.enOferta)
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppTheme.danger,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '-${producto.descuentoOferta}%',
+                              style: textTheme.bodyMedium?.copyWith(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
                       if (seleccionado)
                         Positioned(
                           top: 8,
@@ -219,10 +220,46 @@ class ProductoCard extends StatelessWidget {
                       style: textTheme.bodyLarge,
                     ),
                     const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Text(
+                          'S/$precio',
+                          style: textTheme.titleMedium?.copyWith(
+                            color: AppTheme.success,
+                          ),
+                        ),
+                        // Con una oferta vigente se muestran los dos precios:
+                        // el tachado es lo que justifica el descuento.
+                        if (producto.enOferta) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              'S/$precioLista',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: textTheme.bodyMedium?.copyWith(
+                                fontSize: 12,
+                                color: AppTheme.mutedText,
+                                decoration: TextDecoration.lineThrough,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    // El stock se pinta siempre, y lo actualiza el servidor por
+                    // Realtime: si otro cliente compra la ultima unidad, este
+                    // numero baja aqui sin que nadie refresque nada.
                     Text(
-                      'S/$precio',
-                      style: textTheme.titleMedium?.copyWith(
-                        color: AppTheme.success,
+                      producto.totalDisponible <= 3
+                          ? 'Quedan ${producto.totalDisponible}'
+                          : '${producto.totalDisponible} disponibles',
+                      style: textTheme.bodyMedium?.copyWith(
+                        fontSize: 11,
+                        color: producto.totalDisponible <= 3
+                            ? AppTheme.danger
+                            : AppTheme.mutedText,
                       ),
                     ),
                   ],

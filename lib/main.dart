@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'data/batch/cierre_diario_scheduler.dart';
-import 'data/database/app_database.dart';
-import 'data/database/catalogo_demo.dart';
+import 'data/remote/supabase_config.dart';
 import 'data/repositories/cliente_repository.dart';
+import 'data/repositories/supabase_tienda_repository.dart';
+import 'data/repositories/tienda_repository.dart';
 import 'decision/adaptation_engine.dart';
 import 'decision/learning/bandit_optimizer.dart';
 import 'services/emotion_channel.dart';
 import 'theme/app_theme.dart';
+import 'ui/configuracion_faltante_screen.dart';
+import 'ui/historial_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/tienda_screen.dart';
-import 'ui/historial_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,37 +27,51 @@ Future<void> main() async {
     DeviceOrientation.portraitDown,
   ]);
 
+  // Sin backend no hay catalogo, y sin catalogo no hay nada que adaptar. Se
+  // avisa con una pantalla que explica que falta, en vez de arrancar y
+  // reventar con un error de red que no dice nada.
+  if (!SupabaseConfig.configurado) {
+    runApp(const AppSinBackend());
+    return;
+  }
+
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    publishableKey: SupabaseConfig.clavePublica,
+  );
+
   await programarCierreDiario();
 
-  final db = AppDatabase();
-  await sembrarCatalogoDemo(db);
+  final tienda = SupabaseTiendaRepository(Supabase.instance.client);
   final prefs = await SharedPreferences.getInstance();
 
-  final clienteRepository = ClienteRepository(db, prefs);
-  final bandit = BanditOptimizer(db);
-  final adaptationEngine = AdaptationEngine(db, bandit);
+  final clienteRepository = ClienteRepository(tienda, prefs);
+  final bandit = BanditOptimizer(tienda);
+  final adaptationEngine = AdaptationEngine(tienda, bandit);
   final emotionChannel = EmotionChannel();
 
-  runApp(MyApp(
-    db: db,
-    clienteRepository: clienteRepository,
-    adaptationEngine: adaptationEngine,
-    bandit: bandit,
-    emotionChannel: emotionChannel,
-  ));
+  runApp(
+    MyApp(
+      tienda: tienda,
+      clienteRepository: clienteRepository,
+      adaptationEngine: adaptationEngine,
+      bandit: bandit,
+      emotionChannel: emotionChannel,
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({
     super.key,
-    required this.db,
+    required this.tienda,
     required this.clienteRepository,
     required this.adaptationEngine,
     required this.bandit,
     required this.emotionChannel,
   });
 
-  final AppDatabase db;
+  final TiendaRepository tienda;
   final ClienteRepository clienteRepository;
   final AdaptationEngine adaptationEngine;
   final BanditOptimizer bandit;
@@ -72,12 +89,14 @@ class MyApp extends StatelessWidget {
       routes: {
         '/': (context) => LoginScreen(clienteRepository: clienteRepository),
         '/tienda': (context) => TiendaScreen(
-              clienteRepository: clienteRepository,
-              adaptationEngine: adaptationEngine,
-              banditOptimizer: bandit,
-              emotionChannel: emotionChannel,
-            ),
-        '/historial': (context) => HistorialScreen(db: db),
+          clienteRepository: clienteRepository,
+          adaptationEngine: adaptationEngine,
+          banditOptimizer: bandit,
+          emotionChannel: emotionChannel,
+          tienda: tienda,
+        ),
+        '/historial': (context) =>
+            HistorialScreen(tienda: tienda, clienteRepository: clienteRepository),
       },
     );
   }

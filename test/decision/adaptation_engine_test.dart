@@ -1,77 +1,61 @@
-import 'package:drift/drift.dart' hide isNull, isNotNull;
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tienda_adaptativa/data/database/app_database.dart';
+import 'package:tienda_adaptativa/data/modelos/modelos.dart';
 import 'package:tienda_adaptativa/decision/adaptation_engine.dart';
 import 'package:tienda_adaptativa/decision/learning/bandit_optimizer.dart';
 
-/// Prueba de humo de la fase 05 (docs/PLAN_ELVIS.md - el rubro de 8 puntos
-/// del taller): valida que cada emocion produce una oferta distinta y que
-/// cada decision queda registrada en `interacciones`.
+import '../apoyo/fake_tienda_repository.dart';
+
+/// Prueba de la fase 05 (docs/PLAN_ELVIS.md - el rubro de 8 puntos del
+/// taller): valida que cada emocion produce una oferta distinta, que cada
+/// decision queda registrada, y que la promocion que publica el administrador
+/// convive con el descuento adaptativo sin pisarlo.
+///
+/// El catalogo ya no se siembra en una base SQLite en memoria: lo entrega un
+/// doble del repositorio (test/apoyo/fake_tienda_repository.dart). Lo que se
+/// prueba aqui son las reglas de decision; el esquema, la venta atomica y los
+/// KPIs se prueban en SQL, en supabase/tests/.
 void main() {
-  late AppDatabase db;
+  late FakeTiendaRepository repo;
   late AdaptationEngine engine;
   const codCliente = 'C0000001';
 
-  setUp(() async {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
-    await db.customSelect('SELECT 1').getSingle(); // dispara onCreate/seed
-    engine = AdaptationEngine(db, BanditOptimizer(db));
+  Producto p(
+    String cod,
+    String nombre,
+    String? tipo,
+    int precio, {
+    int mostrado = 0,
+    int stock = 10,
+  }) => Producto(
+    codLoteProducto: cod,
+    nombreProducto: nombre,
+    tipoProducto: tipo,
+    precioUnitarioCentavos: precio,
+    totalDisponible: stock,
+    totalVecesMostrado: mostrado,
+  );
 
-    await db.into(db.clientes).insert(ClientesCompanion.insert(
-          codCliente: codCliente,
-          nombre: 'Carlos',
-          apellido: 'Ramirez',
-          fechaIngreso: DateTime(2026, 1, 1).millisecondsSinceEpoch,
-        ));
-
-    await db.into(db.tiposProducto).insert(
-        TiposProductoCompanion.insert(
-            tipoProducto: 'T00001', nombreTipoProducto: 'Audio'));
-    await db.into(db.tiposProducto).insert(
-        TiposProductoCompanion.insert(
-            tipoProducto: 'T00002', nombreTipoProducto: 'Accesorios'));
-
-    await db.batch((b) {
-      b.insertAll(db.productos, [
-        ProductosCompanion.insert(
-          codLoteProducto: 'P0000001',
-          nombreProducto: 'Audifonos Basicos',
-          tipoProducto: const Value('T00001'),
-          precioUnitarioCentavos: 5000, // el mas economico
-          fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
-          totalDisponible: const Value(10),
-        ),
-        ProductosCompanion.insert(
-          codLoteProducto: 'P0000002',
-          nombreProducto: 'Audifonos Premium',
-          tipoProducto: const Value('T00001'),
-          precioUnitarioCentavos: 25000, // el mas caro
-          fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
-          totalDisponible: const Value(10),
-        ),
-        ProductosCompanion.insert(
-          codLoteProducto: 'P0000003',
-          nombreProducto: 'Mouse Gamer',
-          tipoProducto: const Value('T00002'), // otra categoria
-          precioUnitarioCentavos: 8000,
-          fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
-          totalDisponible: const Value(10),
-          totalVecesMostrado: const Value(50), // el mas mostrado
-        ),
-      ]);
-    });
-
-    await db.into(db.estrategias).insert(EstrategiasCompanion.insert(
+  setUp(() {
+    repo = FakeTiendaRepository(
+      clientes: const [codCliente],
+      productos: [
+        p('P0000001', 'Audifonos Basicos', 'T00001', 5000), // el mas economico
+        p('P0000002', 'Audifonos Premium', 'T00001', 25000), // el mas caro
+        p('P0000003', 'Mouse Gamer', 'T00002', 8000, mostrado: 50), // otra categoria
+      ],
+      estrategias: const [
+        Estrategia(
           codEstrategia: 'E0000001',
           nombreEstrategia: 'Sustituto economico',
-        ));
+        ),
+      ],
+    );
+    engine = AdaptationEngine(repo, BanditOptimizer(repo));
   });
 
-  tearDown(() => db.close());
+  tearDown(() => repo.cerrar());
 
-  test('el descuento de la oferta es real: la venta congela el precio rebajado',
-      () async {
+  test('el descuento de la oferta es real: la venta congela el precio rebajado', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
       emocion: 'enojo', // regla de descuento agresivo
@@ -84,29 +68,45 @@ void main() {
       oferta.producto.precioUnitarioCentavos * 75 ~/ 100,
     );
 
-    await BanditOptimizer(db).registrarRespuesta(
+    await BanditOptimizer(repo).registrarRespuesta(
       idProcesoPersuasion: oferta.idProcesoPersuasion,
       aceptada: true,
       precioFinalCentavos: oferta.precioFinalCentavos,
     );
 
-    final detalle = await db.select(db.detalleVenta).getSingle();
+    final venta = repo.ventas.single;
     // Lo cobrado, no el precio de lista: si esto se rompe, el popup prometeria
     // un descuento que la base no registra.
-    expect(detalle.precioUnitarioCentavos, oferta.precioFinalCentavos);
+    expect(venta.precioUnitarioCentavos, oferta.precioFinalCentavos);
     expect(
-      detalle.precioUnitarioCentavos,
+      venta.precioUnitarioCentavos,
       lessThan(oferta.producto.precioUnitarioCentavos),
     );
   });
 
+  test('la venta descuenta el stock', () async {
+    final oferta = await engine.decidirOferta(
+      codCliente: codCliente,
+      emocion: 'triste',
+      nivelDeInteres: 60,
+    );
+    final antes = repo.producto(oferta.producto.codLoteProducto).totalDisponible;
+
+    await BanditOptimizer(repo).registrarRespuesta(
+      idProcesoPersuasion: oferta.idProcesoPersuasion,
+      aceptada: true,
+    );
+
+    expect(
+      repo.producto(oferta.producto.codLoteProducto).totalDisponible,
+      antes - 1,
+    );
+  });
+
   test('el sustituto es de la misma categoria y mas economico', () async {
-    // P0000002 (Audifonos Premium, 25000, T00001). Su sustituto debe salir
-    // de T00001 y costar menos: P0000001 (5000), no el Mouse de otra
-    // categoria.
-    final rechazado = await (db.select(db.productos)
-          ..where((p) => p.codLoteProducto.equals('P0000002')))
-        .getSingle();
+    // P0000002 (Audifonos Premium, 25000, T00001). Su sustituto debe salir de
+    // T00001 y costar menos: P0000001 (5000), no el Mouse de otra categoria.
+    final rechazado = repo.producto('P0000002');
 
     final sustituto = await engine.sustitutoPara(rechazado);
 
@@ -119,9 +119,7 @@ void main() {
   });
 
   test('el sustituto respeta lo ya rechazado', () async {
-    final rechazado = await (db.select(db.productos)
-          ..where((p) => p.codLoteProducto.equals('P0000002')))
-        .getSingle();
+    final rechazado = repo.producto('P0000002');
 
     // Excluido el unico candidato de su categoria, no queda alternativa.
     final sustituto = await engine.sustitutoPara(
@@ -132,8 +130,7 @@ void main() {
     expect(sustituto, isNull);
   });
 
-  test('la primera oferta va a precio de lista (conDescuento: false)',
-      () async {
+  test('la primera oferta va a precio de lista (conDescuento: false)', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
       emocion: 'enojo', // la regla daria 25%
@@ -143,10 +140,7 @@ void main() {
 
     expect(oferta.descuentoPorcentaje, 0);
     expect(oferta.tieneDescuento, isFalse);
-    expect(
-      oferta.precioFinalCentavos,
-      oferta.producto.precioUnitarioCentavos,
-    );
+    expect(oferta.precioFinalCentavos, oferta.producto.precioUnitarioCentavos);
     // El texto no puede anunciar "0% de descuento".
     expect(oferta.texto, isNot(contains('0%')));
   });
@@ -157,9 +151,7 @@ void main() {
       codCliente: codCliente,
       emocion: 'triste',
       nivelDeInteres: 50,
-      productoObjetivo: await (db.select(db.productos)
-            ..where((p) => p.codLoteProducto.equals('P0000002')))
-          .getSingle(),
+      productoObjetivo: repo.producto('P0000002'),
     );
 
     expect(oferta.producto.codLoteProducto, 'P0000002');
@@ -196,16 +188,13 @@ void main() {
 
     expect(oferta.descuentoPorcentaje, 0);
     expect(oferta.tieneDescuento, isFalse);
-    expect(
-      oferta.precioFinalCentavos,
-      oferta.producto.precioUnitarioCentavos,
-    );
+    expect(oferta.precioFinalCentavos, oferta.producto.precioUnitarioCentavos);
   });
 
   test('triste -> el producto mas economico', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      emocion: 'triste', // triste
+      emocion: 'triste',
       nivelDeInteres: 60,
     );
     expect(oferta.producto.codLoteProducto, 'P0000001');
@@ -214,7 +203,7 @@ void main() {
   test('feliz -> el producto mas caro (premium)', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      emocion: 'feliz', // feliz
+      emocion: 'feliz',
       nivelDeInteres: 90,
     );
     expect(oferta.producto.codLoteProducto, 'P0000002');
@@ -223,56 +212,60 @@ void main() {
   test('neutral -> el producto mas mostrado (estandar)', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      emocion: 'neutral', // neutral
+      emocion: 'neutral',
       nivelDeInteres: 50,
     );
     expect(oferta.producto.codLoteProducto, 'P0000003');
   });
 
-  test(
-      'cada decision incrementa totalVecesMostrado - sin esto neutral/sorpresa '
-      'nunca cambiarian de resultado', () async {
-    final antes = await (db.select(db.productos)
-          ..where((p) => p.codLoteProducto.equals('P0000001')))
-        .getSingle();
-    expect(antes.totalVecesMostrado, 0);
-
-    await engine.decidirOferta(
-      codCliente: codCliente,
-      emocion: 'triste', // elige P0000001 (el mas economico)
-      nivelDeInteres: 60,
-    );
-
-    final despues = await (db.select(db.productos)
-          ..where((p) => p.codLoteProducto.equals('P0000001')))
-        .getSingle();
-    expect(despues.totalVecesMostrado, 1);
-  });
-
-  test(
-      'emocion no catalogada (ej. gesto G0000008 de casos_reales_test.dart, '
-      'o "no_face" del clasificador) cae a neutral en vez de crashear',
-      () async {
+  test('sorpresa -> el producto menos mostrado (novedad)', () async {
+    // P0000003 lleva 50 exhibiciones; los otros dos, ninguna. Con empate a 0,
+    // el desempate por codigo hace que salga siempre el mismo y el feed no
+    // parpadee entre dos productos igual de nuevos.
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      emocion: 'sin_clasificar', // no coincide con ningun nombreGesto sembrado
-      nivelDeInteres: 50,
+      emocion: 'sorpresa',
+      nivelDeInteres: 75,
     );
-
-    // neutral -> el mas mostrado, igual que con 'neutral'.
-    expect(oferta.producto.codLoteProducto, 'P0000003');
-
-    // Sin fila en Gestos no se puede guardar el codigo (rompe la FK): la
-    // interaccion queda registrada igual, solo con codGesto en null.
-    final fila = await (db.select(db.interacciones)
-          ..where((i) =>
-              i.idProcesoPersuasion.equals(oferta.idProcesoPersuasion)))
-        .getSingle();
-    expect(fila.codGesto, isNull);
+    expect(oferta.producto.codLoteProducto, 'P0000001');
+    expect(oferta.descuentoPorcentaje, 15);
   });
 
-  test('enojo -> cambia de categoria respecto al ultimo producto mostrado',
-      () async {
+  test(
+    'cada decision incrementa totalVecesMostrado - sin esto neutral/sorpresa '
+    'nunca cambiarian de resultado',
+    () async {
+      expect(repo.producto('P0000001').totalVecesMostrado, 0);
+
+      await engine.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'triste', // elige P0000001 (el mas economico)
+        nivelDeInteres: 60,
+      );
+
+      expect(repo.producto('P0000001').totalVecesMostrado, 1);
+    },
+  );
+
+  test(
+    'emocion no catalogada ("no_face" del clasificador, o una etiqueta nueva) '
+    'cae a neutral en vez de crashear',
+    () async {
+      final oferta = await engine.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'sin_clasificar',
+        nivelDeInteres: 50,
+      );
+
+      // neutral -> el mas mostrado, igual que con 'neutral'.
+      expect(oferta.producto.codLoteProducto, 'P0000003');
+      // La interaccion se registra igual; traducir la emocion a un codigo de
+      // gesto (o dejarlo nulo si no existe) es cosa del servidor.
+      expect(repo.interacciones.single.emocion, 'sin_clasificar');
+    },
+  );
+
+  test('enojo -> cambia de categoria respecto al ultimo producto mostrado', () async {
     // Primero se le muestra un producto de la categoria Audio (feliz).
     await engine.decidirOferta(
       codCliente: codCliente,
@@ -283,54 +276,55 @@ void main() {
     // Ahora se enoja: debe saltar a la categoria Accesorios (P0000003).
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      emocion: 'enojo', // enojo
+      emocion: 'enojo',
       nivelDeInteres: 70,
     );
     expect(oferta.producto.tipoProducto, 'T00002');
   });
 
   test(
-      'enojo sin historial cae al mas economico aunque no tenga categoria '
-      'asignada (C6: tipoProducto es nullable)', () async {
-    await db.into(db.productos).insert(ProductosCompanion.insert(
-          codLoteProducto: 'P0000004',
-          nombreProducto: 'Producto sin categoria',
-          precioUnitarioCentavos: 100, // el mas barato del catalogo
-          fechaCreacionStock: DateTime(2026, 1, 1).millisecondsSinceEpoch,
-          totalDisponible: const Value(10),
-        ));
+    'enojo sin historial cae al mas economico aunque no tenga categoria '
+    'asignada (C6: tipoProducto es nullable)',
+    () async {
+      repo = FakeTiendaRepository(
+        clientes: const [codCliente],
+        productos: [
+          p('P0000001', 'Audifonos Basicos', 'T00001', 5000),
+          p('P0000004', 'Producto sin categoria', null, 100), // el mas barato
+        ],
+        estrategias: const [
+          Estrategia(codEstrategia: 'E0000001', nombreEstrategia: 'Directo'),
+        ],
+      );
+      engine = AdaptationEngine(repo, BanditOptimizer(repo));
 
-    final oferta = await engine.decidirOferta(
-      codCliente: codCliente, // sin interacciones previas en este test
-      emocion: 'enojo', // enojo
-      nivelDeInteres: 70,
-    );
+      final oferta = await engine.decidirOferta(
+        codCliente: codCliente, // sin interacciones previas
+        emocion: 'enojo',
+        nivelDeInteres: 70,
+      );
 
-    expect(oferta.producto.codLoteProducto, 'P0000004');
-  });
+      expect(oferta.producto.codLoteProducto, 'P0000004');
+    },
+  );
 
-  test('cada decision registra una fila en interacciones con FK completas',
-      () async {
+  test('cada decision registra la interaccion completa', () async {
     final oferta = await engine.decidirOferta(
       codCliente: codCliente,
-      emocion: 'sorpresa', // sorpresa
+      emocion: 'sorpresa',
       nivelDeInteres: 75,
     );
 
-    final fila = await (db.select(db.interacciones)
-          ..where((i) =>
-              i.idProcesoPersuasion.equals(oferta.idProcesoPersuasion)))
-        .getSingle();
-
+    final fila = repo.interacciones.single;
+    expect(fila.idProcesoPersuasion, oferta.idProcesoPersuasion);
     expect(fila.codCliente, codCliente);
-    expect(fila.codGesto, 'G0000003');
+    expect(fila.emocion, 'sorpresa');
     expect(fila.codLoteProducto, oferta.producto.codLoteProducto);
     expect(fila.codEstrategia, 'E0000001');
     expect(fila.nivelDeInteres, 75);
   });
 
-  test('la regla eliminatoria: la oferta cambia sola sin intervencion manual',
-      () async {
+  test('la regla eliminatoria: la oferta cambia sola sin intervencion manual', () async {
     final triste = await engine.decidirOferta(
       codCliente: codCliente,
       emocion: 'triste',
@@ -343,7 +337,116 @@ void main() {
     );
 
     // Mismo cliente, mismo nivelDeInteres, unico input distinto: el gesto.
-    expect(triste.producto.codLoteProducto,
-        isNot(feliz.producto.codLoteProducto));
+    expect(
+      triste.producto.codLoteProducto,
+      isNot(feliz.producto.codLoteProducto),
+    );
+  });
+
+  test('un producto agotado no entra al catalogo ni se ofrece', () async {
+    repo = FakeTiendaRepository(
+      clientes: const [codCliente],
+      productos: [
+        p('P0000001', 'Agotado', 'T00001', 1000, stock: 0),
+        p('P0000002', 'Disponible', 'T00001', 9000, stock: 3),
+      ],
+      estrategias: const [
+        Estrategia(codEstrategia: 'E0000001', nombreEstrategia: 'Directo'),
+      ],
+    );
+    engine = AdaptationEngine(repo, BanditOptimizer(repo));
+
+    final catalogo = await engine.catalogoPara(
+      codCliente: codCliente,
+      emocion: 'triste', // pediria el mas barato, que es el agotado
+    );
+
+    expect(catalogo.map((p) => p.codLoteProducto), ['P0000002']);
+  });
+
+  // --------------- OFERTAS DEL ADMINISTRADOR ---------------
+
+  group('promocion publicada por el administrador', () {
+    test('se aplica aunque la emocion no conceda descuento', () async {
+      // 'feliz' es premium: descuento adaptativo 0. La promocion de la tienda
+      // no puede desaparecer por eso — el feed ya la esta anunciando.
+      await repo.publicarOferta(
+        'P0000002',
+        descuento: 30,
+        nombre: 'Semana de audio',
+      );
+
+      final oferta = await engine.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'feliz',
+        nivelDeInteres: 80,
+      );
+
+      expect(oferta.producto.codLoteProducto, 'P0000002');
+      expect(oferta.descuentoPorcentaje, 30);
+      expect(oferta.descuentoDelAdministrador, isTrue);
+      expect(oferta.precioFinalCentavos, 25000 - (25000 * 30 ~/ 100));
+      expect(oferta.texto, contains('Semana de audio'));
+    });
+
+    test('gana el descuento adaptativo cuando es mayor', () async {
+      await repo.publicarOferta('P0000001', descuento: 10);
+
+      final oferta = await engine.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'enojo', // 25%
+        nivelDeInteres: 70,
+        productoObjetivo: repo.producto('P0000001'),
+      );
+
+      expect(oferta.descuentoPorcentaje, 25);
+      expect(oferta.descuentoDelAdministrador, isFalse);
+    });
+
+    test('los descuentos nunca se suman', () async {
+      await repo.publicarOferta('P0000001', descuento: 40);
+
+      final oferta = await engine.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'enojo', // 25%: sumados darian 65 y regalarian el producto
+        nivelDeInteres: 70,
+        productoObjetivo: repo.producto('P0000001'),
+      );
+
+      expect(oferta.descuentoPorcentaje, 40);
+    });
+
+    test('la oferta a precio de lista respeta la promocion vigente', () async {
+      // Sin esto, el primer popup mostraria un precio MAS ALTO que el que el
+      // cliente acaba de ver en el feed.
+      await repo.publicarOferta('P0000001', descuento: 20);
+
+      final oferta = await engine.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'neutral',
+        nivelDeInteres: 50,
+        productoObjetivo: repo.producto('P0000001'),
+        conDescuento: false,
+      );
+
+      expect(oferta.descuentoPorcentaje, 20);
+      expect(oferta.precioFinalCentavos, repo.producto('P0000001').precioVigenteCentavos);
+    });
+
+    test('el catalogo publica el precio vigente ya rebajado', () async {
+      await repo.publicarOferta('P0000001', descuento: 20);
+
+      final catalogo = await engine.catalogoPara(
+        codCliente: codCliente,
+        emocion: 'neutral',
+      );
+      final rebajado = catalogo.firstWhere(
+        (p) => p.codLoteProducto == 'P0000001',
+      );
+
+      expect(rebajado.enOferta, isTrue);
+      expect(rebajado.precioVigenteCentavos, 4000);
+      expect(rebajado.precioUnitarioCentavos, 5000, reason: 'el de lista no cambia');
+    });
   });
 }

@@ -47,3 +47,12 @@ app.*.map.json
 # Widget Preview related
 .widget_preview/
 tools/base_extraida.sqlite
+
+# Volcados de sqlite para inspeccion visual (SQLite Viewer), no versionar
+/esquema_solo_estructura.sqlite
+/esquema_con_catalogos.sqlite
+/datos_reales_celular.sqlite
+
+# Credenciales del backend: la URL y la clave publica del proyecto Supabase.
+# Se pasan al compilar con --dart-define-from-file=env.json. Ver env.example.json.
+/env.json

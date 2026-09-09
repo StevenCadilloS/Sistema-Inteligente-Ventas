@@ -42,18 +42,38 @@ jobs:
       - name: Ejecutar pruebas
         run: flutter test
 
+      # La URL y la clave publica del proyecto Supabase se inyectan al
+      # compilar; no estan en el repositorio. Si los secretos no estan
+      # configurados, la APK igual se genera: arranca mostrando la pantalla
+      # que explica que falta el backend, en vez de fallar la compilacion.
+      #
+      # La clave publica solo concede lectura (ver las politicas RLS en
+      # supabase/migrations/0001_esquema.sql), por eso puede viajar dentro
+      # del APK. La service_role key NO va aqui nunca.
+      - name: Preparar credenciales del backend
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          printf '{"SUPABASE_URL":"%s","SUPABASE_PUBLISHABLE_KEY":"%s"}\n' \
+            "$SUPABASE_URL" "$SUPABASE_PUBLISHABLE_KEY" > env.json
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "::warning::Sin los secretos SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY, la APK no podra conectarse al catalogo."
+          fi
+
       # La de release es la que se instala para usar y demostrar: Dart va
       # compilado (AOT) y responde bastante mas rapido que la de depuracion.
       # R8 queda desactivado a proposito (ver android/app/build.gradle.kts):
       # eliminaba los ComponentRegistrar que ML Kit busca por reflexion.
       - name: Compilar APK de release
-        run: flutter build apk --release
+        run: flutter build apk --release --dart-define-from-file=env.json
 
-      # La de depuracion se publica solo como herramienta: es la unica que
-      # deja leer la base del celular con `adb run-as`, que es como funciona
-      # tools/ver_base.py. En release Android bloquea ese acceso.
+      # La de depuracion se publica para diagnosticar: deja leer los registros
+      # con `adb logcat` y conectar el depurador. Ya no sirve para inspeccionar
+      # los datos — desde que la base es compartida, eso se hace en el panel de
+      # Supabase (ver supabase/README.md).
       - name: Compilar APK de depuracion
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define-from-file=env.json
 
       - name: Preparar archivos de descarga
         run: |
@@ -67,9 +87,10 @@ jobs:
 
           - `Sistema-Inteligente-Ventas-steven1.1.apk` (release): la normal.
             Para instalar, usar y demostrar. Dart va compilado, responde mas rapido.
-          - `Sistema-Inteligente-Ventas-steven1.1-debug.apk`: solo si hace falta leer
-            la base del celular con `python tools/ver_base.py`. Android bloquea
-            `adb run-as` en release, y esa es la unica diferencia practica.
+          - `Sistema-Inteligente-Ventas-steven1.1-debug.apk`: solo para diagnosticar
+            (registros con `adb logcat`). Los datos ya no se leen del celular: el
+            catalogo, el stock y las ventas viven en la base compartida y se
+            consultan desde el panel (ver supabase/README.md).
 
           No instales las dos a la vez: la segunda reemplaza a la primera.
           NOTAS

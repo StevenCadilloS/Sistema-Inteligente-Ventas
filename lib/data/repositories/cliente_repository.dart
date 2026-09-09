@@ -1,19 +1,23 @@
-import 'package:drift/drift.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../database/app_database.dart';
+import 'tienda_repository.dart';
 
 /// Autenticacion (docs/PLAN_ELVIS.md fase 04). Un cliente se identifica por
-/// `codCliente` (formato C0000002, ver docs/MODELO_ANDROID_ROOM.md §3), que
-/// se genera aqui como un secuencial local - no hay servidor que lo asigne.
+/// `codCliente` (formato C0000002, ver docs/MODELO_ANDROID_ROOM.md §3).
 ///
-/// La sesion activa se persiste con SharedPreferences (no en la BD: es
-/// estado del dispositivo, no un dato del negocio) para que la app no
-/// pregunte quien eres en cada arranque.
+/// El codigo ya no se genera en el dispositivo: lo asigna el servidor con una
+/// secuencia. Cuando la base era local eso funcionaba porque habia un unico
+/// escritor; con una base compartida, dos personas registrandose a la vez
+/// leian el mismo maximo y la segunda chocaba contra la clave primaria.
+///
+/// La sesion activa se sigue guardando con SharedPreferences: es estado del
+/// dispositivo ("quien esta usando este celular"), no un dato del negocio, y
+/// por eso no viaja al servidor. Tampoco es una cache del catalogo — la app no
+/// guarda nada del backend en el telefono.
 class ClienteRepository {
-  ClienteRepository(this._db, this._prefs);
+  ClienteRepository(this._tienda, this._prefs);
 
-  final AppDatabase _db;
+  final TiendaRepository _tienda;
   final SharedPreferences _prefs;
 
   static const _sessionKey = 'cod_cliente_activo';
@@ -27,30 +31,18 @@ class ClienteRepository {
     required String apellido,
     String? tipoCliente,
   }) async {
-    // Leer el ultimo codCliente e insertar van en una transaccion: sueltos,
-    // dos registros concurrentes podrian generar el mismo codigo y chocar
-    // contra la primary key.
-    late final String codCliente;
-    await _db.transaction(() async {
-      codCliente = await _siguienteCodCliente();
-      await _db.into(_db.clientes).insert(ClientesCompanion.insert(
-            codCliente: codCliente,
-            nombre: nombre,
-            apellido: apellido,
-            tipoCliente: Value(tipoCliente),
-            fechaIngreso: DateTime.now().millisecondsSinceEpoch,
-          ));
-    });
-    await iniciarSesion(codCliente);
+    final codCliente = await _tienda.registrarCliente(
+      nombre: nombre,
+      apellido: apellido,
+      tipoCliente: tipoCliente,
+    );
+    await _prefs.setString(_sessionKey, codCliente);
     return codCliente;
   }
 
   /// Marca `codCliente` como la sesion activa.
   Future<void> iniciarSesion(String codCliente) async {
-    final existe = await (_db.select(_db.clientes)
-          ..where((c) => c.codCliente.equals(codCliente)))
-        .getSingleOrNull();
-    if (existe == null) {
+    if (!await _tienda.existeCliente(codCliente)) {
       throw StateError('No existe un cliente con codigo $codCliente');
     }
     await _prefs.setString(_sessionKey, codCliente);
@@ -61,15 +53,4 @@ class ClienteRepository {
   String? clienteActivo() => _prefs.getString(_sessionKey);
 
   Future<void> cerrarSesion() => _prefs.remove(_sessionKey);
-
-  Future<String> _siguienteCodCliente() async {
-    final ultimo = await (_db.select(_db.clientes)
-          ..orderBy([(c) => OrderingTerm.desc(c.codCliente)])
-          ..limit(1))
-        .getSingleOrNull();
-
-    final siguienteNumero =
-        ultimo == null ? 1 : int.parse(ultimo.codCliente.substring(1)) + 1;
-    return 'C${siguienteNumero.toString().padLeft(7, '0')}';
-  }
 }

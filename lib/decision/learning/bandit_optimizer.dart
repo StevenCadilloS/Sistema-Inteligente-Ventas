@@ -1,63 +1,64 @@
 import 'dart:math' as math;
 
-import 'package:drift/drift.dart';
-
-import '../../data/database/app_database.dart';
+import '../../data/modelos/modelos.dart';
+import '../../data/repositories/tienda_repository.dart';
 
 /// Aprendizaje Multi-Armed Bandit (UCB1) sobre `estrategias`
-/// (docs/PLAN_ELVIS.md fase 06). Reemplaza el placeholder de exploracion
-/// que dejo AdaptationEngine en la fase 05.
+/// (docs/PLAN_ELVIS.md fase 06).
 ///
 /// exitos/intentos se recalculan EN VIVO desde `ventas`/`interacciones` en
 /// cada seleccion (Estrategia A "recalculado al vuelo" de
 /// docs/MODELO_ANDROID_ROOM.md §2.3) - deliberadamente NO se leen ni se
-/// escriben las columnas derivadas `estrategias.ventasGeneradas` /
-/// `totalVecesAplicada`, que quedan exclusivas del batch periodico (fase
-/// 07, para los KPIs de presentacion). Mezclar ambas fuentes para el mismo
-/// dato haria que se pisen entre si (docs/PLAN_ELVIS.md seccion 6).
+/// escriben las columnas derivadas `estrategias.ventas_generadas` /
+/// `total_veces_aplicada`, que quedan exclusivas del cierre diario. Mezclar
+/// ambas fuentes para el mismo dato haria que se pisen entre si
+/// (docs/PLAN_ELVIS.md seccion 6).
+///
+/// Con la base compartida el aprendizaje deja de ser por dispositivo: los
+/// intentos y cierres de todos los usuarios alimentan el mismo contador, asi
+/// que el UCB1 converge con la experiencia de la tienda entera y no con la de
+/// un celular. Es la consecuencia que mas cambia el comportamiento observable
+/// del sistema.
 class BanditOptimizer {
-  BanditOptimizer(this._db);
+  BanditOptimizer(this._repo);
 
-  final AppDatabase _db;
+  final TiendaRepository _repo;
 
   /// Elige la estrategia activa con mejor score UCB1. Una estrategia que
   /// nunca se aplico se prioriza sobre el score (exploracion antes que
   /// explotacion, evita dividir por cero).
   Future<Estrategia?> seleccionarEstrategia() async {
-    final activas = await (_db.select(_db.estrategias)
-          ..where((e) => e.activo.equals(true)))
-        .get();
+    // Una sola consulta trae las estrategias con sus intentos y exitos ya
+    // agregados por el servidor. Antes eran tres (estrategias + dos GROUP BY);
+    // sobre una base remota, cada una era un viaje de red dentro del camino
+    // critico de cada oferta.
+    final activas = await _repo.estrategiasActivas();
     if (activas.isEmpty) return null;
 
-    // 2 consultas agrupadas (no 2 por estrategia): esto corre en cada
-    // decidirOferta, y N+1 aqui escala mal segun crece el catalogo de
-    // estrategias.
-    final intentos = await _intentosPorEstrategia();
-    final exitos = await _exitosPorEstrategia();
-    final totalIntentos = activas.fold<int>(
-        0, (suma, e) => suma + (intentos[e.codEstrategia] ?? 0));
+    final totalIntentos = activas.fold<int>(0, (suma, e) => suma + e.intentos);
 
-    final sinProbar =
-        activas.where((e) => (intentos[e.codEstrategia] ?? 0) == 0);
+    final sinProbar = activas.where((e) => e.intentos == 0);
     if (sinProbar.isNotEmpty) return sinProbar.first;
 
-    return activas.reduce((mejor, actual) {
-      final scoreMejor = _ucb1(exitos[mejor.codEstrategia] ?? 0,
-          intentos[mejor.codEstrategia]!, totalIntentos);
-      final scoreActual = _ucb1(exitos[actual.codEstrategia] ?? 0,
-          intentos[actual.codEstrategia]!, totalIntentos);
-      return scoreActual > scoreMejor ? actual : mejor;
-    });
+    return activas.reduce(
+      (mejor, actual) => _ucb1(actual, totalIntentos) > _ucb1(mejor, totalIntentos)
+          ? actual
+          : mejor,
+    );
   }
 
   /// Registra la respuesta del cliente a la oferta de `idProcesoPersuasion`.
   /// Aceptar crea la `venta` (con su `detalleVenta`) que cierra el proceso
   /// de persuasion - rechazar no crea nada: la ausencia de venta con ese
-  /// mismo id ES el rechazo (asi lo lee el KPI 2, ver queries.drift).
+  /// mismo id ES el rechazo (asi lo lee el KPI 2).
+  ///
   /// [precioFinalCentavos] es el precio que realmente se le mostro al cliente
   /// (con el descuento de la oferta ya aplicado). Se congela tal cual en
-  /// `detalleVenta`: la venta debe registrar lo que se ofrecio, no el precio
-  /// de lista. Si se omite, se usa el precio vigente del producto.
+  /// `detalle_venta`: la venta debe registrar lo que se ofrecio, no el precio
+  /// de lista. Si se omite, el servidor usa el precio vigente del producto.
+  ///
+  /// Lanza [SinStockException] si otro cliente se llevo la ultima unidad
+  /// mientras este decidia.
   Future<void> registrarRespuesta({
     required String idProcesoPersuasion,
     required bool aceptada,
@@ -65,105 +66,15 @@ class BanditOptimizer {
   }) async {
     if (!aceptada) return;
 
-    // Un proceso puede tener mas de una fila (varios productos/estrategias
-    // mostrados en la misma sesion - ver test/data/database/
-    // casos_reales_test.dart, Segundo Caso). La ultima es la que cierra:
-    // en los datos reales su timestamp coincide con el de la venta.
-    final interaccion = await (_db.select(_db.interacciones)
-          ..where((i) => i.idProcesoPersuasion.equals(idProcesoPersuasion))
-          ..orderBy([(i) => OrderingTerm.desc(i.timestamp)])
-          ..limit(1))
-        .getSingle();
-
-    final codLoteProducto = interaccion.codLoteProducto;
-    if (codLoteProducto == null) {
-      throw StateError(
-          'La interaccion $idProcesoPersuasion no tiene producto asociado.');
-    }
-    final producto = await (_db.select(_db.productos)
-          ..where((p) => p.codLoteProducto.equals(codLoteProducto)))
-        .getSingle();
-
-    // Leer el ultimo correlativo del canal e insertar la venta van en una
-    // transaccion: sueltos, dos respuestas concurrentes podrian generar el
-    // mismo correlativo y chocar contra UNIQUE(canal, correlativo).
-    await _db.transaction(() async {
-      final ventaId = await _db.into(_db.ventas).insert(VentasCompanion.insert(
-            canal: interaccion.canal,
-            correlativo: await _siguienteCorrelativoVenta(interaccion.canal),
-            idProcesoPersuasion: idProcesoPersuasion,
-            codCliente: interaccion.codCliente,
-            codEstrategia: Value(interaccion.codEstrategia),
-            tipoTransaccion: interaccion.tipoTransaccion,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-          ));
-
-      await _db.into(_db.detalleVenta).insert(DetalleVentaCompanion.insert(
-            ventaId: ventaId,
-            codLoteProducto: producto.codLoteProducto,
-            cantidad: 1,
-            // snapshot: el precio ofrecido, con descuento si lo hubo
-            precioUnitarioCentavos:
-                precioFinalCentavos ?? producto.precioUnitarioCentavos,
-          ));
-
-      // El stock baja dentro de la misma transaccion que la venta: si algo
-      // falla, no queda una venta sin su descuento de inventario. Update
-      // relativo en SQL (no leer+restar en Dart) para que dos compras
-      // concurrentes no se pisen, y con guarda para no dejarlo negativo.
-      await _db.customUpdate(
-        'UPDATE productos SET total_disponible = total_disponible - 1 '
-        'WHERE cod_lote_producto = ? AND total_disponible > 0',
-        variables: [Variable<String>(producto.codLoteProducto)],
-        updates: {_db.productos},
-      );
-    });
+    await _repo.registrarVenta(
+      idProcesoPersuasion: idProcesoPersuasion,
+      precioFinalCentavos: precioFinalCentavos,
+    );
   }
 
   /// score = exitos/intentos + sqrt(2 * ln(N) / intentos)
-  double _ucb1(int exitos, int intentos, int totalIntentos) {
-    return (exitos / intentos) +
-        math.sqrt(2 * math.log(totalIntentos) / intentos);
-  }
-
-  // Una consulta con GROUP BY para TODAS las estrategias a la vez, no una
-  // consulta por estrategia. COUNT(DISTINCT id_proceso_persuasion), no
-  // COUNT(*): un mismo proceso puede mostrar la misma estrategia en mas de
-  // una interaccion (ver test/data/database/casos_reales_test.dart,
-  // Segundo Caso), y contar filas crudas infla "intentos" frente a como lo
-  // miden KPI3 y el batch.
-  Future<Map<String, int>> _intentosPorEstrategia() async {
-    final total = _db.interacciones.idProcesoPersuasion.count(distinct: true);
-    final codEstrategia = _db.interacciones.codEstrategia;
-    final filas = await (_db.selectOnly(_db.interacciones)
-          ..addColumns([codEstrategia, total])
-          ..where(codEstrategia.isNotNull())
-          ..groupBy([codEstrategia]))
-        .get();
-    return {
-      for (final fila in filas) fila.read(codEstrategia)!: fila.read(total) ?? 0,
-    };
-  }
-
-  Future<Map<String, int>> _exitosPorEstrategia() async {
-    final total = _db.ventas.idProcesoPersuasion.count(distinct: true);
-    final codEstrategia = _db.ventas.codEstrategia;
-    final filas = await (_db.selectOnly(_db.ventas)
-          ..addColumns([codEstrategia, total])
-          ..where(codEstrategia.isNotNull())
-          ..groupBy([codEstrategia]))
-        .get();
-    return {
-      for (final fila in filas) fila.read(codEstrategia)!: fila.read(total) ?? 0,
-    };
-  }
-
-  Future<int> _siguienteCorrelativoVenta(String canal) async {
-    final ultima = await (_db.select(_db.ventas)
-          ..where((v) => v.canal.equals(canal))
-          ..orderBy([(v) => OrderingTerm.desc(v.correlativo)])
-          ..limit(1))
-        .getSingleOrNull();
-    return (ultima?.correlativo ?? 0) + 1;
+  double _ucb1(Estrategia estrategia, int totalIntentos) {
+    return (estrategia.exitos / estrategia.intentos) +
+        math.sqrt(2 * math.log(totalIntentos) / estrategia.intentos);
   }
 }

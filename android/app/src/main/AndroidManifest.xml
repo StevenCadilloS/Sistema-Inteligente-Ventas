@@ -1,5 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA"/>
+    <!-- El catalogo, el stock y las ofertas viven en la base compartida:
+         sin red la tienda no tiene nada que mostrar. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Permite distinguir "no hay internet" de "el servidor no responde"
+         y no reintentar en vano cuando el dispositivo esta sin cobertura. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-feature android:name="android.hardware.camera" android:required="true"/>
     <application
         android:label="Tienda Adaptativa"

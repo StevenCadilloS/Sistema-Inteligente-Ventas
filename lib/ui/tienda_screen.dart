@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../data/database/app_database.dart';
+import '../data/modelos/modelos.dart';
 import '../data/repositories/cliente_repository.dart';
+import '../data/repositories/tienda_repository.dart';
 import '../decision/adaptation_engine.dart';
 import '../decision/learning/bandit_optimizer.dart';
 import '../services/emotion_channel.dart';
@@ -26,12 +27,14 @@ class TiendaScreen extends StatefulWidget {
     required this.adaptationEngine,
     required this.banditOptimizer,
     required this.emotionChannel,
+    required this.tienda,
   });
 
   final ClienteRepository clienteRepository;
   final AdaptationEngine adaptationEngine;
   final BanditOptimizer banditOptimizer;
   final EmotionChannel emotionChannel;
+  final TiendaRepository tienda;
 
   @override
   State<TiendaScreen> createState() => _TiendaScreenState();
@@ -39,11 +42,21 @@ class TiendaScreen extends StatefulWidget {
 
 class _TiendaScreenState extends State<TiendaScreen>
     with SingleTickerProviderStateMixin {
+  /// Catalogo ya ordenado por la regla de la emocion vigente: lo que se pinta.
   List<Producto> _catalogo = const [];
+
+  /// Ultima foto que llego del servidor, sin ordenar. Se guarda aparte para
+  /// poder reordenar al cambiar la emocion sin volver a pedir el catalogo: con
+  /// la base remota, un viaje de red por cada gesto haria que la adaptacion
+  /// llegara tarde.
+  List<Producto> _catalogoCrudo = const [];
+
   String? _emocionDetectada;
   double _confianza = 0;
   bool _cargando = true;
+  String? _errorCatalogo;
   StreamSubscription<EmocionDetectada>? _subscription;
+  StreamSubscription<List<Producto>>? _catalogoSubscription;
 
   Timer? _ofertaTimer;
   int _segundosRestantes = 0;
@@ -75,13 +88,14 @@ class _TiendaScreenState extends State<TiendaScreen>
   @override
   void initState() {
     super.initState();
-    _cargarCatalogoInicial();
+    _escucharCatalogo();
     _iniciarDeteccion();
   }
 
   @override
   void dispose() {
     _subscription?.cancel();
+    _catalogoSubscription?.cancel();
     _ofertaTimer?.cancel();
     _seleccionTimer?.cancel();
     _overlayEntry?.remove();
@@ -90,20 +104,41 @@ class _TiendaScreenState extends State<TiendaScreen>
 
   String? get _codCliente => widget.clienteRepository.clienteActivo();
 
-  Future<void> _cargarCatalogoInicial() async {
-    final codCliente = _codCliente;
-    if (codCliente == null) return;
+  /// El catalogo llega del servidor y se vuelve a emitir cada vez que el
+  /// administrador cambia un producto, su stock o una oferta. No hay boton de
+  /// refrescar: si alguien vende la ultima unidad o se publica una promocion,
+  /// el feed de todos los usuarios se entera solo.
+  void _escucharCatalogo() {
+    _catalogoSubscription = widget.tienda.observarCatalogo().listen(
+      (productos) async {
+        final codCliente = _codCliente;
+        if (codCliente == null || !mounted) return;
 
-    final catalogo = await widget.adaptationEngine.catalogoPara(
-      codCliente: codCliente,
-      emocion: 'neutral',
+        // Se reordena con la emocion vigente, no con "neutral": si el catalogo
+        // cambia mientras el cliente esta enojado, el orden debe seguir siendo
+        // el que le corresponde.
+        final ordenado = await widget.adaptationEngine.catalogoPara(
+          codCliente: codCliente,
+          emocion: _emocionDetectada ?? 'neutral',
+          catalogo: productos,
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _catalogoCrudo = productos;
+          _catalogo = ordenado;
+          _errorCatalogo = null;
+          _cargando = false;
+        });
+      },
+      onError: (Object e) {
+        if (!mounted) return;
+        setState(() {
+          _errorCatalogo = '$e';
+          _cargando = false;
+        });
+      },
     );
-    if (mounted) {
-      setState(() {
-        _catalogo = catalogo;
-        _cargando = false;
-      });
-    }
   }
 
   void _iniciarDeteccion() {
@@ -151,6 +186,7 @@ class _TiendaScreenState extends State<TiendaScreen>
       final catalogo = await widget.adaptationEngine.catalogoPara(
         codCliente: codCliente,
         emocion: emocion.emotion,
+        catalogo: _catalogoCrudo,
       );
 
       // El feed se reordena solo al cambiar la emocion, sin que el cliente
@@ -297,6 +333,21 @@ class _TiendaScreenState extends State<TiendaScreen>
       }
 
       await _siguientePeldano(oferta);
+    } on SinStockException {
+      // Con la base compartida esto deja de ser teorico: otro cliente pudo
+      // llevarse la ultima unidad mientras este miraba el popup. El servidor
+      // rechaza la venta y aqui se explica, en vez de mostrar un error crudo.
+      _terminarNegociacion();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Se agoto ${oferta.producto.nombreProducto} justo ahora. '
+              'Alguien se llevo la ultima unidad.',
+            ),
+          ),
+        );
+      }
     } catch (e) {
       _terminarNegociacion();
       if (mounted) {
@@ -359,6 +410,7 @@ class _TiendaScreenState extends State<TiendaScreen>
         ..._rechazados,
         ..._compras.map((c) => c.producto.codLoteProducto),
       },
+      catalogo: _catalogoCrudo,
     );
     if (sustituto == null || !mounted) return false;
 
@@ -459,6 +511,7 @@ class _TiendaScreenState extends State<TiendaScreen>
         nivelDeInteres: (_confianza * 100).round(),
         productoObjetivo: producto,
         conDescuento: conDescuento,
+        catalogo: _catalogoCrudo,
       );
       final texto =
           mensaje ??
@@ -558,6 +611,43 @@ class _TiendaScreenState extends State<TiendaScreen>
       body: SafeArea(
         child: _cargando
             ? const Center(child: CircularProgressIndicator())
+            : _errorCatalogo != null
+            // Sin catalogo no hay nada que adaptar. La app ya no guarda copia
+            // local, asi que sin conexion la tienda no puede seguir: se dice
+            // claro en vez de mostrar una cuadricula vacia.
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.cloud_off,
+                        size: 40,
+                        color: AppTheme.mutedText,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No se pudo cargar el catalogo.\n$_errorCatalogo',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.tonal(
+                        onPressed: () {
+                          setState(() {
+                            _cargando = true;
+                            _errorCatalogo = null;
+                          });
+                          _catalogoSubscription?.cancel();
+                          _escucharCatalogo();
+                        },
+                        child: const Text('Reintentar'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
             : Center(
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 900),

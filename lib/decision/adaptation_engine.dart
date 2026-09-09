@@ -1,6 +1,7 @@
-import 'package:drift/drift.dart';
+import 'dart:math' as math;
 
-import '../data/database/app_database.dart';
+import '../data/modelos/modelos.dart';
+import '../data/repositories/tienda_repository.dart';
 import 'learning/bandit_optimizer.dart';
 
 /// Oferta concreta resultante de una decision de adaptacion: que producto,
@@ -12,6 +13,7 @@ class Oferta {
     required this.estrategia,
     required this.texto,
     required this.descuentoPorcentaje,
+    this.descuentoDelAdministrador = false,
   });
 
   final String idProcesoPersuasion;
@@ -19,9 +21,15 @@ class Oferta {
   final Estrategia? estrategia; // C11: nullable de verdad, sin centinela
   final String texto;
 
-  /// Descuento que la regla de la emocion concede sobre este producto.
-  /// 0 cuando la regla no contempla rebaja (premium y oferta estandar).
+  /// Descuento efectivamente concedido sobre el precio de lista. Es el mayor
+  /// entre el que decide la emocion y el que el administrador publico en
+  /// `ofertas` — nunca la suma (ver [AdaptationEngine.decidirOferta]).
   final int descuentoPorcentaje;
+
+  /// Si el descuento vigente lo puso una persona desde el panel y no la
+  /// emocion del cliente. Solo cambia como se redacta el mensaje: anunciar
+  /// una promocion de tienda no es lo mismo que reaccionar a una cara.
+  final bool descuentoDelAdministrador;
 
   /// Precio realmente ofrecido, que es el que se congela en `detalleVenta`
   /// al cerrar la venta. Aritmetica entera en centavos: el dinero nunca pasa
@@ -47,14 +55,17 @@ class Oferta {
 ///   enojo    -> cambia de categoria + el mas economico de esa categoria
 ///
 /// La seleccion de estrategia la hace [BanditOptimizer] (fase 06, UCB1).
+///
+/// El ordenamiento ocurre en memoria y no con un ORDER BY, a diferencia de la
+/// version local. Con la base en el servidor, reordenar en SQL costaria un
+/// viaje de red por cada cambio de expresion — un segundo largo cada vez que
+/// el cliente mueve la cara, cuando la emocion estable ya tarda 1-2 s en
+/// llegar (RNF-02). La lista completa se pide una vez y se reordena aqui.
 class AdaptationEngine {
-  AdaptationEngine(this._db, this._bandit);
+  AdaptationEngine(this._repo, this._bandit);
 
-  final AppDatabase _db;
+  final TiendaRepository _repo;
   final BanditOptimizer _bandit;
-
-  static const _canal = 'A'; // app movil (vs 'W' web)
-  static const _tipoTransaccion = 'TRX0001';
 
   /// [excluir] son productos que el cliente ya rechazo en esta sesion: la
   /// oferta salta al siguiente del ranking en vez de insistir con el mismo.
@@ -65,6 +76,9 @@ class AdaptationEngine {
   /// caso de retencion, cuando el cliente miro un producto y lo dejo ir. La
   /// emocion sigue decidiendo el descuento y el mensaje, pero el producto es
   /// el que el cliente ya mostro querer.
+  ///
+  /// [catalogo] evita releer el catalogo cuando quien llama ya lo tiene fresco
+  /// (la tienda lo recibe por Realtime). Si no se pasa, se consulta.
   Future<Oferta> decidirOferta({
     required String codCliente,
     required String emocion, // ej. "triste" - ProcessedEmotion.emotion en Kotlin
@@ -72,61 +86,62 @@ class AdaptationEngine {
     Set<String> excluir = const {},
     Producto? productoObjetivo,
     bool conDescuento = true,
+    List<Producto>? catalogo,
   }) async {
-    // EmotionProcessor.kt (Juan) no conoce codigos de catalogo: solo
-    // produce el nombre de la emocion (ver ProcessedEmotion.emotion en
-    // processing/EmotionProcessor.kt). Por eso se busca por nombreGesto,
-    // no por codGesto - codGesto es un detalle interno de persistencia.
-    //
-    // getSingleOrNull, no getSingle: los datos historicos reales tienen
-    // gestos fuera de las 5 emociones basicas sembradas (ver
-    // test/data/database/casos_reales_test.dart, gesto G0000008), y en
-    // produccion el clasificador puede devolver "no_face" u otro valor no
-    // sembrado. Una emocion sin catalogar cae a la regla neutral en vez de
-    // tumbar el pipeline de decision.
-    final gesto = await (_db.select(_db.gestos)
-          ..where((g) => g.nombreGesto.equals(emocion)))
-        .getSingleOrNull();
-    final regla = gesto == null ? _TipoRegla.neutral : _reglaPara(gesto.nombreGesto);
-    // Sin fila en Gestos no hay codGesto que guardar (rompe la FK); se
-    // registra la interaccion igual, solo sin ese dato.
-    final codGesto = gesto?.codGesto;
+    // EmotionProcessor.kt (Juan) no conoce codigos de catalogo: solo produce
+    // el nombre de la emocion. Una emocion que no sea una de las cinco
+    // conocidas ("no_face", o cualquier etiqueta nueva del clasificador) cae a
+    // la regla neutral en vez de tumbar el pipeline. La traduccion nombre ->
+    // cod_gesto la hace el servidor al registrar la interaccion.
+    final regla = _reglaPara(emocion);
 
-    final catalogo = await _catalogoPara(regla, codCliente);
-    if (catalogo.isEmpty) {
+    final ordenado = await _catalogoPara(regla, codCliente, catalogo);
+    if (ordenado.isEmpty) {
       throw StateError('No hay productos activos en el catalogo.');
     }
     // Si ya rechazo todo el catalogo, se vuelve a empezar por el primero:
     // mejor repetir que quedarse sin oferta que mostrar.
-    final producto = productoObjetivo ??
-        catalogo.firstWhere(
+    final producto =
+        productoObjetivo ??
+        ordenado.firstWhere(
           (p) => !excluir.contains(p.codLoteProducto),
-          orElse: () => catalogo.first,
+          orElse: () => ordenado.first,
         );
     final estrategia = await _bandit.seleccionarEstrategia();
 
-    final idProcesoPersuasion = await _registrarInteraccion(
+    final idProcesoPersuasion = await _repo.registrarInteraccion(
       codCliente: codCliente,
-      producto: producto,
+      emocion: emocion,
+      codLoteProducto: producto.codLoteProducto,
       codEstrategia: estrategia?.codEstrategia,
-      codGesto: codGesto,
       nivelDeInteres: nivelDeInteres,
     );
 
     // El descuento es la carta que se juega cuando el cliente dice que no:
     // la primera oferta va a precio de lista. Sobre esa base, la estrategia
     // que eligio el UCB1 decide como se persuade.
-    final descuento = conDescuento
+    final adaptativo = conDescuento
         ? _descuentoConEstrategia(_descuentoPara(regla), estrategia)
         : 0;
+
+    // El mayor de los dos, nunca la suma. Sumarlos permitiria que una
+    // promocion del 40% mas un enojo del 25% terminara regalando el producto;
+    // y quedarse solo con el adaptativo seria peor: el feed anuncia la
+    // promocion del administrador, y el popup la desmentiria mostrando un
+    // precio mas alto.
+    final descuento = math.max(adaptativo, producto.descuentoOferta);
+    final mandaElAdministrador =
+        producto.descuentoOferta > 0 && producto.descuentoOferta >= adaptativo;
 
     return Oferta(
       idProcesoPersuasion: idProcesoPersuasion,
       producto: producto,
       estrategia: estrategia,
-      texto: _textoPara(regla, producto, descuento) +
+      texto:
+          _textoPara(regla, producto, descuento, mandaElAdministrador) +
           (conDescuento ? _beneficioDe(estrategia) : ''),
       descuentoPorcentaje: descuento,
+      descuentoDelAdministrador: mandaElAdministrador,
     );
   }
 
@@ -142,14 +157,14 @@ class AdaptationEngine {
   Future<Producto?> sustitutoPara(
     Producto producto, {
     Set<String> excluir = const {},
+    List<Producto>? catalogo,
   }) async {
-    final activos = await (_db.select(_db.productos)
-          ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
-          ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
-        .get();
+    final disponibles = _porPrecioAscendente(
+      await _disponibles(catalogo),
+    );
 
     final descartados = {...excluir, producto.codLoteProducto};
-    final candidatos = activos
+    final candidatos = disponibles
         .where((p) => !descartados.contains(p.codLoteProducto))
         .where((p) => p.tipoProducto == producto.tipoProducto)
         .toList();
@@ -159,25 +174,118 @@ class AdaptationEngine {
     final masBaratos = candidatos.where(
       (p) => p.precioUnitarioCentavos < producto.precioUnitarioCentavos,
     );
-    // `activos` viene por precio ascendente, asi que el primero de cada
-    // filtro ya es el mas economico.
+    // La lista viene por precio ascendente, asi que el primero de cada filtro
+    // ya es el mas economico.
     return masBaratos.isNotEmpty ? masBaratos.first : candidatos.first;
   }
 
-  /// Descuento por regla, siguiendo la intencion ya documentada de cada una
-  /// (ver los comentarios de la clase): enojo lleva "descuento agresivo",
-  /// sorpresa es "oferta especial", y feliz es premium **sin** descuento.
+  /// Catalogo completo ordenado por la regla de la emocion: el primero es el
+  /// producto que se destaca como oferta, y el resto queda ordenado por el
+  /// mismo criterio para el feed de la tienda.
   ///
-  /// Vive aqui y no en la UI a proposito: es una decision de negocio, y es el
-  /// mismo numero que termina congelado en `detalleVenta.precioUnitarioCentavos`
-  /// cuando la venta se cierra. Un descuento que solo existiera en el texto
-  /// del popup no cuadraria con lo que registra la base.
+  /// No registra interaccion — eso lo hace [decidirOferta] con el destacado.
+  Future<List<Producto>> catalogoPara({
+    required String codCliente,
+    required String emocion,
+    List<Producto>? catalogo,
+  }) {
+    return _catalogoPara(_reglaPara(emocion), codCliente, catalogo);
+  }
+
+  Future<List<Producto>> _catalogoPara(
+    _TipoRegla regla,
+    String codCliente,
+    List<Producto>? catalogo,
+  ) async {
+    final disponibles = await _disponibles(catalogo);
+
+    switch (regla) {
+      case _TipoRegla.triste: // sustituto mas economico
+        return _porPrecioAscendente(disponibles);
+      case _TipoRegla.feliz: // premium, sin descuento
+        return _ordenar(
+          disponibles,
+          (a, b) => b.precioUnitarioCentavos.compareTo(a.precioUnitarioCentavos),
+        );
+      case _TipoRegla.sorpresa: // novedad: lo menos mostrado
+        return _ordenar(
+          disponibles,
+          (a, b) => a.totalVecesMostrado.compareTo(b.totalVecesMostrado),
+        );
+      case _TipoRegla.neutral: // estandar: lo mas mostrado
+        return _ordenar(
+          disponibles,
+          (a, b) => b.totalVecesMostrado.compareTo(a.totalVecesMostrado),
+        );
+      case _TipoRegla.enojo: // cambia de categoria + descuento agresivo
+        return _catalogoOtraCategoria(disponibles, codCliente);
+    }
+  }
+
+  Future<List<Producto>> _disponibles(List<Producto>? catalogo) async {
+    final fuente = catalogo ?? await _repo.catalogo();
+    return fuente.where((p) => p.disponible).toList();
+  }
+
+  /// Pone primero los productos de una categoria distinta a la del ultimo
+  /// producto mostrado a este cliente, cada bloque ordenado del mas economico
+  /// al mas caro (descuento agresivo). Sin historial o sin otra categoria
+  /// disponible, queda el catalogo entero por precio ascendente.
+  Future<List<Producto>> _catalogoOtraCategoria(
+    List<Producto> disponibles,
+    String codCliente,
+  ) async {
+    final porPrecio = _porPrecioAscendente(disponibles);
+    if (porPrecio.isEmpty) return const [];
+
+    final ultimoCod = await _repo.ultimoProductoMostrado(codCliente);
+    if (ultimoCod == null) {
+      // Sin historial: queda el orden por precio ascendente, sin pasar por
+      // el filtro de categoria.
+      return porPrecio;
+    }
+
+    final coincidencias = porPrecio.where((p) => p.codLoteProducto == ultimoCod);
+    final ultimaCategoria = coincidencias.isEmpty
+        ? null
+        : coincidencias.first.tipoProducto;
+
+    return [
+      ...porPrecio.where((p) => p.tipoProducto != ultimaCategoria),
+      ...porPrecio.where((p) => p.tipoProducto == ultimaCategoria),
+    ];
+  }
+
+  List<Producto> _porPrecioAscendente(List<Producto> productos) => _ordenar(
+    productos,
+    (a, b) => a.precioUnitarioCentavos.compareTo(b.precioUnitarioCentavos),
+  );
+
+  /// Ordena sin modificar la lista de entrada y desempata siempre por codigo.
+  ///
+  /// El desempate no es cosmetico: `List.sort` no es estable, asi que dos
+  /// productos con el mismo precio (o el mismo numero de exhibiciones, que es
+  /// frecuente en un catalogo recien sembrado) podrian salir en un orden
+  /// distinto en cada llamada, y el feed parpadearia sin que cambie nada.
+  List<Producto> _ordenar(
+    List<Producto> productos,
+    int Function(Producto, Producto) comparar,
+  ) {
+    final copia = [...productos];
+    copia.sort((a, b) {
+      final orden = comparar(a, b);
+      return orden != 0 ? orden : a.codLoteProducto.compareTo(b.codLoteProducto);
+    });
+    return copia;
+  }
+
   /// Cada estrategia es un *mecanismo de persuasion distinto*, no una
   /// etiqueta: por eso modifica la oferta. Sin esto el UCB1 estaria
   /// optimizando sobre nombres sin efecto, y no habria nada que aprender.
   ///
-  /// Los codigos son los sembrados en `catalogo_demo.dart`; una estrategia
-  /// desconocida cae al descuento de la emocion, sin modificarlo.
+  /// Los codigos son los sembrados en supabase/migrations/0003_semilla.sql;
+  /// una estrategia desconocida cae al descuento de la emocion, sin
+  /// modificarlo.
   int _descuentoConEstrategia(int base, Estrategia? estrategia) {
     switch (estrategia?.codEstrategia) {
       case 'E0000002': // Envio gratis: da valor sin tocar el precio
@@ -205,6 +313,14 @@ class AdaptationEngine {
     }
   }
 
+  /// Descuento por regla, siguiendo la intencion ya documentada de cada una:
+  /// enojo lleva "descuento agresivo", sorpresa es "oferta especial", y feliz
+  /// es premium **sin** descuento.
+  ///
+  /// Vive aqui y no en la UI a proposito: es una decision de negocio, y es el
+  /// mismo numero que termina congelado en `detalle_venta.precio_unitario_centavos`
+  /// cuando la venta se cierra. Un descuento que solo existiera en el texto
+  /// del popup no cuadraria con lo que registra la base.
   int _descuentoPara(_TipoRegla regla) {
     switch (regla) {
       case _TipoRegla.enojo:
@@ -219,52 +335,8 @@ class AdaptationEngine {
     }
   }
 
-  /// El calculo del siguiente correlativo/idProcesoPersuasion (leer el
-  /// maximo actual) y el insert que los consume van en UNA transaccion:
-  /// sueltos, dos llamadas concurrentes podrian leer el mismo maximo y
-  /// chocar contra el UNIQUE(canal, correlativo) al insertar.
-  Future<String> _registrarInteraccion({
-    required String codCliente,
-    required Producto producto,
-    required String? codEstrategia,
-    required String? codGesto,
-    required int nivelDeInteres,
-  }) async {
-    late final String idProcesoPersuasion;
-    await _db.transaction(() async {
-      idProcesoPersuasion = await _siguienteIdProcesoPersuasion();
-      final correlativo = await _siguienteCorrelativo();
-
-      await _db.into(_db.interacciones).insert(InteraccionesCompanion.insert(
-            canal: _canal,
-            correlativo: correlativo,
-            idProcesoPersuasion: idProcesoPersuasion,
-            codCliente: codCliente,
-            codEstrategia: Value(codEstrategia),
-            codGesto: Value(codGesto),
-            codLoteProducto: Value(producto.codLoteProducto),
-            tipoTransaccion: _tipoTransaccion,
-            timestamp: DateTime.now().millisecondsSinceEpoch,
-            nivelDeInteres: nivelDeInteres,
-          ));
-
-      // Sin esto, "neutral" (el mas mostrado) y "sorpresa" (el menos
-      // mostrado) nunca cambiarian de resultado: nada mas escribia esta
-      // columna. Update relativo en SQL (no leer+sumar en Dart) para que
-      // sea seguro con llamadas concurrentes.
-      await _db.customUpdate(
-        'UPDATE productos SET total_veces_mostrado = total_veces_mostrado + 1 '
-        'WHERE cod_lote_producto = ?',
-        variables: [Variable<String>(producto.codLoteProducto)],
-        updates: {_db.productos},
-      );
-    });
-
-    return idProcesoPersuasion;
-  }
-
-  _TipoRegla _reglaPara(String nombreGesto) {
-    switch (nombreGesto) {
+  _TipoRegla _reglaPara(String emocion) {
+    switch (emocion) {
       case 'triste':
         return _TipoRegla.triste;
       case 'feliz':
@@ -278,88 +350,14 @@ class AdaptationEngine {
     }
   }
 
-  /// Catalogo completo ordenado por la regla de la emocion: el primero es el
-  /// producto que se destaca como oferta, y el resto queda ordenado por el
-  /// mismo criterio para el feed de la tienda.
-  ///
-  /// No registra interaccion — eso lo hace [decidirOferta] con el destacado.
-  Future<List<Producto>> catalogoPara({
-    required String codCliente,
-    required String emocion,
-  }) async {
-    final gesto = await (_db.select(_db.gestos)
-          ..where((g) => g.nombreGesto.equals(emocion)))
-        .getSingleOrNull();
-    final regla =
-        gesto == null ? _TipoRegla.neutral : _reglaPara(gesto.nombreGesto);
-    return _catalogoPara(regla, codCliente);
-  }
-
-  Future<List<Producto>> _catalogoPara(
-      _TipoRegla regla, String codCliente) async {
-    switch (regla) {
-      case _TipoRegla.triste: // sustituto mas economico
-        return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
-              ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
-            .get();
-      case _TipoRegla.feliz: // premium, sin descuento
-        return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
-              ..orderBy([(p) => OrderingTerm.desc(p.precioUnitarioCentavos)]))
-            .get();
-      case _TipoRegla.sorpresa: // novedad: lo menos mostrado
-        return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
-              ..orderBy([(p) => OrderingTerm.asc(p.totalVecesMostrado)]))
-            .get();
-      case _TipoRegla.neutral: // estandar: lo mas mostrado
-        return (_db.select(_db.productos)
-              ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
-              ..orderBy([(p) => OrderingTerm.desc(p.totalVecesMostrado)]))
-            .get();
-      case _TipoRegla.enojo: // cambia de categoria + descuento agresivo
-        return _catalogoOtraCategoria(codCliente);
-    }
-  }
-
-  /// Pone primero los productos de una categoria distinta a la del ultimo
-  /// producto mostrado a este cliente, cada bloque ordenado del mas economico
-  /// al mas caro (descuento agresivo). Sin historial o sin otra categoria
-  /// disponible, queda el catalogo entero por precio ascendente.
-  Future<List<Producto>> _catalogoOtraCategoria(String codCliente) async {
-    final activos = await (_db.select(_db.productos)
-          ..where((p) => p.activo.equals(true) & p.totalDisponible.isBiggerThanValue(0))
-          ..orderBy([(p) => OrderingTerm.asc(p.precioUnitarioCentavos)]))
-        .get();
-    if (activos.isEmpty) return const [];
-
-    final ultima = await (_db.select(_db.interacciones)
-          ..where((i) => i.codCliente.equals(codCliente))
-          ..orderBy([(i) => OrderingTerm.desc(i.timestamp)])
-          ..limit(1))
-        .getSingleOrNull();
-
-    final ultimoCod = ultima?.codLoteProducto;
-    if (ultimoCod == null) {
-      // Sin historial: queda el orden por precio ascendente, sin pasar por
-      // el filtro de categoria.
-      return activos;
-    }
-
-    final coincidencias =
-        activos.where((p) => p.codLoteProducto == ultimoCod);
-    final ultimaCategoria =
-        coincidencias.isEmpty ? null : coincidencias.first.tipoProducto;
-
-    return [
-      ...activos.where((p) => p.tipoProducto != ultimaCategoria),
-      ...activos.where((p) => p.tipoProducto == ultimaCategoria),
-    ];
-  }
-
-  String _textoPara(_TipoRegla regla, Producto producto, int descuento) {
-    final centavosFinales = producto.precioUnitarioCentavos -
+  String _textoPara(
+    _TipoRegla regla,
+    Producto producto,
+    int descuento,
+    bool mandaElAdministrador,
+  ) {
+    final centavosFinales =
+        producto.precioUnitarioCentavos -
         (producto.precioUnitarioCentavos * descuento ~/ 100);
     final precio = (centavosFinales / 100).toStringAsFixed(2);
 
@@ -368,8 +366,20 @@ class AdaptationEngine {
     if (descuento == 0) {
       return regla == _TipoRegla.feliz
           ? 'Para ti: ${producto.nombreProducto}, nuestra opcion premium '
-              'a S/$precio.'
+                'a S/$precio.'
           : 'Te recomendamos: ${producto.nombreProducto} a S/$precio.';
+    }
+
+    // Cuando el descuento es la promocion de la tienda y no una reaccion a la
+    // cara del cliente, se anuncia como tal: decirle "tal vez esto te anime"
+    // por un precio que ve cualquiera suena a invento.
+    if (mandaElAdministrador) {
+      final nombre = producto.nombreOferta;
+      return nombre == null
+          ? '${producto.nombreProducto} esta en oferta: $descuento% menos, '
+                'a S/$precio.'
+          : '$nombre: ${producto.nombreProducto} con $descuento% de descuento, '
+                'a S/$precio.';
     }
 
     switch (regla) {
@@ -387,30 +397,6 @@ class AdaptationEngine {
         return 'Llevate ${producto.nombreProducto} con $descuento% de '
             'descuento: S/$precio.';
     }
-  }
-
-  Future<int> _siguienteCorrelativo() async {
-    final ultima = await (_db.select(_db.interacciones)
-          ..where((i) => i.canal.equals(_canal))
-          ..orderBy([(i) => OrderingTerm.desc(i.correlativo)])
-          ..limit(1))
-        .getSingleOrNull();
-    return (ultima?.correlativo ?? 0) + 1;
-  }
-
-  /// idProcesoPersuasion (C1): la clave que une el intento (interaccion) con
-  /// el cierre (venta), si lo hay. Se genera aqui porque el intento siempre
-  /// nace en una interaccion.
-  Future<String> _siguienteIdProcesoPersuasion() async {
-    final ultima = await (_db.select(_db.interacciones)
-          ..orderBy([(i) => OrderingTerm.desc(i.idProcesoPersuasion)])
-          ..limit(1))
-        .getSingleOrNull();
-
-    final siguienteNumero = ultima == null
-        ? 1
-        : int.parse(ultima.idProcesoPersuasion.substring(2)) + 1;
-    return 'PP${siguienteNumero.toString().padLeft(8, '0')}';
   }
 }
 

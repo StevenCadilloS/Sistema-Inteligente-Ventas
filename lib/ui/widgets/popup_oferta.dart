@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../decision/adaptation_engine.dart';
 import '../../theme/app_theme.dart';
+import 'imagen_producto.dart';
 
 class PopupOferta extends StatelessWidget {
   const PopupOferta({
@@ -20,32 +21,12 @@ class PopupOferta extends StatelessWidget {
   final VoidCallback onRechazar;
   final VoidCallback onCerrar;
 
-  static const Map<String, String> _imagenes = {
-    'P0000001': 'assets/products/P0000001_audifonos.jpg',
-    'P0000002': 'assets/products/P0000002_smartwatch.jpg',
-    'P0000003': 'assets/products/P0000003_parlante.jpg',
-    'P0000004': 'assets/products/P0000004_cargador.jpg',
-    'P0000005': 'assets/products/P0000005_laptop.jpg',
-    'P0000006': 'assets/products/P0000006_sartenes.jpg',
-    'P0000007': 'assets/products/P0000007_lampara.jpg',
-    'P0000008': 'assets/products/P0000008_organizador.jpg',
-    'P0000009': 'assets/products/P0000009_aspiradora.jpg',
-    'P0000010': 'assets/products/P0000010_polo.jpg',
-    'P0000011': 'assets/products/P0000011_zapatillas.jpg',
-    'P0000012': 'assets/products/P0000012_mochila.jpg',
-    'P0000013': 'assets/products/P0000013_casaca.jpg',
-    'P0000014': 'assets/products/P0000014_skincare.jpg',
-    'P0000015': 'assets/products/P0000015_secadora.jpg',
-    'P0000016': 'assets/products/P0000016_perfume.jpg',
-  };
-
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final precio =
         (oferta.producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
     final precioFinal = (oferta.precioFinalCentavos / 100).toStringAsFixed(2);
-    final imagen = _imagenes[oferta.producto.codLoteProducto];
 
     return Stack(
       children: [
@@ -119,31 +100,21 @@ class PopupOferta extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: imagen != null
-                        ? Image.asset(
-                            imagen,
-                            height: 120,
-                            width: 120,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                height: 120,
-                                width: 120,
-                                color: AppTheme.success.withValues(alpha: 0.1),
-                                child: const Icon(Icons.shopping_bag_outlined,
-                                    size: 40, color: AppTheme.success),
-                              );
-                            },
-                          )
-                        : Container(
-                            height: 120,
-                            width: 120,
-                            color: AppTheme.success.withValues(alpha: 0.1),
-                            child: const Icon(Icons.shopping_bag_outlined,
-                                size: 40, color: AppTheme.success),
-                          ),
+                  ImagenProducto(
+                    producto: oferta.producto,
+                    ancho: 120,
+                    alto: 120,
+                    radio: 12,
+                    respaldo: Container(
+                      height: 120,
+                      width: 120,
+                      color: AppTheme.success.withValues(alpha: 0.1),
+                      child: const Icon(
+                        Icons.shopping_bag_outlined,
+                        size: 40,
+                        color: AppTheme.success,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Text(

@@ -1,47 +1,46 @@
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:tienda_adaptativa/data/database/app_database.dart';
 import 'package:tienda_adaptativa/data/repositories/cliente_repository.dart';
 
+import '../../apoyo/fake_tienda_repository.dart';
+
+/// Sesion del cliente (docs/PLAN_ELVIS.md fase 04).
+///
+/// El codigo de cliente ya no se genera aqui: lo asigna el servidor con una
+/// secuencia, y que dos registros simultaneos no choquen se prueba en SQL
+/// (supabase/tests/01_ciclo_venta.sql). Lo que queda de este lado es la
+/// sesion: que se guarde, se recupere y se cierre en el dispositivo.
 void main() {
-  late AppDatabase db;
+  late FakeTiendaRepository tienda;
   late ClienteRepository clientes;
 
   setUp(() async {
-    db = AppDatabase.forTesting(NativeDatabase.memory());
-    await db.customSelect('SELECT 1').getSingle(); // dispara onCreate/seed
+    tienda = FakeTiendaRepository();
     SharedPreferences.setMockInitialValues({});
-    clientes = ClienteRepository(db, await SharedPreferences.getInstance());
+    clientes = ClienteRepository(tienda, await SharedPreferences.getInstance());
   });
 
-  tearDown(() => db.close());
+  tearDown(() => tienda.cerrar());
 
-  test('registrar genera codCliente C0000001 y deja sesion activa',
-      () async {
+  test('registrar devuelve el codigo del servidor y deja sesion activa', () async {
     final cod = await clientes.registrar(nombre: 'Carlos', apellido: 'Ramirez');
 
     expect(cod, 'C0000001');
     expect(clientes.clienteActivo(), 'C0000001');
   });
 
-  test('el segundo registro continua el secuencial', () async {
-    await clientes.registrar(nombre: 'Carlos', apellido: 'Ramirez');
-    final segundo =
-        await clientes.registrar(nombre: 'Ana', apellido: 'Torres');
+  test('el segundo registro recibe un codigo distinto', () async {
+    final primero = await clientes.registrar(
+      nombre: 'Carlos',
+      apellido: 'Ramirez',
+    );
+    final segundo = await clientes.registrar(
+      nombre: 'Ana',
+      apellido: 'Torres',
+    );
 
-    expect(segundo, 'C0000002');
-  });
-
-  test('dos registros concurrentes no chocan ni se pisan (leer+insertar es atomico)',
-      () async {
-    final codigos = await Future.wait([
-      clientes.registrar(nombre: 'Carlos', apellido: 'Ramirez'),
-      clientes.registrar(nombre: 'Ana', apellido: 'Torres'),
-    ]);
-
-    expect(codigos.toSet(), hasLength(2)); // ningun codigo repetido
-    expect(await db.select(db.clientes).get(), hasLength(2));
+    expect(segundo, isNot(primero));
+    expect(clientes.clienteActivo(), segundo);
   });
 
   test('iniciarSesion falla si el codCliente no existe', () async {
@@ -49,11 +48,20 @@ void main() {
       () => clientes.iniciarSesion('C9999999'),
       throwsA(isA<StateError>()),
     );
+    expect(clientes.clienteActivo(), isNull);
+  });
+
+  test('iniciarSesion acepta un cliente ya registrado', () async {
+    final cod = await clientes.registrar(nombre: 'Ana', apellido: 'Torres');
+    await clientes.cerrarSesion();
+
+    await clientes.iniciarSesion(cod);
+
+    expect(clientes.clienteActivo(), cod);
   });
 
   test('cerrarSesion limpia el cliente activo', () async {
-    final cod = await clientes.registrar(nombre: 'Ana', apellido: 'Torres');
-    expect(clientes.clienteActivo(), cod);
+    await clientes.registrar(nombre: 'Carlos', apellido: 'Ramirez');
 
     await clientes.cerrarSesion();
 
@@ -61,11 +69,13 @@ void main() {
   });
 
   test('tipoCliente nullable: se puede registrar sin el (C3)', () async {
-    final cod = await clientes.registrar(nombre: 'Ana', apellido: 'Torres');
+    final cod = await clientes.registrar(
+      nombre: 'Luis',
+      apellido: 'Vega',
+      tipoCliente: null,
+    );
 
-    final fila = await (db.select(db.clientes)
-          ..where((c) => c.codCliente.equals(cod)))
-        .getSingle();
-    expect(fila.tipoCliente, isNull);
+    expect(cod, isNotEmpty);
+    expect(clientes.clienteActivo(), cod);
   });
 }

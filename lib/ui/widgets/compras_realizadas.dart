@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../data/database/app_database.dart';
+import '../../data/modelos/modelos.dart';
 import '../../theme/app_theme.dart';
 
 /// Una compra ya cerrada: el producto y lo que realmente se pago por el
