@@ -1,0 +1,55 @@
+name: Probar el backend (SQL)
+
+# El esquema, la venta atomica, el cierre diario, los KPIs y los permisos ya no
+# viven en Dart, asi que `flutter test` no los alcanza. Este workflow levanta un
+# PostgreSQL de verdad, aplica las tres migraciones y corre las pruebas de
+# supabase/tests/.
+#
+# No usa Supabase ni credenciales: el esquema es PostgreSQL puro, y esa es
+# justamente la propiedad que se quiere mantener.
+
+on:
+  push:
+    paths:
+      - "supabase/**"
+      - ".github/workflows/backend-sql.yml"
+  pull_request:
+    paths:
+      - "supabase/**"
+  workflow_dispatch:
+
+jobs:
+  sql:
+    name: Migraciones y pruebas SQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tienda
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d tienda"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Descargar el repositorio
+        uses: actions/checkout@v6
+
+      - name: Asegurar el cliente de PostgreSQL
+        run: |
+          command -v psql >/dev/null 2>&1 || {
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          }
+          psql --version
+
+      - name: Aplicar migraciones y correr las pruebas
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/tienda
+        run: bash supabase/tests/ejecutar.sh

@@ -1,0 +1,7 @@
+# Los scripts de shell deben quedar con finales de linea LF aunque se editen
+# desde Windows. Con CRLF, el runner de Linux falla con
+# "bad interpreter: /usr/bin/env bash^M", que es un error dificil de leer.
+*.sh text eol=lf
+
+# El SQL lo ejecuta psql dentro de un contenedor Linux.
+*.sql text eol=lf

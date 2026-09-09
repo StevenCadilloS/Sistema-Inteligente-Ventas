@@ -1,0 +1,38 @@
+# PostgreSQL local para desarrollo y para correr las pruebas SQL.
+#
+# Levanta SOLO la base, no el resto de Supabase. Es lo que hace falta para
+# probar el esquema, las funciones, los KPIs y las politicas de permisos, que
+# es donde vive la logica: PostgREST y Realtime son transporte.
+#
+# Funciona igual con docker compose y con podman compose:
+#
+#     podman compose -f supabase/docker-compose.yml up -d
+#     docker compose -f supabase/docker-compose.yml up -d
+#
+# Y despues:  bash supabase/tests/ejecutar.sh
+#
+# Para levantar Supabase entero en tu propia maquina (con panel, PostgREST y
+# Realtime), usa el compose oficial de https://github.com/supabase/supabase
+# en docker/, y aplica encima las migraciones de supabase/migrations/. El
+# esquema es el mismo: no depende de nada que solo exista en la nube.
+
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    container_name: tienda-pg
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tienda
+    ports:
+      # 55432 y no 5432 para no chocar con un PostgreSQL ya instalado.
+      - "55432:5432"
+    volumes:
+      - tienda-pg-datos:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tienda"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tienda-pg-datos:
