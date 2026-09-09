@@ -56,3 +56,9 @@ tools/base_extraida.sqlite
 # Credenciales del backend: la URL y la clave publica del proyecto Supabase.
 # Se pasan al compilar con --dart-define-from-file=env.json. Ver env.example.json.
 /env.json
+
+# Intermedios de graphify: los genera el pipeline y los borra al terminar.
+# El grafo entregable (graph.json, graph.html, GRAPH_REPORT.md) si se versiona,
+# y vive en docs/graphify-out/.
+docs/graphify-out/.graphify_*.json
+/graphify-out/

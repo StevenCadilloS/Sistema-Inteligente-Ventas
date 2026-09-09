@@ -1,9 +1,13 @@
 # Sistema Inteligente de Ventas - Tienda Adaptativa
 # Requisitos de entorno y dependencias. No es un requirements.txt de Python
-# (el proyecto es Flutter/Dart) - equivalente informativo para instalar sin
-# leer todo el README.
+# (el proyecto es Flutter/Dart + PostgreSQL) - equivalente informativo para
+# instalar sin leer todo el README.
+#
+# Actualizado: 2026-09-09, tras mover la base de datos del dispositivo a un
+# PostgreSQL compartido. Si vienes de una copia anterior del proyecto, mira
+# primero la seccion "YA NO HACE FALTA" al final.
 
-# ── ENTORNO (instalar en este orden) ──────────────────────────────────────
+# ══ 1. ENTORNO DE LA APLICACION (instalar en este orden) ══════════════════
 # Flutter SDK        3.47.x   (incluye Dart 3.13.x)   https://flutter.dev
 # JDK                17 o superior (Gradle lo usa internamente)
 # Android SDK        platform-tools, platforms;android-34 y ;android-36,
@@ -13,41 +17,99 @@
 # VS Code            + extensiones Flutter y Dart (no se usa Android Studio)
 # Celular Android    8.0+ (API 26+) con camara frontal, o emulador equivalente
 # Git
-
+#
 # Verificar instalacion:
 #   flutter doctor
 
-# ── DEPENDENCIAS DART/FLUTTER (pubspec.yaml) ──────────────────────────────
+# ══ 2. BACKEND (obligatorio: la app no arranca sin el) ════════════════════
+#
+# El catalogo, el stock y las ofertas viven en una base compartida. Sin
+# credenciales la app no muestra productos: lo dice en pantalla y no arranca
+# la tienda. Hay dos formas de tener esa base, y cualquiera sirve.
+#
+# ── Opcion A: proyecto en supabase.com (lo mas rapido) ────────────────────
+# Cuenta gratuita        https://supabase.com  -> New project
+# PostgreSQL 15+         lo provee el propio proyecto
+# Aplicar migraciones    pegar en orden en el SQL Editor del panel:
+#                          supabase/migrations/0001_esquema.sql
+#                          supabase/migrations/0002_funciones.sql
+#                          supabase/migrations/0003_semilla.sql
+#
+# ── Opcion B: PostgreSQL propio (autohospedado, sin cuentas) ──────────────
+# Podman 5.x o 6.x       https://podman.io      (o Docker 24+, equivalente)
+#   o Docker Compose v2
+# PostgreSQL 16          se descarga solo: docker.io/library/postgres:16-alpine
+#                        definido en supabase/docker-compose.yml
+# psql                   opcional; si no esta, los scripts usan el psql que
+#                        ya vive dentro del contenedor
+#
+#   podman compose -f supabase/docker-compose.yml up -d
+#   bash supabase/tests/ejecutar.sh      # aplica migraciones y prueba
+#
+# Nota de memoria (Windows): Podman corre sobre una VM de WSL2 que, sin
+# limite, puede crecer hasta el 50% de la RAM y no devolverla. Conviene un
+# %USERPROFILE%\.wslconfig con:  [wsl2] memory=4GB / autoMemoryReclaim=gradual
+# y detener la maquina al terminar:  podman machine stop
+#
+# ── Credenciales (nunca se versionan) ─────────────────────────────────────
+# env.json en la raiz, copiado de env.example.json:
+#
+#   { "SUPABASE_URL": "https://xxxx.supabase.co",
+#     "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_..." }
+#
+# Los proyectos anteriores emiten "anon key" (un JWT) en vez de publishable
+# key; se acepta igual como SUPABASE_ANON_KEY. La clave concede solo lectura:
+# toda escritura pasa por funciones validadas del servidor.
+
+# ══ 3. DEPENDENCIAS DART/FLUTTER (pubspec.yaml) ═══════════════════════════
 # No se instalan con pip/npm - se resuelven con:
 #   flutter pub get
-#   dart run build_runner build     # genera codigo de drift (obligatorio)
 
 # dependencies:
 flutter (SDK)
 cupertino_icons ^1.0.8
-drift ^2.34.4                       # base de datos SQLite tipada
-sqlite3_flutter_libs ^0.6.0+eol     # libs nativas de sqlite3 para Android
-path_provider ^2.1.6
-path ^1.9.1
-shared_preferences ^2.5.5           # sesion del cliente activo
+google_fonts ^6.2.1
+shared_preferences ^2.5.5           # sesion del cliente activo (en el equipo)
+supabase_flutter ^2.17.2            # PostgREST + Realtime contra la base compartida
 workmanager ^0.10.9                 # programador del cierre diario (batch)
 
 # dev_dependencies:
 flutter_test (SDK)
 flutter_lints ^6.0.0
-drift_dev ^2.34.6                   # codegen de drift
-build_runner ^2.16.1                # ejecuta el codegen
 
-# ── MODULO NATIVO (Kotlin, android/app/build.gradle.kts) ─────────────────
+# ══ 4. MODULO NATIVO (Kotlin, android/app/build.gradle.kts) ═══════════════
 kotlin 1.9.x
 androidx.camera:camera-core/camera2/lifecycle  1.3.4
 com.google.mlkit:face-detection                16.1.6
 org.tensorflow:tensorflow-lite                 2.16.1
 
-# ── INSTALACION COMPLETA ──────────────────────────────────────────────────
+# ══ 5. INSTALACION COMPLETA ═══════════════════════════════════════════════
 #   git clone https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas.git
 #   cd Sistema-Inteligente-Ventas
 #   flutter pub get
-#   dart run build_runner build
-#   flutter test                    # 35 tests, no requiere celular
-#   flutter run                     # requiere celular/emulador conectado
+#
+#   # backend: opcion A (panel de Supabase) u opcion B (contenedor local)
+#   cp env.example.json env.json          # y rellenar con tus credenciales
+#
+#   flutter test                          # 39 pruebas Dart, sin celular ni red
+#   flutter run --dart-define-from-file=env.json          # requiere celular
+#   flutter build apk --release --dart-define-from-file=env.json
+
+# ══ 6. PRUEBAS ════════════════════════════════════════════════════════════
+# flutter test                         39 casos - reglas de adaptacion,
+#                                      negociacion y UCB1, contra una
+#                                      implementacion en memoria (sin red)
+# bash supabase/tests/ejecutar.sh       4 suites SQL - esquema, venta atomica,
+#                                      vigencia de ofertas, cierre diario,
+#                                      los 4 KPIs y los permisos.
+#                                      Necesita el contenedor levantado, o
+#                                      PGURL apuntando a otra base
+# cd android && ./gradlew test          9 casos JUnit del modulo Kotlin
+
+# ══ 7. YA NO HACE FALTA (estaba en versiones anteriores) ══════════════════
+# drift, drift_dev, sqlite3_flutter_libs, path_provider, path, build_runner
+#
+# La base dejo de vivir en el telefono, asi que no hay esquema SQLite que
+# generar. En particular, `dart run build_runner build` era obligatorio antes
+# de compilar y ahora no existe: si tu copia local todavia lo pide, tienes
+# codigo viejo. Borra .dart_tool/ y vuelve a hacer `flutter pub get`.
