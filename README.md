@@ -10,6 +10,30 @@ ofertas que un administrador configuró antes.
 
 ---
 
+## APK automática
+
+Cada push a una rama de trabajo ejecuta las pruebas, compila la APK y
+actualiza su descarga permanente:
+
+| Rama | Descarga |
+|---|---|
+| `arbol5-modelo-ofertas` | [APK más reciente](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/arbol5-modelo-ofertas-latest/Sistema-Inteligente-Ventas-arbol5-modelo-ofertas.apk) |
+| `steven1.1` | [APK más reciente](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/steven1-1-latest/Sistema-Inteligente-Ventas-steven1-1.apk) |
+
+Para que la APK se conecte al backend hacen falta dos secretos del repositorio
+(**Settings → Secrets and variables → Actions**):
+
+| Secreto | De dónde sale |
+|---|---|
+| `SUPABASE_URL` | Project Settings → API → *Project URL* |
+| `SUPABASE_PUBLISHABLE_KEY` | Project Settings → API → *publishable key* (o *anon public*) |
+
+Sin ellos la APK se genera igual, pero arranca mostrando la pantalla que
+explica que falta el backend. **Nunca** poner ahí la `service_role` key: esa
+ignora todas las políticas de seguridad.
+
+---
+
 ## Descripción
 
 El problema: mostrar la oferta correcta, en el momento correcto, sin regalar

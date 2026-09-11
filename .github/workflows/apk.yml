@@ -1,16 +1,28 @@
-name: Generar APK de steven1.1
+name: Generar APK
+
+# Compila una APK instalable en cada push a las ramas de trabajo y la publica
+# como descarga permanente, una por rama.
+#
+# El nombre de la rama no esta escrito en ningun sitio: sale de `github.ref_name`
+# y se normaliza a `slug` (los puntos y las barras no valen en un tag de
+# release). Antes este workflow existia solo para `steven1.1` con el nombre
+# repetido en quince lineas, asi que anadir una rama obligaba a duplicar el
+# archivo entero.
 
 on:
   push:
     branches:
       - steven1.1
+      - arbol5-modelo-ofertas
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: steven1-1-apk
+  # Una compilacion por rama: un push nuevo cancela el anterior de esa misma
+  # rama, pero no toca las de las demas.
+  group: apk-${{ github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -23,16 +35,26 @@ jobs:
       - name: Descargar el repositorio
         uses: actions/checkout@v6
 
+      - name: Preparar los nombres de esta rama
+        id: rama
+        run: |
+          # steven1.1 -> steven1-1 ; feat/algo -> feat-algo
+          slug="$(echo "${{ github.ref_name }}" | tr './' '--')"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          echo "Compilando la rama ${{ github.ref_name }} (slug: $slug)"
+
       - name: Configurar Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Configurar Flutter 3.47.2
+      # La version se fija a proposito: una APK compilada con otro Flutter que
+      # el del equipo puede fallar de formas que no se reproducen en local.
+      - name: Configurar Flutter 3.47.3
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.47.2
+          flutter-version: 3.47.3
           channel: stable
           cache: true
 
@@ -46,6 +68,9 @@ jobs:
       # compilar; no estan en el repositorio. Si los secretos no estan
       # configurados, la APK igual se genera: arranca mostrando la pantalla
       # que explica que falta el backend, en vez de fallar la compilacion.
+      #
+      # Se configuran en Settings -> Secrets and variables -> Actions, con los
+      # nombres SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY.
       #
       # La clave publica solo concede lectura (ver las politicas RLS en
       # supabase/migrations/0001_esquema.sql), por eso puede viajar dentro
@@ -76,19 +101,24 @@ jobs:
         run: flutter build apk --debug --dart-define-from-file=env.json
 
       - name: Preparar archivos de descarga
+        env:
+          SLUG: ${{ steps.rama.outputs.slug }}
+          RAMA: ${{ github.ref_name }}
         run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
-            dist/Sistema-Inteligente-Ventas-steven1.1.apk
+            "dist/Sistema-Inteligente-Ventas-$SLUG.apk"
           cp build/app/outputs/flutter-apk/app-debug.apk \
-            dist/Sistema-Inteligente-Ventas-steven1.1-debug.apk
-          cat > dist/notas-release.md <<'NOTAS'
+            "dist/Sistema-Inteligente-Ventas-$SLUG-debug.apk"
+          cat > dist/notas-release.md <<NOTAS
+          APK generada automaticamente desde la rama \`$RAMA\`.
+
           Cual descargar:
 
-          - `Sistema-Inteligente-Ventas-steven1.1.apk` (release): la normal.
+          - \`Sistema-Inteligente-Ventas-$SLUG.apk\` (release): la normal.
             Para instalar, usar y demostrar. Dart va compilado, responde mas rapido.
-          - `Sistema-Inteligente-Ventas-steven1.1-debug.apk`: solo para diagnosticar
-            (registros con `adb logcat`). Los datos ya no se leen del celular: el
+          - \`Sistema-Inteligente-Ventas-$SLUG-debug.apk\`: solo para diagnosticar
+            (registros con \`adb logcat\`). Los datos ya no se leen del celular: el
             catalogo, el stock y las ventas viven en la base compartida y se
             consultan desde el panel (ver supabase/README.md).
 
@@ -98,7 +128,7 @@ jobs:
       - name: Guardar APK en la ejecución
         uses: actions/upload-artifact@v7
         with:
-          name: apk-steven1-1-${{ github.run_number }}
+          name: apk-${{ steps.rama.outputs.slug }}-${{ github.run_number }}
           path: dist/*.apk
           retention-days: 14
           if-no-files-found: error
@@ -106,20 +136,24 @@ jobs:
       - name: Crear o actualizar la descarga permanente
         env:
           GH_TOKEN: ${{ github.token }}
+          SLUG: ${{ steps.rama.outputs.slug }}
+          RAMA: ${{ github.ref_name }}
         run: |
-          if ! gh release view steven1-1-latest >/dev/null 2>&1; then
-            gh release create steven1-1-latest \
-              --target steven1.1 \
-              --title "APK automática de steven1.1" \
-              --notes "APK instalable generada automáticamente desde la rama steven1.1." \
+          tag="$SLUG-latest"
+
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --target "$RAMA" \
+              --title "APK automática de $RAMA" \
+              --notes "APK instalable generada automáticamente desde la rama $RAMA." \
               --prerelease
           fi
 
-          gh release upload steven1-1-latest \
-            dist/Sistema-Inteligente-Ventas-steven1.1.apk \
-            dist/Sistema-Inteligente-Ventas-steven1.1-debug.apk \
+          gh release upload "$tag" \
+            "dist/Sistema-Inteligente-Ventas-$SLUG.apk" \
+            "dist/Sistema-Inteligente-Ventas-$SLUG-debug.apk" \
             --clobber
 
-          gh release edit steven1-1-latest \
-            --title "APK automática de steven1.1" \
+          gh release edit "$tag" \
+            --title "APK automática de $RAMA" \
             --notes-file dist/notas-release.md
