@@ -14,7 +14,8 @@ aprueba.
 | | Las reglas: limite diario, stock, que el total cuadre |
 
 La camara nunca sale del telefono. Lo que viaja por la red es "dame las
-ofertas del producto 3 para el cliente 7", nunca una imagen.
+ofertas del producto 3", con el token que dice quien pregunta, nunca una
+imagen.
 
 > **La emocion no calcula el descuento.** Solo decide si el sistema se queda
 > donde esta o avanza al siguiente escalon de una escalera que un
