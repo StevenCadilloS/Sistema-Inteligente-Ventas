@@ -9,7 +9,7 @@ class PopupOferta extends StatelessWidget {
     super.key,
     required this.negociacion,
     required this.mensaje,
-    required this.segundosRestantes,
+    required this.lecturas,
     required this.onAceptar,
     required this.onRechazar,
     required this.onCerrar,
@@ -17,7 +17,10 @@ class PopupOferta extends StatelessWidget {
 
   final Negociacion negociacion;
   final String mensaje;
-  final int segundosRestantes;
+  /// Lecturas estables acumuladas en la ventana de observacion en curso.
+  /// Se muestran para que se note que el sistema esta mirando: el detector
+  /// tarda ~1,3 s por lectura y sin este contador el popup parece congelado.
+  final int lecturas;
   final VoidCallback onAceptar;
   final VoidCallback onRechazar;
   final VoidCallback onCerrar;
@@ -72,11 +75,16 @@ class PopupOferta extends StatelessWidget {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.timer_outlined,
-                                size: 16, color: AppTheme.success),
+                            Icon(
+                              lecturas > 0
+                                  ? Icons.visibility_outlined
+                                  : Icons.hourglass_empty,
+                              size: 16,
+                              color: AppTheme.success,
+                            ),
                             const SizedBox(width: 4),
                             Text(
-                              '${segundosRestantes}s',
+                              '$lecturas',
                               style: textTheme.bodyMedium?.copyWith(
                                 color: AppTheme.success,
                                 fontWeight: FontWeight.bold,

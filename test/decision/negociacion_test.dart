@@ -77,11 +77,22 @@ void main() {
     });
 
     test('no_face no vota', () {
-      // Tres no_face y dos felices: los no_face no cuentan, quedan 2 votos.
+      // Cuatro no_face y una sola lectura real: no alcanza el minimo de 2.
       expect(
-        clasificador.clasificar(['no_face', 'no_face', 'no_face', 'feliz', 'feliz']),
+        clasificador.clasificar([
+          'no_face', 'no_face', 'no_face', 'no_face', 'feliz',
+        ]),
         Respuesta.sinSenal,
-        reason: 'con menos de 3 votos reales no hay senal suficiente',
+        reason: 'los no_face no cuentan como votos',
+      );
+
+      // Y con dos lecturas reales si decide, aunque vengan rodeadas de
+      // no_face: perder el rostro un instante no invalida lo observado.
+      expect(
+        clasificador.clasificar([
+          'no_face', 'triste', 'no_face', 'triste', 'no_face',
+        ]),
+        Respuesta.desfavorable,
       );
     });
 
@@ -219,6 +230,47 @@ void main() {
 
       expect(n.mensaje, contains('10%'));
       expect(n.mensaje, contains('S/2250.00'));
+    });
+  });
+
+  group('rechazo explicito', () {
+    /// Pulsar "No, gracias" es una respuesta desfavorable declarada, asi que
+    /// hace lo mismo que una cara desfavorable: avanzar. Antes el boton
+    /// cerraba la interaccion entera y el cliente nunca veia la segunda
+    /// oferta — justo lo contrario de lo que describe el README.
+    test('rechazar lleva al siguiente escalon, no al final', () {
+      final n = Negociacion(producto: p(), escalera: escaleraCompleta());
+
+      expect(n.siguientePaso(Respuesta.desfavorable), PasoNegociacion.avanzar);
+      n.avanzar();
+      expect(n.precioActualCentavos, 225000);
+
+      expect(n.siguientePaso(Respuesta.desfavorable), PasoNegociacion.avanzar);
+      n.avanzar();
+      expect(n.precioActualCentavos, 200000);
+    });
+
+    test('rechazar en el ultimo escalon si termina', () {
+      final n = Negociacion(producto: p(), escalera: escaleraCompleta());
+      while (n.avanzar()) {}
+
+      expect(n.siguientePaso(Respuesta.desfavorable), PasoNegociacion.terminar);
+    });
+  });
+
+  group('minimo de votos', () {
+    /// Cada lectura del modulo nativo ya viene filtrada por 26 frames
+    /// consecutivos (~1,3 s), asi que dos lecturas son ~3 s de cara sostenida:
+    /// suficiente para decidir. Con el minimo en 3 se perdian ventanas enteras.
+    test('dos lecturas bastan para decidir', () {
+      const c = ClasificadorRespuesta();
+      expect(c.clasificar(['triste', 'triste']), Respuesta.desfavorable);
+      expect(c.clasificar(['feliz', 'feliz']), Respuesta.favorable);
+    });
+
+    test('una sola lectura sigue siendo insuficiente', () {
+      const c = ClasificadorRespuesta();
+      expect(c.clasificar(['triste']), Respuesta.sinSenal);
     });
   });
 }

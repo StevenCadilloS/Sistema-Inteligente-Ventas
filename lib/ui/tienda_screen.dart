@@ -34,7 +34,7 @@ class TiendaScreen extends StatefulWidget {
     required this.emotionChannel,
     required this.tienda,
     this.clasificador = const ClasificadorRespuesta(),
-    this.ventanaObservacion = const Duration(seconds: 4),
+    this.ventanaObservacion = const Duration(seconds: 8),
   });
 
   final SesionService sesion;
@@ -44,9 +44,17 @@ class TiendaScreen extends StatefulWidget {
   /// Como se agrupan las lecturas de la camara en una respuesta.
   final ClasificadorRespuesta clasificador;
 
-  /// Cuanto se observa antes de decidir. La duracion la fija el rendimiento
-  /// real del clasificador en el dispositivo: demasiado corta y decide con
-  /// dos fotogramas, demasiado larga y el cliente se cansa.
+  /// Cuanto se observa antes de decidir.
+  ///
+  /// El modulo nativo no entrega una lectura por frame: EmotionProcessor exige
+  /// 26 frames consecutivos de la misma emocion antes de declararla estable, y
+  /// a ~20 fps eso es ~1,3 s por lectura — mas si el rostro se mueve y el
+  /// contador se reinicia. Con una ventana de 4 s apenas caben dos, y en
+  /// condiciones reales a veces ninguna: la ventana se cerraba sin votos, el
+  /// clasificador devolvia sinSenal y la escalera no avanzaba nunca.
+  ///
+  /// 8 s deja sitio para 4-5 lecturas estables, que es lo que el clasificador
+  /// necesita para decidir por mayoria y no por casualidad.
   final Duration ventanaObservacion;
 
   @override
@@ -112,6 +120,8 @@ class _TiendaScreenState extends State<TiendaScreen> {
   }
 
   bool get _negociando => _negociacion != null;
+
+  bool get _camaraEncendida => _emociones != null;
 
   // --------------- CATALOGO ---------------
 
@@ -211,6 +221,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
         _emocionDetectada = e.emotion;
         _confianza = e.confidence;
       });
+      _refrescarPopup();
     });
   }
 
@@ -265,11 +276,36 @@ class _TiendaScreenState extends State<TiendaScreen> {
     return PopupOferta(
       negociacion: negociacion,
       mensaje: negociacion.mensaje,
-      segundosRestantes: 0,
+      // Lecturas estables acumuladas en la ventana en curso. Sin esto no hay
+      // forma de distinguir "observando" de "colgado": el detector tarda ~1,3s
+      // por lectura y no imprime nada.
+      lecturas: _lecturas.length,
       onAceptar: () => _comprar(negociacion),
-      onRechazar: _terminarInteraccion,
+      onRechazar: () => _rechazar(negociacion),
       onCerrar: _terminarInteraccion,
     );
+  }
+
+  /// El cliente dijo que no a la oferta que tiene delante.
+  ///
+  /// Rechazar es una respuesta desfavorable explicita, asi que hace lo mismo
+  /// que una cara desfavorable: avanzar al siguiente escalon. Solo cuando la
+  /// escalera se acaba termina la interaccion — antes, el boton cerraba todo
+  /// al primer "no" y el cliente nunca llegaba a ver la segunda oferta.
+  ///
+  /// La ventana de observacion se reinicia: si la camara estaba a mitad de
+  /// una ronda, esa lectura ya no corresponde a lo que se muestra ahora.
+  void _rechazar(Negociacion negociacion) {
+    if (!negociacion.quedanEscalones) {
+      _avisar('No quedan mas ofertas para ${negociacion.producto.nombre}.');
+      _terminarInteraccion();
+      return;
+    }
+
+    negociacion.avanzar();
+    setState(() {});
+    _refrescarPopup();
+    if (_camaraEncendida) _abrirVentana();
   }
 
   // --------------- CIERRE ---------------

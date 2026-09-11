@@ -28,10 +28,15 @@ enum Respuesta {
 /// Los nombres son los que produce el modulo Kotlin (EmotionDetector.kt); se
 /// aceptan tambien los ingleses por si el clasificador cambia de etiquetas.
 class ClasificadorRespuesta {
-  const ClasificadorRespuesta({this.minimoVotos = 3});
+  const ClasificadorRespuesta({this.minimoVotos = 2});
 
-  /// Cuantas lecturas hacen falta para decidir. Con menos, se considera que
-  /// no hubo senal suficiente.
+  /// Cuantas lecturas hacen falta para decidir. Con menos, se considera que no
+  /// hubo senal suficiente.
+  ///
+  /// Son 2 y no 3 porque cada lectura ya viene filtrada: el modulo nativo solo
+  /// emite tras 26 frames consecutivos de la misma emocion (~1,3 s), asi que
+  /// una lectura aqui no es un fotograma suelto sino un segundo largo de cara
+  /// sostenida. Exigir 3 dejaba ventanas enteras sin decidir.
   final int minimoVotos;
 
   static const _favorables = {'feliz', 'sorpresa', 'happy', 'surprise'};
