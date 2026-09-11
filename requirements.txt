@@ -34,6 +34,9 @@
 #                          supabase/migrations/0001_esquema.sql
 #                          supabase/migrations/0002_funciones.sql
 #                          supabase/migrations/0003_semilla.sql
+#                          supabase/migrations/0004_autenticacion.sql
+#                          supabase/migrations/0005_almacenamiento.sql
+#                          supabase/migrations/0006_catalogo_ampliado.sql
 #
 # ── Opcion B: PostgreSQL propio (autohospedado, sin cuentas) ──────────────
 # Podman 5.x o 6.x       https://podman.io      (o Docker 24+, equivalente)
@@ -90,15 +93,15 @@ org.tensorflow:tensorflow-lite                 2.16.1
 #   # backend: opcion A (panel de Supabase) u opcion B (contenedor local)
 #   cp env.example.json env.json          # y rellenar con tus credenciales
 #
-#   flutter test                          # 37 pruebas Dart, sin celular ni red
+#   flutter test                          # 46 pruebas Dart, sin celular ni red
 #   flutter run --dart-define-from-file=env.json          # requiere celular
 #   flutter build apk --release --dart-define-from-file=env.json
 
 # ══ 6. PRUEBAS ════════════════════════════════════════════════════════════
-# flutter test                         37 casos - clasificacion de la
-#                                      respuesta, escalera de ofertas y limite
-#                                      diario, contra una implementacion en
-#                                      memoria (sin red)
+# flutter test                         46 casos - clasificacion de la
+#                                      respuesta, escalera de ofertas, limite
+#                                      diario e identidad, contra una
+#                                      implementacion en memoria (sin red)
 # bash supabase/tests/ejecutar.sh       3 suites SQL - ciclo de venta, catalogo
 #                                      y ofertas, y los permisos.
 #                                      Necesita el contenedor levantado, o

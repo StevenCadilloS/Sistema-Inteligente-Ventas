@@ -1,9 +1,9 @@
 name: Probar el backend (SQL)
 
-# El esquema, la venta atomica, el cierre diario, los KPIs y los permisos ya no
+# El esquema, la venta atomica, el limite diario de ofertas y los permisos no
 # viven en Dart, asi que `flutter test` no los alcanza. Este workflow levanta un
-# PostgreSQL de verdad, aplica las tres migraciones y corre las pruebas de
-# supabase/tests/.
+# PostgreSQL de verdad, aplica todas las migraciones en orden y corre las
+# pruebas de supabase/tests/.
 #
 # No usa Supabase ni credenciales: el esquema es PostgreSQL puro, y esa es
 # justamente la propiedad que se quiere mantener.

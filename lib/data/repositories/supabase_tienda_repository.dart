@@ -25,6 +25,14 @@ class SupabaseTiendaRepository implements TiendaRepository {
   RealtimeChannel? _canal;
   StreamController<List<Producto>>? _controlador;
 
+  /// Agrupa la rafaga de eventos que produce una edicion en el panel. Ver
+  /// [_programarRelectura].
+  Timer? _reintento;
+
+  /// Evita que dos relecturas solapadas pinten resultados en desorden.
+  bool _leyendo = false;
+  bool _relecturaPendiente = false;
+
   // --------------- LECTURAS ---------------
 
   @override
@@ -54,23 +62,25 @@ class SupabaseTiendaRepository implements TiendaRepository {
               event: PostgresChangeEvent.all,
               schema: 'public',
               table: 'productos',
-              callback: (_) => _emitirCatalogo(controlador),
+              callback: (_) => _programarRelectura(controlador),
             )
             .onPostgresChanges(
               event: PostgresChangeEvent.all,
               schema: 'public',
               table: 'ofertas',
-              callback: (_) => _emitirCatalogo(controlador),
+              callback: (_) => _programarRelectura(controlador),
             )
             .onPostgresChanges(
               event: PostgresChangeEvent.all,
               schema: 'public',
               table: 'ofertas_productos',
-              callback: (_) => _emitirCatalogo(controlador),
+              callback: (_) => _programarRelectura(controlador),
             )
             .subscribe();
       },
       onCancel: () async {
+        _reintento?.cancel();
+        _reintento = null;
         final canal = _canal;
         _canal = null;
         if (canal != null) await _cliente.removeChannel(canal);
@@ -80,16 +90,53 @@ class SupabaseTiendaRepository implements TiendaRepository {
     return controlador.stream;
   }
 
+  /// Agrupa los eventos de Realtime en una sola relectura.
+  ///
+  /// Una edicion en el panel casi nunca es un evento: publicar una oferta toca
+  /// `ofertas` y `ofertas_productos`, y reponer varios productos dispara uno
+  /// por fila. Sin agrupar, cada uno lanzaba su propio viaje de red para
+  /// releer el catalogo entero — con 10 productos editados, 10 consultas para
+  /// pintar el mismo resultado.
+  ///
+  /// 300 ms es suficiente para juntar una rafaga y lo bastante corto para que
+  /// el cambio siga pareciendo instantaneo.
+  void _programarRelectura(StreamController<List<Producto>> destino) {
+    _reintento?.cancel();
+    _reintento = Timer(
+      const Duration(milliseconds: 300),
+      () => _emitirCatalogo(destino),
+    );
+  }
+
   /// El evento de Realtime dice que cambio una fila, pero lo que la tienda
   /// necesita es el catalogo ya compuesto, y eso vive en una vista. Postgres
   /// solo replica cambios de tablas fisicas, asi que el evento se usa como
   /// senal para releer, no como dato.
+  ///
+  /// Dos relecturas no se solapan: si llega un evento mientras una esta en
+  /// vuelo, se marca una pendiente y se lanza al terminar. Sin esto, dos
+  /// consultas simultaneas podian resolverse en orden inverso y dejar el feed
+  /// mostrando datos mas viejos que los que ya habia pintado.
   Future<void> _emitirCatalogo(StreamController<List<Producto>> destino) async {
     if (destino.isClosed) return;
+
+    if (_leyendo) {
+      _relecturaPendiente = true;
+      return;
+    }
+    _leyendo = true;
+
     try {
-      destino.add(await catalogo());
+      final productos = await catalogo();
+      if (!destino.isClosed) destino.add(productos);
     } catch (e, s) {
       if (!destino.isClosed) destino.addError(e, s);
+    } finally {
+      _leyendo = false;
+      if (_relecturaPendiente) {
+        _relecturaPendiente = false;
+        unawaited(_emitirCatalogo(destino));
+      }
     }
   }
 
@@ -195,6 +242,8 @@ class SupabaseTiendaRepository implements TiendaRepository {
   /// Cierra el canal de Realtime. La app lo llama al salir de la tienda; sin
   /// esto queda un websocket abierto consumiendo bateria en segundo plano.
   Future<void> cerrar() async {
+    _reintento?.cancel();
+    _reintento = null;
     final canal = _canal;
     _canal = null;
     if (canal != null) await _cliente.removeChannel(canal);
