@@ -80,7 +80,7 @@ frente a una pantalla suele clasificarse así.
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | ✅ 6 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | ✅ 7 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
 | Motor de negociación (escalera de ofertas) | ✅ 46 pruebas Dart |
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
@@ -194,7 +194,7 @@ Android); las dos últimas en **Dart**.
 │   └── assets/emotion_model.tflite               modelo FER-2013
 │
 ├── supabase/
-│   ├── migrations/                               0001 a 0006
+│   ├── migrations/                               0001 a 0007
 │   ├── tests/                                    3 suites SQL + ejecutar.sh
 │   └── README.md                                 guía del backend y administración
 │
@@ -227,7 +227,7 @@ cd Sistema-Inteligente-Ventas
 # 2. Dependencias de Flutter
 flutter pub get
 
-# 3. Backend: crear el proyecto en Supabase y aplicar las 6 migraciones
+# 3. Backend: crear el proyecto en Supabase y aplicar las 7 migraciones
 #    de supabase/migrations/ en orden (ver supabase/README.md)
 
 # 4. Credenciales: copiar env.example.json a env.json y poner ahí la URL y

@@ -26,13 +26,15 @@ imagen.
 ## 1. Puesta en marcha (proyecto en la nube)
 
 1. Crear un proyecto en <https://supabase.com> (el plan gratuito alcanza de
-   sobra: el catalogo son 6 filas).
+   sobra: el catalogo son 20 filas).
 2. Abrir **SQL Editor** y ejecutar, en orden, el contenido de:
    - `migrations/0001_esquema.sql`
    - `migrations/0002_funciones.sql`
    - `migrations/0003_semilla.sql`
    - `migrations/0004_autenticacion.sql`
    - `migrations/0005_almacenamiento.sql`
+   - `migrations/0006_catalogo_ampliado.sql`
+   - `migrations/0007_indices.sql`
 3. En **Settings → API**, copiar la *Project URL* y la *publishable key*
    (en proyectos antiguos se llama *anon key*).
 4. En la raiz del repositorio, copiar `env.example.json` a `env.json` y pegar
@@ -262,7 +264,9 @@ supabase/
 │   ├── 0002_funciones.sql    vistas, escrituras validadas y Realtime
 │   ├── 0003_semilla.sql      catalogo de demostracion
 │   ├── 0004_autenticacion.sql   identidad del cliente y RLS personal
-│   └── 0005_almacenamiento.sql  bucket de imagenes y sus politicas
+│   ├── 0005_almacenamiento.sql  bucket de imagenes y sus politicas
+│   ├── 0006_catalogo_ampliado.sql  20 productos en 7 categorias
+│   └── 0007_indices.sql         indices de las consultas mas frecuentes
 ├── tests/                    pruebas SQL + ejecutar.sh
 ├── docker-compose.yml        PostgreSQL local
 └── README.md
