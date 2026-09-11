@@ -1,110 +1,185 @@
 -- ============================================================================
--- Permisos del rol anonimo.
+-- Lo que la clave publica NO puede hacer.
 --
--- Es la prueba que justifica toda la arquitectura de escritura por funciones.
--- La clave anonima viaja dentro del APK: cualquiera que descomprima el
--- paquete la tiene y puede hablar con la base directamente, sin pasar por la
--- app. Lo que aqui se comprueba es que con esa clave en la mano no se pueda
--- cambiar un precio, crear un producto ni falsificar una venta.
+-- Esa clave viaja dentro del APK y cualquiera la extrae descomprimiendolo.
+-- Que la app no pueda escribir tablas no es una precaucion decorativa: si
+-- pudiera hacer INSERT, tambien podria hacer UPDATE de precios. Esta prueba
+-- falla si la tienda queda abierta.
 --
--- Si alguna de estas pruebas empieza a fallar, la tienda quedo abierta.
+-- `set local role anon` hace que el resto de la transaccion corra con los
+-- permisos de la app, no con los del dueno de la base.
 -- ============================================================================
 
 begin;
 
+-- Datos que la prueba necesita, creados antes de bajar de rol.
+do $$
+begin
+  perform fn_registrar_cliente('Victima', 'Prueba');
+end
+$$;
+
 set local role anon;
 
-do $prueba$
-declare
-  v_cliente text;
+-- --------------- LEER EL CATALOGO: PERMITIDO ---------------
+
+do $$
 begin
-  -- --- lo que si puede: leer ---
-  perform test_igual((select count(*) from productos)::text, '16',
-    'anon puede leer el catalogo');
-  perform test_igual((select count(*) from v_catalogo)::text, '16',
-    'anon puede leer la vista del catalogo');
-  perform test_cierto((select count(*) from v_estrategia_desempeno) = 4,
-    'anon puede leer el desempeno de estrategias (lo necesita el UCB1)');
-  perform test_cierto(es_admin() is false,
-    'anon no es administrador');
+  perform test_cierto(
+    (select count(*) from v_catalogo) > 0,
+    'la app puede leer el catalogo'
+  );
+  perform test_cierto(
+    (select count(*) from productos) > 0,
+    'la app puede leer los productos'
+  );
+  perform test_cierto(
+    (select count(*) from ofertas) > 0,
+    'la app puede leer las ofertas'
+  );
+end
+$$;
 
-  -- --- lo que no puede: escribir el catalogo ---
-  perform test_falla(
-    $x$ update productos set precio_unitario_centavos = 1
-         where cod_lote_producto = 'P0000001' $x$,
-    null,
-    'anon NO puede cambiar precios');
+-- --------------- TOCAR PRECIOS: PROHIBIDO ---------------
 
-  perform test_falla(
-    $x$ update productos set total_disponible = 9999
-         where cod_lote_producto = 'P0000001' $x$,
-    null,
-    'anon NO puede inflar el stock');
+select test_falla(
+  $q$ update productos set precio_centavos = 1 $q$,
+  null,
+  'la app NO puede cambiar precios'
+);
 
-  perform test_falla(
-    $x$ insert into productos (nombre_producto, precio_unitario_centavos)
-        values ('Producto pirata', 1) $x$,
-    null,
-    'anon NO puede crear productos');
+select test_falla(
+  $q$ update productos set stock = 9999 $q$,
+  null,
+  'la app NO puede inventar stock'
+);
 
-  perform test_falla(
-    $x$ delete from productos where cod_lote_producto = 'P0000001' $x$,
-    null,
-    'anon NO puede borrar productos');
+select test_falla(
+  $q$ insert into productos (id_categoria, id_marca, nombre, precio_centavos)
+      values (1, 1, 'Producto pirata', 1) $q$,
+  null,
+  'la app NO puede crear productos'
+);
 
-  perform test_falla(
-    $x$ insert into ofertas (cod_lote_producto, nombre_oferta, descuento_porcentaje)
-        values ('P0000005', 'Descuento propio', 90) $x$,
-    null,
-    'anon NO puede publicar ofertas');
+select test_falla(
+  $q$ delete from productos $q$,
+  null,
+  'la app NO puede borrar el catalogo'
+);
 
-  -- --- lo que no puede: escribir bitacoras a mano ---
-  -- Escribir ventas directamente permitiria inventar cierres y envenenar el
-  -- aprendizaje UCB1, que se alimenta justo de esa tabla.
-  perform test_falla(
-    $x$ insert into ventas (canal, correlativo, id_proceso_persuasion, cod_cliente,
-                            tipo_transaccion)
-        values ('A', 999, 'PP99999999', 'C0000001', 'TRX0001') $x$,
-    null,
-    'anon NO puede inventar ventas');
+-- --------------- PUBLICAR OFERTAS: PROHIBIDO ---------------
+--
+-- Si pudiera, se publicaria un 90% a si misma y saltaria el limite diario.
 
-  perform test_falla(
-    $x$ insert into interacciones (canal, correlativo, id_proceso_persuasion,
-                                   cod_cliente, tipo_transaccion, nivel_de_interes)
-        values ('A', 999, 'PP99999999', 'C0000001', 'TRX0001', 100) $x$,
-    null,
-    'anon NO puede escribir interacciones directamente');
+select test_falla(
+  $q$ insert into ofertas (id_admin, nombre, id_tipo, porcentaje_descuento, fecha_inicio)
+      values (1, 'Oferta pirata', 1, 90, now()) $q$,
+  null,
+  'la app NO puede publicar ofertas'
+);
 
-  perform test_falla(
-    $x$ update clientes set monto_total_centavos = 0 $x$,
-    null,
-    'anon NO puede reescribir los totales de los clientes');
+select test_falla(
+  $q$ update ofertas set porcentaje_descuento = 90 $q$,
+  null,
+  'la app NO puede subir el descuento de una oferta existente'
+);
 
-  perform test_falla(
-    $x$ insert into administradores (id) values (gen_random_uuid()) $x$,
-    null,
-    'anon NO puede darse de alta como administrador');
+select test_falla(
+  $q$ update ofertas_productos set orden = 1 $q$,
+  null,
+  'la app NO puede reordenar la escalera de ofertas'
+);
 
-  -- Los secuenciadores no se exponen: llamarlos sueltos solo serviria para
-  -- quemar correlativos y abrir huecos en la bitacora.
-  perform test_falla(
-    $x$ select fn_siguiente_correlativo('ventas', 'A') $x$,
-    null,
-    'anon NO puede consumir correlativos a mano');
+-- --------------- VENTAS Y DATOS PERSONALES ---------------
+--
+-- `venta` y `clientes` no son de lectura publica: contienen el historial de
+-- compra y los datos de contacto de otras personas.
 
-  -- --- lo que si puede, pero solo por la puerta correcta ---
-  v_cliente := fn_registrar_cliente('Cliente', 'Anonimo', null);
-  perform test_cierto(v_cliente like 'C%',
-    'anon SI puede registrarse mediante la funcion');
+select test_falla(
+  $q$ select count(*) from venta $q$,
+  null,
+  'la app NO puede leer las ventas de todos'
+);
+
+select test_falla(
+  $q$ select count(*) from clientes $q$,
+  null,
+  'la app NO puede listar a los clientes'
+);
+
+select test_falla(
+  $q$ select count(*) from detalle_venta $q$,
+  null,
+  'la app NO puede leer el detalle de las ventas'
+);
+
+select test_falla(
+  $q$ insert into venta (id_cliente, subtotal_centavos, descuento_centavos, total_centavos)
+      values (1, 100, 0, 100) $q$,
+  null,
+  'la app NO puede grabar una venta directamente'
+);
+
+select test_falla(
+  $q$ update venta set total_centavos = 0 $q$,
+  null,
+  'la app NO puede alterar el total de una venta'
+);
+
+-- --------------- LO QUE SI PUEDE: LAS FUNCIONES ---------------
+--
+-- Las tres escrituras legitimas pasan por funciones que validan las reglas
+-- antes de escribir.
+
+do $$
+declare
+  v_cliente bigint;
+  v_hp      bigint;
+  v_venta   bigint;
+begin
+  v_cliente := fn_registrar_cliente('Cliente', 'Legitimo');
+  perform test_cierto(v_cliente is not null,
+    'la app SI puede registrar un cliente por la funcion');
+
+  select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
+  v_venta := fn_registrar_venta(v_cliente, v_hp, 1, null);
+  perform test_cierto(v_venta is not null,
+    'la app SI puede registrar una venta por la funcion');
+
+  -- Y puede leer su propio historial, no el de los demas.
+  perform test_igual(
+    (select count(*)::text from fn_historial(v_cliente, 50)),
+    '1',
+    'la app SI puede leer el historial del cliente en curso'
+  );
+end
+$$;
+
+-- --------------- EL PRECIO LO PONE EL SERVIDOR ---------------
+--
+-- fn_registrar_venta no acepta un total de la app: lo recalcula desde el
+-- catalogo. Si aceptara, la app podria pagar 1 centavo por una laptop.
+-- La firma de la funcion no tiene ningun parametro de precio, y esta prueba
+-- lo deja por escrito: si alguien se lo agrega, falla aqui.
+
+do $$
+declare
+  v_params text;
+begin
+  select pg_get_function_arguments(p.oid) into v_params
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'fn_registrar_venta';
 
   perform test_cierto(
-    fn_registrar_interaccion(v_cliente, 'neutral', 'P0000001', 'E0000001', 50) like 'PP%',
-    'anon SI puede registrar una interaccion mediante la funcion');
-
-  perform test_ok('permisos del rol anonimo');
-end;
-$prueba$;
+    v_params not ilike '%total%' and v_params not ilike '%precio%',
+    'fn_registrar_venta no recibe ningun precio de la app: lo calcula el servidor'
+  );
+end
+$$;
 
 reset role;
+
+select test_ok('04_seguridad');
 
 rollback;

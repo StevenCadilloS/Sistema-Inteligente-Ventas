@@ -10,9 +10,8 @@
 #     PGURL=postgresql://usuario:clave@host:5432/basedatos bash supabase/tests/ejecutar.sh
 #
 # Cada archivo de prueba corre dentro de una transaccion que termina en
-# ROLLBACK, asi que no deja datos. Las secuencias si avanzan (Postgres no las
-# revierte), y por eso la base se recrea al principio: 01_ciclo_venta.sql
-# comprueba que el primer cliente reciba C0000001.
+# ROLLBACK, asi que no deja datos. Ninguna prueba afirma sobre un id concreto,
+# porque las secuencias no vuelven atras con el ROLLBACK.
 
 set -euo pipefail
 
@@ -41,9 +40,8 @@ done
 echo "== Pruebas =="
 correr "$raiz/supabase/tests/00_ayudas.sql"
 
-# Cada archivo se ejecuta UNA sola vez: las secuencias de Postgres no vuelven
-# atras con el ROLLBACK, y 01_ciclo_venta.sql afirma sobre el primer codigo
-# que entregan. Correrlo dos veces en la misma pasada lo haria fallar solo.
+# El orden importa: 02_catalogo_y_ofertas.sql cuenta con la escalera de
+# ofertas completa tal como la deja la semilla.
 fallos=0
 for archivo in "$raiz"/supabase/tests/[0-9][0-9]_*.sql; do
   nombre="$(basename "$archivo")"

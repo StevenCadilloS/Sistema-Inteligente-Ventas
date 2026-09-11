@@ -1,147 +1,181 @@
 -- ============================================================================
--- 0002 - Funciones, vistas y Realtime
+-- 0002 - Vistas y funciones del Sistema Inteligente de Ventas
 --
--- Aqui vive todo lo que la app NO puede hacer con un simple INSERT desde el
--- telefono. Dos razones, y ninguna es de estilo:
+-- Todas las escrituras de la app viven aqui, como funciones SECURITY DEFINER.
+-- La app tiene permiso de EXECUTE sobre estas funciones y de SELECT sobre el
+-- catalogo; nada mas. Una funcion puede exigir que el total cuadre, que haya
+-- stock y que el cliente siga dentro de su limite diario. Un INSERT suelto
+-- desde el telefono no puede exigir nada.
 --
---   a) Atomicidad real entre dispositivos. En la version local, "insertar la
---      venta y descontar el stock" iba en una transaccion de SQLite, y con un
---      unico escritor eso bastaba. Con varios celulares comprando el mismo
---      producto, la transaccion tiene que vivir donde estan los datos, o dos
---      compras simultaneas venden la ultima unidad dos veces.
---
---   b) Permisos. La clave anonima esta dentro del APK. Si la app pudiera
---      hacer INSERT directo, tambien podria hacer UPDATE de precios. Las
---      funciones SECURITY DEFINER son la unica puerta de escritura, y validan
---      antes de abrir.
+-- `set search_path = public` en cada funcion no es ceremonia: sin eso, quien
+-- pueda crear un esquema en el search_path del llamador puede colocar una
+-- tabla `productos` propia y hacer que la funcion, que corre como su dueno,
+-- lea la suya.
 -- ============================================================================
 
--- --------------- SECUENCIADORES ---------------
+-- --------------- VISTA: OFERTAS VIGENTES ---------------
+--
+-- Una oferta cuenta si esta activa y hoy cae dentro de su vigencia. Se aisla
+-- en una vista porque la condicion aparece en varios sitios y repetirla es
+-- como se termina con dos definiciones de "vigente" que no coinciden.
 
--- Devuelve el siguiente correlativo de una bitacora y canal, bloqueando esa
--- fila. Dos llamadas concurrentes se serializan: la segunda espera y recibe
--- el numero siguiente, nunca el mismo.
-create or replace function fn_siguiente_correlativo(p_bitacora text, p_canal text)
+create or replace view v_ofertas_vigentes as
+select o.id_oferta,
+       o.nombre,
+       o.id_tipo,
+       t.nombre as tipo,
+       o.porcentaje_descuento,
+       o.precio_oferta_centavos
+  from ofertas o
+  join tipos_oferta t on t.id_tipo = o.id_tipo
+ where o.activa
+   and o.fecha_inicio <= now()
+   and (o.fecha_fin is null or o.fecha_fin > now());
+
+-- --------------- VISTA: CATALOGO ---------------
+--
+-- Lo que ve la tienda. Incluye `tiene_ofertas` para que la app sepa de
+-- antemano si vale la pena encender la camara: un producto sin secuencia de
+-- ofertas no tiene a donde avanzar, y el README es explicito en que entonces
+-- se mantiene el precio normal (regla 8).
+
+create or replace view v_catalogo as
+select p.id_producto,
+       p.nombre,
+       p.descripcion,
+       p.precio_centavos,
+       p.stock,
+       p.imagen,
+       p.activo,
+       c.id_categoria,
+       c.nombre as categoria,
+       m.id_marca,
+       m.nombre as marca,
+       exists (
+         select 1
+           from ofertas_productos op
+           join v_ofertas_vigentes ov on ov.id_oferta = op.id_oferta
+          where op.id_producto = p.id_producto
+       ) as tiene_ofertas
+  from productos p
+  join categorias c on c.id_categoria = p.id_categoria
+  join marcas     m on m.id_marca     = p.id_marca;
+
+-- --------------- VISTA: SECUENCIA DE OFERTAS ---------------
+--
+-- La secuencia de un producto, ya ordenada y con el precio de cada escalon
+-- calculado. El calculo esta aqui y no en Dart para que el precio que se
+-- muestra y el que se cobra salgan de la misma formula.
+--
+-- Division entera: el redondeo favorece al cliente por un centavo como mucho.
+
+create or replace view v_secuencia_ofertas as
+select op.id_producto,
+       op.orden,
+       op.cantidad,
+       ov.id_oferta,
+       ov.nombre as nombre_oferta,
+       ov.tipo,
+       ov.porcentaje_descuento,
+       case
+         when ov.porcentaje_descuento is not null
+           then p.precio_centavos - (p.precio_centavos * ov.porcentaje_descuento) / 100
+         else ov.precio_oferta_centavos
+       end as precio_final_centavos
+  from ofertas_productos op
+  join v_ofertas_vigentes ov on ov.id_oferta = op.id_oferta
+  join productos p on p.id_producto = op.id_producto
+ where p.activo and p.stock > 0;
+-- Sin ORDER BY: una vista no garantiza el orden de sus filas cuando otra
+-- consulta la envuelve. Quien necesite la secuencia ordenada lo pide
+-- explicitamente, como hace fn_ofertas_de.
+
+grant select on v_ofertas_vigentes, v_catalogo, v_secuencia_ofertas
+  to anon, authenticated;
+
+-- ============================================================================
+-- REGLA DE NEGOCIO: LIMITE DIARIO DE OFERTAS
+--
+-- "Un cliente puede utilizar ofertas unicamente durante sus dos primeras
+-- compras del dia" (README, regla 7). Se cuenta el numero de ventas del
+-- cliente hoy, no las que llevaron oferta: la tercera compra del dia no puede
+-- usar oferta aunque las dos primeras hayan sido a precio normal.
+--
+-- "Hoy" es el dia del huso horario del negocio, no UTC. Con UTC, una compra a
+-- las 8 de la noche en Lima ya cuenta como del dia siguiente y el cliente
+-- estrenaria su limite a mitad de la tarde.
+-- ============================================================================
+
+create or replace function fn_zona_negocio()
+returns text
+language sql
+immutable
+as $$ select 'America/Lima' $$;
+
+create or replace function fn_compras_del_dia(p_id_cliente bigint)
 returns integer
 language sql
+stable
 security definer
 set search_path = public
-as $fn$
-  insert into correlativos (bitacora, canal, ultimo)
-  values (p_bitacora, p_canal, 1)
-  on conflict (bitacora, canal)
-    do update set ultimo = correlativos.ultimo + 1
-  returning ultimo;
-$fn$;
+as $$
+  select count(*)::integer
+    from venta
+   where id_cliente = p_id_cliente
+     and (fecha_hora at time zone fn_zona_negocio())::date
+       = (now()      at time zone fn_zona_negocio())::date
+$$;
 
--- C1: la clave que une el intento (interaccion) con el cierre (venta).
--- Aqui si se usa una secuencia nativa: un hueco en la numeracion de procesos
--- no rompe ninguna auditoria (no es un correlativo contable), y a cambio no
--- serializa a todos los clientes contra una misma fila.
-create or replace function fn_siguiente_proceso()
-returns text
+comment on function fn_compras_del_dia is
+  'Compras que el cliente lleva hoy. A la tercera ya no puede usar ofertas.';
+
+create or replace function fn_puede_usar_oferta(p_id_cliente bigint)
+returns boolean
 language sql
+stable
 security definer
 set search_path = public
-as $fn$
-  select 'PP' || lpad(nextval('seq_proceso_persuasion')::text, 8, '0');
-$fn$;
+as $$ select fn_compras_del_dia(p_id_cliente) < 2 $$;
 
--- --------------- ESCRITURAS DE LA APP ---------------
+-- --------------- OFERTAS DISPONIBLES PARA UN CLIENTE ---------------
+--
+-- Junta las dos condiciones: que el producto tenga secuencia vigente y que el
+-- cliente siga dentro de su limite. Devuelve vacio si no puede usar ofertas,
+-- que es exactamente lo que la app necesita saber para no encender la camara.
 
--- Registro de cliente. Sustituye a ClienteRepository._siguienteCodCliente,
--- que leia el maximo codigo local: con una base compartida, dos registros
--- simultaneos leian el mismo maximo y el segundo chocaba contra la PK.
+create or replace function fn_ofertas_de(
+  p_id_producto bigint,
+  p_id_cliente  bigint
+)
+returns table (
+  orden                 integer,
+  id_oferta             bigint,
+  nombre_oferta         varchar,
+  tipo                  varchar,
+  porcentaje_descuento  integer,
+  precio_final_centavos integer
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.orden, s.id_oferta, s.nombre_oferta, s.tipo,
+         s.porcentaje_descuento, s.precio_final_centavos
+    from v_secuencia_ofertas s
+   where s.id_producto = p_id_producto
+     and fn_puede_usar_oferta(p_id_cliente)
+   order by s.orden
+$$;
+
+-- --------------- REGISTRAR CLIENTE ---------------
+
 create or replace function fn_registrar_cliente(
-  p_nombre       text,
-  p_apellido     text,
-  p_tipo_cliente text default null
-)
-returns text
-language plpgsql
-security definer
-set search_path = public
-as $fn$
-declare
-  v_cod_cliente text;
-begin
-  if coalesce(trim(p_nombre), '') = '' or coalesce(trim(p_apellido), '') = '' then
-    raise exception 'Nombre y apellido son obligatorios' using hint = 'datos_invalidos';
-  end if;
-
-  insert into clientes (nombre, apellido, tipo_cliente)
-  values (trim(p_nombre), trim(p_apellido), p_tipo_cliente)
-  returning cod_cliente into v_cod_cliente;
-
-  return v_cod_cliente;
-end;
-$fn$;
-
--- Registro del intento de persuasion. Devuelve el id_proceso_persuasion, que
--- es lo que la app necesita para poder cerrar la venta despues.
---
--- Recibe el NOMBRE de la emocion, no el codigo: el modulo Kotlin
--- (EmotionProcessor.kt) solo produce nombres y no conoce el catalogo. Una
--- emocion no catalogada (por ejemplo "no_face") entra igual, con cod_gesto
--- nulo: se pierde el dato del gesto, no la interaccion.
-create or replace function fn_registrar_interaccion(
-  p_cod_cliente       text,
-  p_emocion           text,
-  p_cod_lote_producto text,
-  p_cod_estrategia    text default null,
-  p_nivel_de_interes  integer default 0,
-  p_canal             text default 'A'
-)
-returns text
-language plpgsql
-security definer
-set search_path = public
-as $fn$
-declare
-  v_proceso   text;
-  v_cod_gesto text;
-begin
-  select cod_gesto into v_cod_gesto from gestos where nombre_gesto = p_emocion;
-
-  v_proceso := fn_siguiente_proceso();
-
-  insert into interacciones (
-    canal, correlativo, id_proceso_persuasion, cod_cliente,
-    cod_estrategia, cod_gesto, cod_lote_producto, tipo_transaccion,
-    nivel_de_interes
-  ) values (
-    p_canal,
-    fn_siguiente_correlativo('interacciones', p_canal),
-    v_proceso,
-    p_cod_cliente,
-    p_cod_estrategia,
-    v_cod_gesto,
-    p_cod_lote_producto,
-    'TRX0001',
-    greatest(0, least(100, coalesce(p_nivel_de_interes, 0)))
-  );
-
-  -- Sin esto, las reglas "neutral" (lo mas mostrado) y "sorpresa" (lo menos
-  -- mostrado) nunca cambiarian de resultado: nada mas escribe esta columna.
-  -- Incremento relativo en SQL, no leer-sumar-escribir desde la app.
-  if p_cod_lote_producto is not null then
-    update productos
-       set total_veces_mostrado = total_veces_mostrado + 1
-     where cod_lote_producto = p_cod_lote_producto;
-  end if;
-
-  return v_proceso;
-end;
-$fn$;
-
--- Cierre de la venta: cabecera, detalle y descuento de stock en una sola
--- transaccion del servidor.
---
--- Rechazar no llama a nada: la AUSENCIA de venta con ese
--- id_proceso_persuasion es el rechazo, y asi lo mide el KPI 2.
-create or replace function fn_registrar_venta(
-  p_id_proceso_persuasion text,
-  p_precio_final_centavos integer default null
+  p_nombre   text,
+  p_paterno  text default null,
+  p_materno  text default null,
+  p_telefono text default null,
+  p_correo   text default null
 )
 returns bigint
 language plpgsql
@@ -149,355 +183,209 @@ security definer
 set search_path = public
 as $fn$
 declare
-  v_interaccion interacciones%rowtype;
-  v_producto    productos%rowtype;
-  v_venta_id    bigint;
-  v_precio      integer;
+  v_id bigint;
 begin
-  -- Un proceso puede tener mas de una interaccion (varios productos mostrados
-  -- en la misma sesion). La ultima es la que cierra.
-  select * into v_interaccion
-    from interacciones
-   where id_proceso_persuasion = p_id_proceso_persuasion
-   order by timestamp desc, id desc
-   limit 1;
-
-  if not found then
-    raise exception 'No existe el proceso de persuasion %', p_id_proceso_persuasion
-      using hint = 'proceso_inexistente';
+  if p_nombre is null or btrim(p_nombre) = '' then
+    raise exception 'El nombre del cliente es obligatorio'
+      using hint = 'nombre_vacio';
   end if;
 
-  if v_interaccion.cod_lote_producto is null then
-    raise exception 'La interaccion % no tiene producto asociado', p_id_proceso_persuasion
-      using hint = 'sin_producto';
+  insert into clientes (nombre, paterno, materno, telefono, correo)
+  values (btrim(p_nombre), p_paterno, p_materno, p_telefono, p_correo)
+  returning id_cliente into v_id;
+
+  return v_id;
+end;
+$fn$;
+
+-- --------------- REGISTRAR VENTA ---------------
+--
+-- Una sola funcion para toda la compra: cabecera, lineas y descuento de stock
+-- en la misma transaccion. Si algo falla no queda media venta escrita.
+--
+-- El precio NO se lo cree a la app. Se recalcula aqui desde el catalogo y la
+-- oferta, porque el cliente que manda `total_centavos = 1` tambien podria
+-- mandar lo que quisiera si le hicieramos caso.
+
+create or replace function fn_registrar_venta(
+  p_id_cliente bigint,
+  p_id_producto bigint,
+  p_cantidad integer default 1,
+  p_id_oferta bigint default null
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_producto  productos%rowtype;
+  v_venta_id  bigint;
+  v_subtotal  integer;
+  v_unitario  integer;
+  v_descuento integer := 0;
+  v_orden     integer;
+begin
+  if p_cantidad is null or p_cantidad < 1 then
+    raise exception 'La cantidad debe ser al menos 1'
+      using hint = 'cantidad_invalida';
   end if;
 
-  -- FOR UPDATE: bloquea la fila del producto hasta el final de la funcion. Es
-  -- lo que impide que dos compras simultaneas lean el mismo stock disponible
-  -- y ambas se lo lleven.
+  if not exists (select 1 from clientes where id_cliente = p_id_cliente) then
+    raise exception 'No existe el cliente %', p_id_cliente
+      using hint = 'cliente_inexistente';
+  end if;
+
+  -- FOR UPDATE bloquea la fila hasta el final de la funcion: es lo que impide
+  -- que dos compras simultaneas lean el mismo stock y ambas se lo lleven.
   select * into v_producto
     from productos
-   where cod_lote_producto = v_interaccion.cod_lote_producto
+   where id_producto = p_id_producto
      for update;
 
-  if v_producto.total_disponible <= 0 then
-    raise exception 'Sin stock de %', v_producto.nombre_producto
+  if not found then
+    raise exception 'No existe el producto %', p_id_producto
+      using hint = 'producto_inexistente';
+  end if;
+
+  if not v_producto.activo then
+    raise exception 'El producto % no esta activo', v_producto.nombre
+      using hint = 'producto_inactivo';
+  end if;
+
+  if v_producto.stock < p_cantidad then
+    raise exception 'Sin stock suficiente de %', v_producto.nombre
       using hint = 'sin_stock';
   end if;
 
-  -- El precio que se congela es el que se le mostro al cliente, con descuento
-  -- ya aplicado. Si la app no lo manda, se usa el de lista.
-  v_precio := coalesce(p_precio_final_centavos, v_producto.precio_unitario_centavos);
+  v_subtotal := v_producto.precio_centavos * p_cantidad;
+  v_unitario := v_producto.precio_centavos;
 
-  insert into ventas (
-    canal, correlativo, id_proceso_persuasion, cod_cliente,
-    cod_estrategia, tipo_transaccion
+  if p_id_oferta is not null then
+    -- Que la oferta exista y este vigente no basta: tiene que estar asociada
+    -- a ESTE producto y el cliente tiene que seguir dentro de su limite.
+    select s.orden, s.precio_final_centavos
+      into v_orden, v_unitario
+      from v_secuencia_ofertas s
+     where s.id_producto = p_id_producto
+       and s.id_oferta   = p_id_oferta;
+
+    if not found then
+      raise exception 'La oferta % no esta vigente para el producto %',
+        p_id_oferta, p_id_producto
+        using hint = 'oferta_no_aplicable';
+    end if;
+
+    if not fn_puede_usar_oferta(p_id_cliente) then
+      raise exception 'El cliente % ya uso sus dos ofertas de hoy', p_id_cliente
+        using hint = 'limite_diario';
+    end if;
+
+    v_descuento := v_subtotal - (v_unitario * p_cantidad);
+
+    -- Una oferta que encarece no es una oferta: seria un error de captura en
+    -- el panel (un combo mas caro que la suma). Mejor fallar que cobrarlo.
+    if v_descuento < 0 then
+      raise exception 'La oferta % deja un precio mayor al normal', p_id_oferta
+        using hint = 'oferta_incoherente';
+    end if;
+  end if;
+
+  insert into venta (
+    id_oferta, id_cliente, subtotal_centavos, descuento_centavos, total_centavos
   ) values (
-    v_interaccion.canal,
-    fn_siguiente_correlativo('ventas', v_interaccion.canal),
-    p_id_proceso_persuasion,
-    v_interaccion.cod_cliente,
-    v_interaccion.cod_estrategia,
-    v_interaccion.tipo_transaccion
+    p_id_oferta, p_id_cliente, v_subtotal, v_descuento, v_subtotal - v_descuento
   )
-  returning id into v_venta_id;
+  returning id_venta into v_venta_id;
 
-  insert into detalle_venta (venta_id, cod_lote_producto, cantidad, precio_unitario_centavos)
-  values (v_venta_id, v_producto.cod_lote_producto, 1, v_precio);
+  insert into detalle_venta (id_venta, id_producto, cantidad, precio_total_centavos)
+  values (v_venta_id, p_id_producto, p_cantidad, v_unitario * p_cantidad);
 
   update productos
-     set total_disponible = total_disponible - 1
-   where cod_lote_producto = v_producto.cod_lote_producto;
+     set stock = stock - p_cantidad
+   where id_producto = p_id_producto;
 
   return v_venta_id;
 end;
 $fn$;
 
--- --------------- MODULO BATCH ---------------
+-- --------------- HISTORIAL DEL CLIENTE ---------------
+--
+-- `venta` no es de lectura publica, asi que el historial sale por aqui: la
+-- funcion devuelve solo las compras del cliente que se pide.
 
--- Cierre diario: los 6 procesos derivados. Una funcion plpgsql corre dentro
--- de una sola transaccion, asi que la atomicidad que exigia
--- docs/Consideraciones.docx ("se actualizan todos o ninguno") la da el motor,
--- no una convencion de codigo.
---
--- Es idempotente: recalcula cada contador desde las bitacoras, no acumula.
--- Por eso puede ejecutarse a demanda desde la app durante la presentacion sin
--- riesgo de descuadrar nada.
---
--- Independiente del aprendizaje UCB1, que recalcula exitos/intentos en vivo
--- desde interacciones/ventas y nunca lee ni escribe estas columnas.
-create or replace function fn_cierre_diario()
-returns void
-language plpgsql
+create or replace function fn_historial(
+  p_id_cliente bigint,
+  p_limite integer default 50
+)
+returns table (
+  id_venta       bigint,
+  fecha_hora     timestamptz,
+  producto       varchar,
+  cantidad       integer,
+  nombre_oferta  varchar,
+  total_centavos integer
+)
+language sql
+stable
 security definer
 set search_path = public
-as $fn$
-begin
-  -- D1: agrupa por cod_estrategia, no por cod_cliente como decia el diagrama
-  -- original. COUNT(DISTINCT id_proceso_persuasion), no COUNT(*): un mismo
-  -- proceso puede mostrar la misma estrategia en mas de una interaccion.
-  update estrategias e set total_veces_aplicada = (
-    select count(distinct i.id_proceso_persuasion)
-      from interacciones i where i.cod_estrategia = e.cod_estrategia);
-
-  update estrategias e set ventas_generadas = (
-    select count(distinct v.id_proceso_persuasion)
-      from ventas v where v.cod_estrategia = e.cod_estrategia);
-
-  -- D1: cant_lecturas = procesos de persuasion distintos por cliente.
-  update clientes c set cant_lecturas = (
-    select count(distinct i.id_proceso_persuasion)
-      from interacciones i where i.cod_cliente = c.cod_cliente);
-
-  update clientes c set
-    total_compras = (
-      select count(*) from ventas v where v.cod_cliente = c.cod_cliente),
-    monto_total_centavos = (
-      select coalesce(sum(d.cantidad * d.precio_unitario_centavos), 0)
-        from ventas v join detalle_venta d on d.venta_id = v.id
-       where v.cod_cliente = c.cod_cliente),
-    ultima_visita = (
-      select max(v.timestamp) from ventas v where v.cod_cliente = c.cod_cliente);
-
-  -- D3: cierres_venta se mantiene en productos (mismo COUNT que total_vendidos).
-  update productos p set cierres_venta = (
-    select count(*) from detalle_venta d
-     where d.cod_lote_producto = p.cod_lote_producto);
-
-  update productos p set total_vendidos = (
-    select count(*) from detalle_venta d
-     where d.cod_lote_producto = p.cod_lote_producto);
-end;
-$fn$;
-
--- --------------- VISTAS DE CATALOGO ---------------
-
--- La oferta vigente de cada producto. DISTINCT ON deja una sola fila por
--- producto: si el administrador publica dos ofertas solapadas sobre el mismo
--- articulo, gana la de mayor descuento (al cliente se le respeta la mejor).
-create or replace view v_ofertas_vigentes as
-select distinct on (cod_lote_producto)
-       cod_lote_producto, cod_oferta, nombre_oferta, descuento_porcentaje, vigente_hasta
-  from ofertas
- where activo
-   and vigente_desde <= now()
-   and (vigente_hasta is null or vigente_hasta > now())
- order by cod_lote_producto, descuento_porcentaje desc;
-
--- Lo que la tienda lee. Un solo viaje trae producto, categoria, stock y la
--- oferta publicada por el administrador.
---
--- `descuento_oferta` es el descuento del administrador; el descuento
--- adaptativo (el que decide la emocion) NO vive aqui, se calcula en el
--- dispositivo. La composicion de ambos esta en AdaptationEngine y es "el
--- mayor de los dos, nunca la suma": sumarlos permitiria que una promocion del
--- 40% mas un enojo del 25% terminara regalando el producto.
-create or replace view v_catalogo as
-select p.cod_lote_producto,
-       p.nombre_producto,
-       p.tipo_producto,
-       tp.nombre_tipo_producto,
-       p.precio_unitario_centavos,
-       p.imagen,
-       p.total_disponible,
-       p.total_veces_mostrado,
-       p.total_vendidos,
-       p.cierres_venta,
-       p.fecha_creacion_stock,
-       p.activo,
-       coalesce(o.descuento_porcentaje, 0) as descuento_oferta,
-       o.nombre_oferta,
-       o.cod_oferta,
-       -- Division entera, igual que el operador ~/ de Dart: el precio nunca
-       -- pasa por punto flotante (RNF-05).
-       p.precio_unitario_centavos
-         - (p.precio_unitario_centavos * coalesce(o.descuento_porcentaje, 0)) / 100
-         as precio_vigente_centavos
-  from productos p
-  left join tipos_producto tp on tp.tipo_producto = p.tipo_producto
-  left join v_ofertas_vigentes o on o.cod_lote_producto = p.cod_lote_producto;
-
--- Desempeno por estrategia para el UCB1. Antes eran dos consultas con GROUP
--- BY desde el dispositivo; ahora es una sola vista, un solo viaje de red.
--- COUNT(DISTINCT id_proceso_persuasion) por la misma razon de siempre: contar
--- filas crudas inflaria "intentos" frente a como lo miden el KPI 3 y el batch.
-create or replace view v_estrategia_desempeno as
-select e.cod_estrategia,
-       e.nombre_estrategia,
-       e.activo,
-       coalesce(i.intentos, 0) as intentos,
-       coalesce(v.exitos, 0)   as exitos
-  from estrategias e
-  left join (
-    select cod_estrategia, count(distinct id_proceso_persuasion) as intentos
-      from interacciones where cod_estrategia is not null group by cod_estrategia
-  ) i on i.cod_estrategia = e.cod_estrategia
-  left join (
-    select cod_estrategia, count(distinct id_proceso_persuasion) as exitos
-      from ventas where cod_estrategia is not null group by cod_estrategia
-  ) v on v.cod_estrategia = e.cod_estrategia;
-
--- --------------- VISTAS DE KPI ---------------
---
--- Traduccion de queries.drift. Las funciones de fecha cambian (strftime de
--- SQLite -> to_char/extract de Postgres) porque el timestamp dejo de ser un
--- entero de epoch millis; los numeros que producen son los mismos.
-
--- C10/G8 - reemplaza el grupo repetitivo ventas(1-99) del diseno original.
-create or replace view v_cierres_por_tipo_producto as
-select p.tipo_producto,
-       tp.nombre_tipo_producto,
-       c.cod_cliente,
-       c.nombre || ' ' || c.apellido as cliente,
-       p.cod_lote_producto,
-       p.nombre_producto,
-       d.cantidad,
-       d.precio_unitario_centavos * d.cantidad as importe_centavos,
-       e.cod_estrategia,
-       e.nombre_estrategia,
-       v.timestamp
-  from detalle_venta d
-  join ventas v      on v.id = d.venta_id
-  join productos p   on p.cod_lote_producto = d.cod_lote_producto
-  left join tipos_producto tp on tp.tipo_producto = p.tipo_producto
-  join clientes c    on c.cod_cliente = v.cod_cliente
-  left join estrategias e on e.cod_estrategia = v.cod_estrategia;
-
--- KPI 1 - % de cierre de ventas por mes.
-create or replace view v_kpi1_cierre_por_mes as
-with intentos as (
-  select to_char(timestamp, 'YYYY-MM') as mes,
-         count(distinct id_proceso_persuasion) as n
-    from interacciones group by 1
-), cierres as (
-  select to_char(timestamp, 'YYYY-MM') as mes,
-         count(distinct id_proceso_persuasion) as n
-    from ventas group by 1
-)
-select i.mes,
-       coalesce(c.n, 0) as cierres,
-       i.n as intentos,
-       round(100.0 * coalesce(c.n, 0) / i.n, 2) as porcentaje
-  from intentos i left join cierres c on c.mes = i.mes
- order by i.mes;
-
--- KPI 2 - % de ventas cerradas sin haber mostrado producto alternativo.
--- Esta consulta es la prueba de por que G1 era bloqueante: sin
--- id_proceso_persuasion en ambas tablas no habria por donde enlazar.
-create or replace view v_kpi2_ventas_sin_alternativa as
-with productos_por_proceso as (
-  select id_proceso_persuasion as pid,
-         count(distinct cod_lote_producto) as n_prod
-    from interacciones
-   where cod_lote_producto is not null
-   group by id_proceso_persuasion
-)
-select coalesce(
-         round(100.0 * sum(case when p.n_prod = 1 then 1 else 0 end) / nullif(count(*), 0), 2),
-         0.0) as porcentaje
-  from productos_por_proceso p
- where p.pid in (select distinct id_proceso_persuasion from ventas);
-
--- KPI 3 - % de efectividad de estrategias por tipo de cliente.
-create or replace view v_kpi3_efectividad_por_tipo_cliente as
-select cl.tipo_cliente,
-       e.cod_estrategia,
-       e.nombre_estrategia,
-       count(distinct v.id_proceso_persuasion) as ventas_generadas,
-       count(distinct i.id_proceso_persuasion) as veces_aplicada,
-       round(100.0 * count(distinct v.id_proceso_persuasion)
-             / nullif(count(distinct i.id_proceso_persuasion), 0), 2) as efectividad
-  from interacciones i
-  join clientes cl   on cl.cod_cliente = i.cod_cliente
-  join estrategias e on e.cod_estrategia = i.cod_estrategia
-  left join ventas v on v.id_proceso_persuasion = i.id_proceso_persuasion
-                    and v.cod_estrategia = i.cod_estrategia
- group by cl.tipo_cliente, e.cod_estrategia, e.nombre_estrategia
- order by cl.tipo_cliente, efectividad desc;
-
--- KPI 4 - distribucion de ventas por dia de la semana (decision D2).
--- 0 = domingo ... 6 = sabado, igual que el strftime('%w') original.
-create or replace view v_kpi4_ventas_por_dia_semana as
-select extract(dow from timestamp)::integer as dia_semana,
-       count(*) as ventas,
-       round(100.0 * count(*) / (select count(*) from ventas), 2) as porcentaje
-  from ventas
- group by 1 order by 1;
+as $$
+  select v.id_venta, v.fecha_hora, p.nombre, d.cantidad, o.nombre,
+         v.total_centavos
+    from venta v
+    join detalle_venta d on d.id_venta = v.id_venta
+    join productos p     on p.id_producto = d.id_producto
+    left join ofertas o  on o.id_oferta = v.id_oferta
+   where v.id_cliente = p_id_cliente
+   order by v.fecha_hora desc
+   limit greatest(p_limite, 1)
+$$;
 
 -- --------------- PERMISOS ---------------
-
--- Las vistas heredan el RLS de sus tablas base solo si son security_invoker;
--- se declaran asi para que ninguna vista se convierta en una puerta trasera
--- de lectura por encima de las politicas. Requiere PostgreSQL 15+ (Supabase
--- corre 15 o superior); en versiones anteriores el bloque no hace nada y las
--- vistas quedan como estaban.
-do $do$
-declare v text;
-begin
-  if current_setting('server_version_num')::int >= 150000 then
-    foreach v in array array[
-      'v_ofertas_vigentes','v_catalogo','v_estrategia_desempeno',
-      'v_cierres_por_tipo_producto','v_kpi1_cierre_por_mes',
-      'v_kpi2_ventas_sin_alternativa','v_kpi3_efectividad_por_tipo_cliente',
-      'v_kpi4_ventas_por_dia_semana'
-    ] loop
-      execute format('alter view %I set (security_invoker = true)', v);
-    end loop;
-  end if;
-end
-$do$;
+--
+-- La app ejecuta estas funciones y nada mas. `revoke ... from public` primero
+-- porque PostgreSQL concede EXECUTE a public por defecto, y una funcion
+-- SECURITY DEFINER abierta a todo el mundo es justo lo que se quiere evitar.
 
 do $do$
-declare rol text;
+declare f text;
 begin
-  foreach rol in array array['anon', 'authenticated'] loop
-    if exists (select 1 from pg_roles where rolname = rol) then
-      execute format('grant select on
-        v_ofertas_vigentes, v_catalogo, v_estrategia_desempeno,
-        v_cierres_por_tipo_producto, v_kpi1_cierre_por_mes,
-        v_kpi2_ventas_sin_alternativa, v_kpi3_efectividad_por_tipo_cliente,
-        v_kpi4_ventas_por_dia_semana to %I', rol);
-
-      execute format('grant execute on function
-        fn_registrar_cliente(text, text, text),
-        fn_registrar_interaccion(text, text, text, text, integer, text),
-        fn_registrar_venta(text, integer),
-        fn_cierre_diario() to %I', rol);
-    end if;
+  foreach f in array array[
+    'fn_compras_del_dia(bigint)',
+    'fn_puede_usar_oferta(bigint)',
+    'fn_ofertas_de(bigint,bigint)',
+    'fn_registrar_cliente(text,text,text,text,text)',
+    'fn_registrar_venta(bigint,bigint,integer,bigint)',
+    'fn_historial(bigint,integer)'
+  ]
+  loop
+    execute format('revoke all on function %s from public', f);
+    execute format('grant execute on function %s to anon, authenticated', f);
   end loop;
 end
 $do$;
 
--- Los secuenciadores no se exponen: solo los usan las funciones de arriba,
--- que corren como SECURITY DEFINER. Llamarlos sueltos solo serviria para
--- quemar correlativos.
-revoke execute on function fn_siguiente_correlativo(text, text) from public;
-revoke execute on function fn_siguiente_proceso() from public;
-
 -- --------------- REALTIME ---------------
 --
--- Lo que se publica es exactamente lo que el administrador toca y el usuario
--- tiene que ver sin refrescar: catalogo, stock y ofertas. Las bitacoras NO se
--- publican: cada dispositivo escribe cientos de interacciones y ninguna le
--- interesa a los demas.
---
--- La app se suscribe a estas tablas y, ante cualquier cambio, vuelve a leer
--- v_catalogo. No se suscribe a la vista porque Postgres solo replica cambios
--- de tablas fisicas.
+-- El catalogo cambia cuando el administrador toca productos u ofertas. Se
+-- publican las tablas fisicas: Postgres no replica vistas, asi que la app usa
+-- el evento como senal para releer v_catalogo, no como dato.
+
 do $do$
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
     if not exists (select 1 from pg_publication_tables
-                   where pubname = 'supabase_realtime' and tablename = 'productos') then
+                    where pubname = 'supabase_realtime' and tablename = 'productos') then
       alter publication supabase_realtime add table productos;
     end if;
     if not exists (select 1 from pg_publication_tables
-                   where pubname = 'supabase_realtime' and tablename = 'ofertas') then
+                    where pubname = 'supabase_realtime' and tablename = 'ofertas') then
       alter publication supabase_realtime add table ofertas;
     end if;
     if not exists (select 1 from pg_publication_tables
-                   where pubname = 'supabase_realtime' and tablename = 'tipos_producto') then
-      alter publication supabase_realtime add table tipos_producto;
+                    where pubname = 'supabase_realtime' and tablename = 'ofertas_productos') then
+      alter publication supabase_realtime add table ofertas_productos;
     end if;
   end if;
 end

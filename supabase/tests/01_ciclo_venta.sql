@@ -1,134 +1,199 @@
 -- ============================================================================
--- Ciclo completo: cliente -> interaccion -> venta -> detalle, con las FK
--- activas y el stock descontado.
+-- Ciclo de venta: registro de cliente, compra a precio normal, compra con
+-- oferta, stock y errores esperados.
 --
--- Es la version SQL de lo que probaban app_database_test.dart,
--- cliente_repository_test.dart y bandit_optimizer_test.dart contra drift.
--- Se mudo aqui porque la logica se mudo aqui: la atomicidad de la venta y la
--- asignacion de correlativos ya no ocurren en el dispositivo.
---
--- Espera una base recien migrada (secuencias en 1) y se ejecuta antes que las
--- demas pruebas que consumen esas mismas secuencias.
+-- Todo dentro de una transaccion que termina en ROLLBACK: la prueba no deja
+-- datos. Las secuencias si avanzan, pero ninguna prueba afirma sobre un id
+-- concreto justamente por eso.
 -- ============================================================================
 
 begin;
 
-do $prueba$
+-- --------------- REGISTRO DE CLIENTE ---------------
+
+do $$
 declare
-  v_cliente   text;
-  v_cliente2  text;
-  v_proceso   text;
-  v_proceso2  text;
-  v_fila      record;
+  v_cliente bigint;
 begin
-  -- --- registro de cliente: el codigo lo asigna el servidor ---
-  v_cliente := fn_registrar_cliente('Ada', 'Lovelace', 'T00001');
-  perform test_igual(v_cliente, 'C0000001', 'el primer cliente recibe C0000001');
-
-  v_cliente2 := fn_registrar_cliente('Alan', 'Turing', null);
-  perform test_igual(v_cliente2, 'C0000002', 'el segundo registro continua el secuencial');
-
-  -- C3: tipo_cliente es nullable, el KPI 3 agrupa por el pero no todos lo tienen
+  v_cliente := fn_registrar_cliente('Prueba', 'Apellido', null, '900000000', 'prueba@test.com');
+  perform test_cierto(v_cliente is not null, 'fn_registrar_cliente devuelve un id');
   perform test_igual(
-    (select tipo_cliente from clientes where cod_cliente = v_cliente2)::text,
-    null,
-    'se puede registrar sin tipo de cliente (C3)');
+    (select nombre from clientes where id_cliente = v_cliente),
+    'Prueba',
+    'el cliente queda guardado con su nombre'
+  );
+end
+$$;
 
-  perform test_falla(
-    $x$ select fn_registrar_cliente('  ', 'Sinnombre', null) $x$,
-    'datos_invalidos',
-    'no deja registrar con el nombre en blanco');
+-- Un nombre vacio no es un cliente.
+select test_falla(
+  $q$ select fn_registrar_cliente('   ') $q$,
+  'nombre_vacio',
+  'no se puede registrar un cliente sin nombre'
+);
 
-  -- --- interaccion ---
-  v_proceso := fn_registrar_interaccion(v_cliente, 'triste', 'P0000001', 'E0000001', 88);
-  perform test_igual(v_proceso, 'PP00000001', 'el primer proceso de persuasion es PP00000001');
+-- --------------- COMPRA A PRECIO NORMAL ---------------
 
-  select * into v_fila from interacciones where id_proceso_persuasion = v_proceso;
-  perform test_igual(v_fila.correlativo::text, '1', 'el primer correlativo del canal A es 1');
-  perform test_igual(v_fila.canal, 'A', 'el canal por defecto es A (app movil)');
-  perform test_igual(v_fila.cod_gesto, 'G0000001',
-    'la emocion "triste" se traduce a su codigo de gesto en el servidor');
-  perform test_igual(v_fila.nivel_de_interes::text, '88', 'guarda el nivel de interes');
+do $$
+declare
+  v_cliente  bigint;
+  v_producto bigint;
+  v_venta    bigint;
+  v_stock_antes integer;
+begin
+  v_cliente := fn_registrar_cliente('Sin', 'Oferta');
+  select id_producto, stock into v_producto, v_stock_antes
+    from productos where nombre = 'Laptop HP Pavilion';
 
-  -- El contador de exhibiciones es lo unico que hace que las reglas "neutral"
-  -- (lo mas mostrado) y "sorpresa" (lo menos mostrado) cambien de resultado.
-  perform test_igual(
-    (select total_veces_mostrado from productos where cod_lote_producto = 'P0000001')::text,
-    '43',
-    'registrar la interaccion incrementa total_veces_mostrado (42 -> 43)');
-
-  -- Una emocion fuera del catalogo no debe tumbar el pipeline: entra sin gesto.
-  v_proceso2 := fn_registrar_interaccion(v_cliente, 'no_face', 'P0000002', null, 0);
-  perform test_igual(
-    (select cod_gesto from interacciones where id_proceso_persuasion = v_proceso2)::text,
-    null,
-    'una emocion no catalogada se registra igual, sin gesto');
-  perform test_igual(
-    (select correlativo from interacciones where id_proceso_persuasion = v_proceso2)::text,
-    '2',
-    'el correlativo avanza de a uno');
-
-  -- --- FK activas ---
-  perform test_falla(
-    $x$ select fn_registrar_interaccion('C9999999', 'feliz', 'P0000001', null, 50) $x$,
-    null,
-    'las FK rechazan un cod_cliente que no existe');
-
-  perform test_falla(
-    $x$ select fn_registrar_interaccion('C0000001', 'feliz', 'P9999999', null, 50) $x$,
-    null,
-    'las FK rechazan un producto que no existe');
-
-  -- --- venta ---
-  -- El precio que se congela es el ofrecido (4990 con 10% = 4491), no el de
-  -- lista: la venta debe registrar lo que se pacto.
-  perform fn_registrar_venta(v_proceso, 4491);
-
-  select * into v_fila from ventas where id_proceso_persuasion = v_proceso;
-  perform test_igual(v_fila.cod_cliente, v_cliente, 'la venta hereda el cliente de la interaccion');
-  perform test_igual(v_fila.cod_estrategia, 'E0000001', 'la venta hereda la estrategia');
-  perform test_igual(v_fila.correlativo::text, '1', 'la venta arranca su propio correlativo en 1');
+  v_venta := fn_registrar_venta(v_cliente, v_producto, 1, null);
 
   perform test_igual(
-    (select precio_unitario_centavos from detalle_venta where venta_id = v_fila.id)::text,
-    '4491',
-    'el detalle congela el precio realmente ofrecido, no el de lista');
-
+    (select total_centavos::text from venta where id_venta = v_venta),
+    '280000',
+    'la compra sin oferta cobra el precio de lista'
+  );
   perform test_igual(
-    (select total_disponible from productos where cod_lote_producto = 'P0000001')::text,
-    '29',
-    'la venta descuenta una unidad del stock (30 -> 29)');
-
-  -- --- rechazo ---
-  -- Rechazar no escribe nada: la ausencia de venta con ese proceso ES el
-  -- rechazo, y asi lo mide el KPI 2.
-  perform test_igual(
-    (select count(*) from ventas where id_proceso_persuasion = v_proceso2)::text,
+    (select descuento_centavos::text from venta where id_venta = v_venta),
     '0',
-    'el rechazo no deja fila en ventas');
+    'sin oferta no hay descuento'
+  );
+  perform test_igual(
+    (select stock::text from productos where id_producto = v_producto),
+    (v_stock_antes - 1)::text,
+    'la venta descuenta una unidad del stock'
+  );
+end
+$$;
 
-  -- --- errores esperados ---
-  perform test_falla(
-    $x$ select fn_registrar_venta('PP99999999', null) $x$,
-    'proceso_inexistente',
-    'cerrar un proceso que no existe falla con su pista');
+-- --------------- COMPRA CON OFERTA ---------------
+--
+-- Laptop Lenovo cuesta 250000 y su primer escalon es 10%: 225000.
 
-  update productos set total_disponible = 0 where cod_lote_producto = 'P0000003';
+do $$
+declare
+  v_cliente  bigint;
+  v_producto bigint;
+  v_oferta   bigint;
+  v_venta    bigint;
+begin
+  v_cliente := fn_registrar_cliente('Con', 'Oferta');
+  select id_producto into v_producto from productos where nombre = 'Laptop Lenovo IdeaPad';
+  select id_oferta into v_oferta from ofertas where nombre = 'Descuento 10%';
+
+  v_venta := fn_registrar_venta(v_cliente, v_producto, 1, v_oferta);
+
+  perform test_igual(
+    (select total_centavos::text from venta where id_venta = v_venta),
+    '225000',
+    '250000 con 10% de descuento son 225000'
+  );
+  perform test_igual(
+    (select descuento_centavos::text from venta where id_venta = v_venta),
+    '25000',
+    'el descuento registrado es la diferencia real'
+  );
+  -- El detalle congela lo que se cobro, no el precio de lista de hoy.
+  perform test_igual(
+    (select precio_total_centavos::text from detalle_venta where id_venta = v_venta),
+    '225000',
+    'el detalle guarda el precio con descuento ya aplicado'
+  );
+end
+$$;
+
+-- --------------- EL TOTAL SIEMPRE CUADRA ---------------
+--
+-- La restriccion chk_venta_cuadra existe para que un error de calculo no pase
+-- inadvertido. Se comprueba que este activa.
+
+select test_falla(
+  $q$ insert into venta (id_cliente, subtotal_centavos, descuento_centavos, total_centavos)
+      values ((select min(id_cliente) from clientes), 10000, 1000, 5000) $q$,
+  null,
+  'no se puede grabar una venta cuyo total no cuadra'
+);
+
+-- --------------- ERRORES ESPERADOS ---------------
+
+select test_falla(
+  $q$ select fn_registrar_venta(999999, (select min(id_producto) from productos), 1, null) $q$,
+  'cliente_inexistente',
+  'no se puede vender a un cliente que no existe'
+);
+
+select test_falla(
+  $q$ select fn_registrar_venta((select min(id_cliente) from clientes), 999999, 1, null) $q$,
+  'producto_inexistente',
+  'no se puede vender un producto que no existe'
+);
+
+select test_falla(
+  $q$ select fn_registrar_venta(
+        (select min(id_cliente) from clientes),
+        (select min(id_producto) from productos), 0, null) $q$,
+  'cantidad_invalida',
+  'la cantidad tiene que ser al menos 1'
+);
+
+-- Una oferta que existe pero no esta asociada a ese producto.
+do $$
+declare
+  v_cliente bigint;
+  v_hp      bigint;
+  v_oferta  bigint;
+begin
+  v_cliente := fn_registrar_cliente('Oferta', 'Ajena');
+  select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
+  select id_oferta into v_oferta from ofertas where nombre = 'Descuento 10%';
+
   perform test_falla(
-    format($x$ select fn_registrar_venta(%L, null) $x$,
-           fn_registrar_interaccion(v_cliente, 'feliz', 'P0000003', null, 40)),
+    format('select fn_registrar_venta(%s, %s, 1, %s)', v_cliente, v_hp, v_oferta),
+    'oferta_no_aplicable',
+    'no se puede aplicar una oferta que no es de ese producto'
+  );
+end
+$$;
+
+-- --------------- SIN STOCK ---------------
+
+do $$
+declare
+  v_cliente  bigint;
+  v_producto bigint;
+begin
+  v_cliente := fn_registrar_cliente('Sin', 'Stock');
+  select id_producto into v_producto from productos where nombre = 'Samsung Galaxy A55';
+
+  update productos set stock = 0 where id_producto = v_producto;
+
+  perform test_falla(
+    format('select fn_registrar_venta(%s, %s, 1, null)', v_cliente, v_producto),
     'sin_stock',
-    'vender un producto agotado falla con la pista sin_stock');
+    'no se puede vender un producto agotado'
+  );
+end
+$$;
 
-  -- El CHECK de la tabla es la ultima linea de defensa, por si alguien edita
-  -- el inventario a mano desde el panel.
+-- --------------- PRODUCTO INACTIVO ---------------
+
+do $$
+declare
+  v_cliente  bigint;
+  v_producto bigint;
+begin
+  v_cliente := fn_registrar_cliente('Producto', 'Inactivo');
+  select id_producto into v_producto from productos where nombre = 'Mouse Logitech G203';
+
+  update productos set activo = false where id_producto = v_producto;
+
   perform test_falla(
-    $x$ update productos set total_disponible = -1 where cod_lote_producto = 'P0000004' $x$,
-    null,
-    'la base no acepta stock negativo');
+    format('select fn_registrar_venta(%s, %s, 1, null)', v_cliente, v_producto),
+    'producto_inactivo',
+    'no se puede vender un producto dado de baja'
+  );
+end
+$$;
 
-  perform test_ok('ciclo de venta');
-end;
-$prueba$;
+select test_ok('01_ciclo_venta');
 
 rollback;
