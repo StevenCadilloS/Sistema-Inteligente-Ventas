@@ -17,10 +17,14 @@ class PopupOferta extends StatelessWidget {
 
   final Negociacion negociacion;
   final String mensaje;
-  /// Lecturas estables acumuladas en la ventana de observacion en curso.
+  /// Lecturas estables acumuladas en la ventana de observacion en curso, o
+  /// -1 si no hay camara.
+  ///
   /// Se muestran para que se note que el sistema esta mirando: el detector
   /// tarda ~1,3 s por lectura y sin este contador el popup parece congelado.
   final int lecturas;
+
+  bool get _sinCamara => lecturas < 0;
   final VoidCallback onAceptar;
   final VoidCallback onRechazar;
   final VoidCallback onCerrar;
@@ -76,17 +80,23 @@ class PopupOferta extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              lecturas > 0
-                                  ? Icons.visibility_outlined
-                                  : Icons.hourglass_empty,
+                              _sinCamara
+                                  ? Icons.videocam_off_outlined
+                                  : lecturas > 0
+                                      ? Icons.visibility_outlined
+                                      : Icons.hourglass_empty,
                               size: 16,
-                              color: AppTheme.success,
+                              color: _sinCamara
+                                  ? AppTheme.mutedText
+                                  : AppTheme.success,
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              '$lecturas',
+                              _sinCamara ? 'sin camara' : '$lecturas',
                               style: textTheme.bodyMedium?.copyWith(
-                                color: AppTheme.success,
+                                color: _sinCamara
+                                    ? AppTheme.mutedText
+                                    : AppTheme.success,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),

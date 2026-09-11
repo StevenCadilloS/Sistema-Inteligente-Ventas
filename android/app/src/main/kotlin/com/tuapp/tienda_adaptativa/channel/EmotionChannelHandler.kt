@@ -20,7 +20,7 @@ class EmotionChannelHandler(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        cameraManager.startCamera { frame ->
+        cameraManager.startCamera(onFrameCaptured = { frame ->
             emotionDetector.detectEmotion(
                 frame,
                 onResult = { crudo ->
@@ -55,7 +55,15 @@ class EmotionChannelHandler(
                 },
                 onError = { error -> Log.e(TAG, "error detectando emocion", error) },
             )
-        }
+        },
+        // Sin camara —permiso denegado, o la tiene otra app— se avisa a Dart
+        // por el canal de error en vez de dejar el stream mudo. La tienda
+        // sigue funcionando a precio normal, pero la pantalla puede decirlo
+        // en vez de esperar lecturas que no van a llegar.
+        onUnavailable = { motivo ->
+            Log.w(TAG, "camara no disponible: $motivo")
+            mainHandler.post { events?.error(motivo, "La camara no esta disponible", null) }
+        })
     }
 
     override fun onCancel(arguments: Any?) {

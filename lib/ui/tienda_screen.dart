@@ -203,7 +203,8 @@ class _TiendaScreenState extends State<TiendaScreen> {
   }
 
   void _encenderCamara() {
-    _emociones = widget.emotionChannel.emociones.listen((e) {
+    _emociones = widget.emotionChannel.emociones.listen(
+      (e) {
       if (!mounted) return;
 
       if (e.emotion == 'no_face') {
@@ -216,13 +217,26 @@ class _TiendaScreenState extends State<TiendaScreen> {
         return;
       }
 
-      _lecturas.add(e.emotion);
-      setState(() {
-        _emocionDetectada = e.emotion;
-        _confianza = e.confidence;
-      });
-      _refrescarPopup();
-    });
+        _lecturas.add(e.emotion);
+        setState(() {
+          _emocionDetectada = e.emotion;
+          _confianza = e.confidence;
+        });
+        _refrescarPopup();
+      },
+      // El modulo nativo avisa por aqui si no puede abrir la camara: permiso
+      // denegado, o la tiene otra app. Sin esto la ventana se abria igual y el
+      // cliente esperaba 8 segundos una evaluacion que no iba a llegar nunca.
+      onError: (Object e) {
+        if (!mounted) return;
+        _apagarCamara();
+        _refrescarPopup();
+        _avisar(
+          'Sin camara, la oferta se queda en el precio normal. '
+          'Puedes seguir con el boton.',
+        );
+      },
+    );
   }
 
   /// Abre una ventana de observacion. Al cerrarse se clasifica lo leido y se
@@ -278,8 +292,8 @@ class _TiendaScreenState extends State<TiendaScreen> {
       mensaje: negociacion.mensaje,
       // Lecturas estables acumuladas en la ventana en curso. Sin esto no hay
       // forma de distinguir "observando" de "colgado": el detector tarda ~1,3s
-      // por lectura y no imprime nada.
-      lecturas: _lecturas.length,
+      // por lectura y no imprime nada. -1 significa que no hay camara.
+      lecturas: _camaraEncendida ? _lecturas.length : -1,
       onAceptar: () => _comprar(negociacion),
       onRechazar: () => _rechazar(negociacion),
       onCerrar: _terminarInteraccion,
