@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'data/remote/sesion_service.dart';
 import 'data/remote/supabase_config.dart';
-import 'data/repositories/cliente_repository.dart';
 import 'data/repositories/supabase_tienda_repository.dart';
 import 'data/repositories/tienda_repository.dart';
 import 'services/emotion_channel.dart';
@@ -38,15 +37,13 @@ Future<void> main() async {
   );
 
   final tienda = SupabaseTiendaRepository(Supabase.instance.client);
-  final prefs = await SharedPreferences.getInstance();
-
-  final clienteRepository = ClienteRepository(tienda, prefs);
+  final sesion = SesionService(Supabase.instance.client);
   final emotionChannel = EmotionChannel();
 
   runApp(
     MyApp(
       tienda: tienda,
-      clienteRepository: clienteRepository,
+      sesion: sesion,
       emotionChannel: emotionChannel,
     ),
   );
@@ -56,32 +53,33 @@ class MyApp extends StatelessWidget {
   const MyApp({
     super.key,
     required this.tienda,
-    required this.clienteRepository,
+    required this.sesion,
     required this.emotionChannel,
   });
 
   final TiendaRepository tienda;
-  final ClienteRepository clienteRepository;
+  final SesionService sesion;
   final EmotionChannel emotionChannel;
 
   @override
   Widget build(BuildContext context) {
-    final clienteActivo = clienteRepository.clienteActivo();
+    // El SDK de Supabase restaura la sesion guardada al arrancar, asi que
+    // quien ya entro una vez no vuelve a ver el login.
+    final haySesion = sesion.haySesion;
 
     return MaterialApp(
       title: 'Tienda Adaptativa',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      initialRoute: clienteActivo != null ? '/tienda' : '/',
+      initialRoute: haySesion ? '/tienda' : '/',
       routes: {
-        '/': (context) => LoginScreen(clienteRepository: clienteRepository),
+        '/': (context) => LoginScreen(sesion: sesion, tienda: tienda),
         '/tienda': (context) => TiendaScreen(
-          clienteRepository: clienteRepository,
+          sesion: sesion,
           emotionChannel: emotionChannel,
           tienda: tienda,
         ),
-        '/historial': (context) =>
-            HistorialScreen(tienda: tienda, clienteRepository: clienteRepository),
+        '/historial': (context) => HistorialScreen(tienda: tienda),
       },
     );
   }

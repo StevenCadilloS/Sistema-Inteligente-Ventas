@@ -30,6 +30,7 @@ ofertas del producto 3 para el cliente 7", nunca una imagen.
    - `migrations/0001_esquema.sql`
    - `migrations/0002_funciones.sql`
    - `migrations/0003_semilla.sql`
+   - `migrations/0004_autenticacion.sql`
 3. En **Settings → API**, copiar la *Project URL* y la *publishable key*
    (en proyectos antiguos se llama *anon key*).
 4. En la raiz del repositorio, copiar `env.example.json` a `env.json` y pegar
@@ -144,7 +145,8 @@ para aplicaciones que se autentiquen con un usuario normal.
 
 | Rol | Puede |
 |---|---|
-| `anon` (la app, con la clave que va dentro del APK) | **Solo leer** catalogo y ofertas. Escribe unicamente llamando a `fn_registrar_cliente` y `fn_registrar_venta` |
+| `anon` (la app sin sesion) | **Solo leer** el catalogo y las ofertas. Nada mas: no puede comprar, ni ver ofertas personalizadas, ni leer ningun historial |
+| `authenticated` (cliente con cuenta) | Ademas, comprar, pedir su escalera de ofertas y leer **sus** compras |
 | `authenticated` + fila en `administradores` | Ademas, crear y editar productos, ofertas y categorias |
 | `service_role` (panel de Supabase) | Todo |
 
@@ -153,8 +155,22 @@ pudiera hacer `INSERT`, tambien podria hacer `UPDATE` de precios, y la clave
 esta al alcance de cualquiera que abra el APK. `supabase/tests/04_seguridad.sql`
 comprueba justo eso, y falla si la tienda queda abierta.
 
-Ni siquiera el precio se lo cree el servidor a la app: `fn_registrar_venta` no
-recibe ningun total, lo **recalcula** desde el catalogo y la oferta.
+Ni el precio ni la identidad se los cree el servidor a la app:
+`fn_registrar_venta` no recibe ningun total — lo **recalcula** desde el
+catalogo — y tampoco recibe el id del cliente: lo saca del token. Mientras lo
+recibia como parametro, cualquiera con la clave publica podia registrar
+compras a nombre de otra persona.
+
+### Las contrasenas
+
+No estan en nuestras tablas. `clientes` guarda `uid`, que apunta a
+`auth.users`; el hash (bcrypt), el salt, el refresco de tokens y la
+recuperacion por correo los maneja Supabase Auth en un esquema al que la app
+no tiene acceso. Escribir uno mismo el hashing de contrasenas es facil de hacer
+mal, y delegarlo elimina esa categoria entera de errores.
+
+El correo tampoco lo manda el formulario: `fn_registrar_cliente` lo lee de
+`auth.users`, que es el que Supabase ya verifico.
 
 ---
 
@@ -165,9 +181,13 @@ Se cuentan las compras, no las que llevaron oferta: a la tercera ya no hay
 oferta aunque las dos primeras fueran a precio normal.
 
 ```sql
-select fn_compras_del_dia(7);    -- cuantas lleva hoy
-select fn_puede_usar_oferta(7);  -- le queda derecho a oferta?
+select fn_compras_del_dia();    -- cuantas lleva hoy quien llama
+select fn_puede_usar_oferta();  -- le queda derecho a oferta?
 ```
+
+Ninguna de las dos recibe a quien consultar: sale del token. Es lo que hace
+que el limite signifique algo — antes de que los clientes tuvieran cuenta,
+bastaba con reinstalar la app para volver a cero.
 
 "Hoy" es el dia en `America/Lima`, no en UTC: con UTC, una compra a las 8 de
 la noche ya contaria como del dia siguiente y el cliente estrenaria su limite
@@ -182,8 +202,8 @@ a mitad de la tarde. Si el negocio opera en otro huso, se cambia en
 select * from v_catalogo order by precio_centavos;      -- lo que ve la tienda
 select * from v_ofertas_vigentes;                        -- ofertas activas hoy
 select * from v_secuencia_ofertas where id_producto = 1; -- la escalera de un producto
-select * from fn_ofertas_de(1, 7);                       -- escalera para un cliente
-select * from fn_historial(7, 20);                       -- ultimas compras
+select * from fn_ofertas_de(1);                          -- escalera para quien llama
+select * from fn_historial(20);                          -- sus ultimas compras
 ```
 
 ---
@@ -201,7 +221,7 @@ datos.
 |---|---|
 | `01_ciclo_venta.sql` | Registro de cliente, compra con y sin oferta, precio congelado, stock, errores esperados |
 | `02_catalogo_y_ofertas.sql` | Orden de la escalera, vigencia, el limite de dos ofertas por dia, coherencia de las ofertas |
-| `04_seguridad.sql` | Que la clave publica no pueda tocar precios, stock, ofertas ni ventas |
+| `04_seguridad.sql` | Que la clave publica no pueda tocar precios, stock, ofertas ni ventas, y que un cliente no vea lo de otro |
 
 ---
 
@@ -212,7 +232,8 @@ supabase/
 ├── migrations/
 │   ├── 0001_esquema.sql      tablas, RLS y permisos
 │   ├── 0002_funciones.sql    vistas, escrituras validadas y Realtime
-│   └── 0003_semilla.sql      catalogo de demostracion
+│   ├── 0003_semilla.sql      catalogo de demostracion
+│   └── 0004_autenticacion.sql  identidad del cliente y RLS personal
 ├── tests/                    pruebas SQL + ejecutar.sh
 ├── docker-compose.yml        PostgreSQL local
 └── README.md

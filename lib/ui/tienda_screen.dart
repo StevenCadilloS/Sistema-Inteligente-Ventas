@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/modelos/modelos.dart';
-import '../data/repositories/cliente_repository.dart';
+import '../data/remote/sesion_service.dart';
 import '../data/repositories/tienda_repository.dart';
 import '../decision/negociacion.dart';
 import '../services/emotion_channel.dart';
@@ -30,14 +30,14 @@ import 'widgets/titulo_feed.dart';
 class TiendaScreen extends StatefulWidget {
   const TiendaScreen({
     super.key,
-    required this.clienteRepository,
+    required this.sesion,
     required this.emotionChannel,
     required this.tienda,
     this.clasificador = const ClasificadorRespuesta(),
     this.ventanaObservacion = const Duration(seconds: 4),
   });
 
-  final ClienteRepository clienteRepository;
+  final SesionService sesion;
   final EmotionChannel emotionChannel;
   final TiendaRepository tienda;
 
@@ -90,8 +90,6 @@ class _TiendaScreenState extends State<TiendaScreen> {
     super.dispose();
   }
 
-  int? get _idCliente => widget.clienteRepository.clienteActivo();
-
   bool get _negociando => _negociacion != null;
 
   // --------------- CATALOGO ---------------
@@ -128,8 +126,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
   /// ofertas configuradas, ninguna vigente, o el cliente sin cupo — no hay
   /// nada que negociar y se ofrece a precio normal sin encender nada.
   Future<void> _seleccionarProducto(Producto producto) async {
-    final idCliente = _idCliente;
-    if (idCliente == null || _negociando) return;
+    if (_negociando) return;
 
     if (_yaComprado(producto)) {
       _avisar('Ya compraste ${producto.nombre} en esta sesion.');
@@ -138,10 +135,11 @@ class _TiendaScreenState extends State<TiendaScreen> {
 
     List<EscalonOferta> escalera;
     try {
-      escalera = await widget.tienda.ofertasDe(
-        idProducto: producto.idProducto,
-        idCliente: idCliente,
-      );
+      escalera = await widget.tienda.ofertasDe(producto.idProducto);
+    } on SinSesionException {
+      if (!mounted) return;
+      _volverAlLogin();
+      return;
     } catch (e) {
       if (!mounted) return;
       _avisar('No se pudieron consultar las ofertas: $e');
@@ -245,9 +243,6 @@ class _TiendaScreenState extends State<TiendaScreen> {
   // --------------- CIERRE ---------------
 
   Future<void> _comprar(Negociacion negociacion) async {
-    final idCliente = _idCliente;
-    if (idCliente == null) return;
-
     final pagado = negociacion.precioActualCentavos;
     final producto = negociacion.producto;
 
@@ -257,7 +252,6 @@ class _TiendaScreenState extends State<TiendaScreen> {
 
     try {
       await widget.tienda.registrarVenta(
-        idCliente: idCliente,
         idProducto: producto.idProducto,
         idOferta: negociacion.idOfertaActual,
       );
@@ -272,6 +266,13 @@ class _TiendaScreenState extends State<TiendaScreen> {
       _avisar(
         'Ya usaste tus dos ofertas de hoy. Puedes comprarlo a precio normal.',
       );
+      return;
+    } on SinSesionException {
+      // La sesion caduco mientras negociaba. Se vuelve al login en vez de
+      // dejarlo pulsando un boton que ya no puede funcionar.
+      if (!mounted) return;
+      _terminarInteraccion();
+      _volverAlLogin();
       return;
     } catch (e) {
       if (!mounted) return;
@@ -325,6 +326,18 @@ class _TiendaScreenState extends State<TiendaScreen> {
     ScaffoldMessenger.of(context)
       ..clearSnackBars()
       ..showSnackBar(SnackBar(content: Text(mensaje)));
+  }
+
+  void _volverAlLogin() {
+    _avisar('Tu sesion expiro. Vuelve a ingresar.');
+    Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
+  }
+
+  Future<void> _cerrarSesion() async {
+    _terminarInteraccion();
+    await widget.sesion.cerrarSesion();
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
   }
 
   void _abrirCarrito() {
@@ -385,8 +398,13 @@ class _TiendaScreenState extends State<TiendaScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.history),
-            tooltip: 'Historial',
+            tooltip: 'Mis compras',
             onPressed: () => Navigator.pushNamed(context, '/historial'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Cerrar sesion',
+            onPressed: _cerrarSesion,
           ),
         ],
       ),

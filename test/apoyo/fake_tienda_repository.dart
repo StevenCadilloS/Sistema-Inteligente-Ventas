@@ -27,6 +27,10 @@ class FakeTiendaRepository implements TiendaRepository {
   final List<VentaFake> ventas = [];
   final Map<int, String> clientes = {};
 
+  /// Quien esta identificado. null = sin sesion, que es como arranca: en el
+  /// servidor esto sale del token, aqui se fija a mano con [iniciarSesion].
+  int? _sesion;
+
   int _siguienteCliente = 1;
   int _siguienteVenta = 1;
 
@@ -38,6 +42,16 @@ class FakeTiendaRepository implements TiendaRepository {
 
   Producto producto(int id) =>
       _productos.firstWhere((p) => p.idProducto == id);
+
+  /// Simula el token: a partir de aqui, el repositorio responde como si
+  /// llamara este cliente. Equivale a fn_simular_sesion en las pruebas SQL.
+  void iniciarSesion(int? idCliente) => _sesion = idCliente;
+
+  int _exigirSesion() {
+    final id = _sesion;
+    if (id == null) throw const SinSesionException();
+    return id;
+  }
 
   // --------------- LECTURAS ---------------
 
@@ -59,21 +73,24 @@ class FakeTiendaRepository implements TiendaRepository {
   }
 
   @override
-  Future<List<EscalonOferta>> ofertasDe({
-    required int idProducto,
-    required int idCliente,
-  }) async {
+  Future<List<EscalonOferta>> ofertasDe(int idProducto) async {
+    _exigirSesion();
     // Igual que fn_ofertas_de: si el cliente gasto su cupo, la escalera viene
     // vacia. La app no tiene que saber por que.
-    if (!await puedeUsarOferta(idCliente)) return const [];
+    if (!await puedeUsarOferta()) return const [];
 
     final escalera = _escaleras[idProducto] ?? const <EscalonOferta>[];
     return [...escalera]..sort((a, b) => a.orden.compareTo(b.orden));
   }
 
   @override
-  Future<bool> puedeUsarOferta(int idCliente) async =>
-      _comprasDeHoy(idCliente) < 2;
+  Future<bool> puedeUsarOferta() async {
+    final id = _sesion;
+    return id != null && _comprasDeHoy(id) < 2;
+  }
+
+  @override
+  Future<int?> clienteActual() async => _sesion;
 
   int _comprasDeHoy(int idCliente) {
     final hoy = ahora();
@@ -89,10 +106,8 @@ class FakeTiendaRepository implements TiendaRepository {
   }
 
   @override
-  Future<List<CompraHistorial>> historial(
-    int idCliente, {
-    int limite = 50,
-  }) async {
+  Future<List<CompraHistorial>> historial({int limite = 50}) async {
+    final idCliente = _exigirSesion();
     return ventas
         .where((v) => v.idCliente == idCliente)
         .take(limite)
@@ -117,20 +132,25 @@ class FakeTiendaRepository implements TiendaRepository {
     String? paterno,
     String? materno,
     String? telefono,
-    String? correo,
   }) async {
+    // Como fn_registrar_cliente: si ya tiene ficha devuelve la suya, no crea
+    // otra. Volver a entrar no multiplica clientes.
+    final actual = _sesion;
+    if (actual != null && clientes.containsKey(actual)) return actual;
+
     final id = _siguienteCliente++;
     clientes[id] = nombre;
+    _sesion = id;
     return id;
   }
 
   @override
   Future<int> registrarVenta({
-    required int idCliente,
     required int idProducto,
     int cantidad = 1,
     int? idOferta,
   }) async {
+    final idCliente = _exigirSesion();
     final indice = _productos.indexWhere((p) => p.idProducto == idProducto);
     if (indice < 0) {
       throw StateError('No existe el producto $idProducto');
@@ -147,7 +167,7 @@ class FakeTiendaRepository implements TiendaRepository {
     if (idOferta != null) {
       // El servidor valida el limite aunque la app ya haya preguntado: entre
       // la pregunta y la compra el cliente pudo comprar desde otro sitio.
-      if (!await puedeUsarOferta(idCliente)) {
+      if (!await puedeUsarOferta()) {
         throw LimiteOfertasException(
           'El cliente $idCliente ya uso sus dos ofertas de hoy',
         );

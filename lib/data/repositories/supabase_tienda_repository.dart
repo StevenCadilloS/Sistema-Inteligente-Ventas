@@ -94,17 +94,14 @@ class SupabaseTiendaRepository implements TiendaRepository {
   }
 
   @override
-  Future<List<EscalonOferta>> ofertasDe({
-    required int idProducto,
-    required int idCliente,
-  }) async {
-    // fn_ofertas_de ya aplica las tres condiciones (producto, vigencia y
-    // limite diario del cliente) en el servidor. La app no las reimplementa:
-    // duplicar una regla es como se termina con dos versiones que no
-    // coinciden.
+  Future<List<EscalonOferta>> ofertasDe(int idProducto) async {
+    // fn_ofertas_de aplica las tres condiciones (producto, vigencia y limite
+    // diario) en el servidor, y saca el cliente del token. La app no las
+    // reimplementa: duplicar una regla es como se termina con dos versiones
+    // que no coinciden.
     final filas = await _cliente.rpc<List<dynamic>>(
       'fn_ofertas_de',
-      params: {'p_id_producto': idProducto, 'p_id_cliente': idCliente},
+      params: {'p_id_producto': idProducto},
     );
     return filas
         .cast<Map<String, dynamic>>()
@@ -113,24 +110,21 @@ class SupabaseTiendaRepository implements TiendaRepository {
   }
 
   @override
-  Future<bool> puedeUsarOferta(int idCliente) async {
-    final resultado = await _cliente.rpc<bool>(
-      'fn_puede_usar_oferta',
-      params: {'p_id_cliente': idCliente},
-    );
-    return resultado;
-  }
+  Future<bool> puedeUsarOferta() async =>
+      await _cliente.rpc<bool>('fn_puede_usar_oferta');
 
   @override
-  Future<List<CompraHistorial>> historial(
-    int idCliente, {
-    int limite = 50,
-  }) async {
-    // `venta` no es de lectura publica: el historial sale por una funcion que
-    // devuelve solo las compras del cliente que se pide.
+  Future<int?> clienteActual() async =>
+      await _cliente.rpc<int?>('fn_cliente_actual');
+
+  @override
+  Future<List<CompraHistorial>> historial({int limite = 50}) async {
+    // `venta` no es de lectura publica, y el historial no recibe a quien
+    // consultar: devuelve las compras de quien trae el token. Asi nadie puede
+    // pedir el historial de otra persona.
     final filas = await _cliente.rpc<List<dynamic>>(
       'fn_historial',
-      params: {'p_id_cliente': idCliente, 'p_limite': limite},
+      params: {'p_limite': limite},
     );
     return filas
         .cast<Map<String, dynamic>>()
@@ -146,33 +140,36 @@ class SupabaseTiendaRepository implements TiendaRepository {
     String? paterno,
     String? materno,
     String? telefono,
-    String? correo,
   }) async {
-    final id = await _cliente.rpc<int>(
-      'fn_registrar_cliente',
-      params: {
-        'p_nombre': nombre,
-        'p_paterno': paterno,
-        'p_materno': materno,
-        'p_telefono': telefono,
-        'p_correo': correo,
-      },
-    );
-    return id;
+    try {
+      // El correo no va: lo toma el servidor del token ya verificado.
+      return await _cliente.rpc<int>(
+        'fn_registrar_cliente',
+        params: {
+          'p_nombre': nombre,
+          'p_paterno': paterno,
+          'p_materno': materno,
+          'p_telefono': telefono,
+        },
+      );
+    } on PostgrestException catch (e) {
+      if (e.hint == 'sin_sesion') throw const SinSesionException();
+      rethrow;
+    }
   }
 
   @override
   Future<int> registrarVenta({
-    required int idCliente,
     required int idProducto,
     int cantidad = 1,
     int? idOferta,
   }) async {
     try {
+      // Ni el cliente ni el precio viajan: el primero sale del token, el
+      // segundo lo recalcula el servidor.
       return await _cliente.rpc<int>(
         'fn_registrar_venta',
         params: {
-          'p_id_cliente': idCliente,
           'p_id_producto': idProducto,
           'p_cantidad': cantidad,
           'p_id_oferta': idOferta,
@@ -187,6 +184,8 @@ class SupabaseTiendaRepository implements TiendaRepository {
           throw SinStockException(e.message);
         case 'limite_diario':
           throw LimiteOfertasException(e.message);
+        case 'sin_sesion':
+          throw const SinSesionException();
         default:
           rethrow;
       }

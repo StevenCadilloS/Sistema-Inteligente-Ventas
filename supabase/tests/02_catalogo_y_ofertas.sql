@@ -18,10 +18,12 @@ declare
   v_ordenes  integer[];
 begin
   select id_producto into v_producto from productos where nombre = 'Laptop Lenovo IdeaPad';
-  v_cliente := fn_registrar_cliente('Escalera', 'Completa');
+  insert into clientes (nombre, paterno) values ('Escalera', 'Completa')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
 
   select array_agg(orden order by orden) into v_ordenes
-    from fn_ofertas_de(v_producto, v_cliente);
+    from fn_ofertas_de(v_producto);
 
   perform test_igual(
     v_ordenes::text, '{1,2,3}',
@@ -44,10 +46,12 @@ declare
   v_precios  integer[];
 begin
   select id_producto into v_producto from productos where nombre = 'Laptop Lenovo IdeaPad';
-  v_cliente := fn_registrar_cliente('Precios', 'Descendentes');
+  insert into clientes (nombre, paterno) values ('Precios', 'Descendentes')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
 
   select array_agg(precio_final_centavos order by orden) into v_precios
-    from fn_ofertas_de(v_producto, v_cliente);
+    from fn_ofertas_de(v_producto);
 
   -- 250000 -> 10% = 225000 -> 20% = 200000 -> 30% = 175000
   perform test_igual(v_precios::text, '{225000,200000,175000}',
@@ -66,10 +70,12 @@ declare
   v_cliente bigint;
 begin
   select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
-  v_cliente := fn_registrar_cliente('Sin', 'Escalera');
+  insert into clientes (nombre, paterno) values ('Sin', 'Escalera')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
 
   perform test_igual(
-    (select count(*)::text from fn_ofertas_de(v_hp, v_cliente)),
+    (select count(*)::text from fn_ofertas_de(v_hp)),
     '0',
     'la Laptop HP no tiene ofertas configuradas'
   );
@@ -94,9 +100,11 @@ declare
   v_antes    integer;
 begin
   select id_producto into v_producto from productos where nombre = 'Samsung Galaxy A55';
-  v_cliente := fn_registrar_cliente('Vigencia', 'Prueba');
+  insert into clientes (nombre, paterno) values ('Vigencia', 'Prueba')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
 
-  select count(*) into v_antes from fn_ofertas_de(v_producto, v_cliente);
+  select count(*) into v_antes from fn_ofertas_de(v_producto);
   perform test_cierto(v_antes > 0, 'el Samsung empieza con ofertas vigentes');
 
   select id_oferta into v_oferta from ofertas where nombre = 'Descuento 20%';
@@ -104,7 +112,7 @@ begin
   -- Una oferta que ya vencio no cuenta, sin que nadie la desactive a mano.
   update ofertas set fecha_fin = now() - interval '1 day' where id_oferta = v_oferta;
   perform test_igual(
-    (select count(*)::text from fn_ofertas_de(v_producto, v_cliente)),
+    (select count(*)::text from fn_ofertas_de(v_producto)),
     (v_antes - 1)::text,
     'una oferta vencida deja de aparecer sola'
   );
@@ -112,7 +120,7 @@ begin
   -- Y una desactivada tampoco.
   update ofertas set fecha_fin = null, activa = false where id_oferta = v_oferta;
   perform test_igual(
-    (select count(*)::text from fn_ofertas_de(v_producto, v_cliente)),
+    (select count(*)::text from fn_ofertas_de(v_producto)),
     (v_antes - 1)::text,
     'una oferta desactivada tampoco aparece'
   );
@@ -121,7 +129,7 @@ begin
   update ofertas set activa = true, fecha_fin = timestamptz '2026-12-31 23:59:59-05'
    where id_oferta = v_oferta;
   perform test_igual(
-    (select count(*)::text from fn_ofertas_de(v_producto, v_cliente)),
+    (select count(*)::text from fn_ofertas_de(v_producto)),
     v_antes::text,
     'al reactivarla vuelve a la escalera'
   );
@@ -141,44 +149,46 @@ declare
   v_hp       bigint;
   v_oferta   bigint;
 begin
-  v_cliente := fn_registrar_cliente('Limite', 'Diario');
+  insert into clientes (nombre, paterno) values ('Limite', 'Diario')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
   select id_producto into v_lenovo from productos where nombre = 'Laptop Lenovo IdeaPad';
   select id_producto into v_hp     from productos where nombre = 'Laptop HP Pavilion';
   select id_oferta   into v_oferta from ofertas   where nombre = 'Descuento 10%';
 
-  perform test_cierto(fn_puede_usar_oferta(v_cliente),
+  perform test_cierto(fn_puede_usar_oferta(),
     'un cliente sin compras hoy puede usar oferta');
 
   -- Primera compra: a precio normal, pero cuenta para el limite.
-  perform fn_registrar_venta(v_cliente, v_hp, 1, null);
-  perform test_cierto(fn_puede_usar_oferta(v_cliente),
+  perform fn_registrar_venta(v_hp, 1, null);
+  perform test_cierto(fn_puede_usar_oferta(),
     'tras una compra todavia puede usar oferta');
 
   -- Segunda compra: con oferta.
-  perform fn_registrar_venta(v_cliente, v_lenovo, 1, v_oferta);
-  perform test_igual(fn_compras_del_dia(v_cliente)::text, '2',
+  perform fn_registrar_venta(v_lenovo, 1, v_oferta);
+  perform test_igual(fn_compras_del_dia()::text, '2',
     'lleva dos compras hoy');
-  perform test_cierto(not fn_puede_usar_oferta(v_cliente),
+  perform test_cierto(not fn_puede_usar_oferta(),
     'a la tercera compra ya no puede usar oferta');
 
   -- La escalera se le vacia: no hay a donde avanzar.
   perform test_igual(
-    (select count(*)::text from fn_ofertas_de(v_lenovo, v_cliente)),
+    (select count(*)::text from fn_ofertas_de(v_lenovo)),
     '0',
     'sin derecho a oferta, la escalera viene vacia'
   );
 
   -- Y el servidor lo rechaza aunque la app lo intente igual.
   perform test_falla(
-    format('select fn_registrar_venta(%s, %s, 1, %s)', v_cliente, v_lenovo, v_oferta),
+    format('select fn_registrar_venta(%s, 1, %s)', v_lenovo, v_oferta),
     'limite_diario',
     'el servidor rechaza la tercera oferta del dia'
   );
 
   -- A precio normal si puede seguir comprando: el limite es de ofertas, no
   -- de compras.
-  perform fn_registrar_venta(v_cliente, v_hp, 1, null);
-  perform test_igual(fn_compras_del_dia(v_cliente)::text, '3',
+  perform fn_registrar_venta(v_hp, 1, null);
+  perform test_igual(fn_compras_del_dia()::text, '3',
     'puede seguir comprando a precio normal');
 end
 $$;
@@ -191,20 +201,22 @@ declare
   v_hp      bigint;
   v_venta   bigint;
 begin
-  v_cliente := fn_registrar_cliente('Compras', 'Ayer');
+  insert into clientes (nombre, paterno) values ('Compras', 'Ayer')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
   select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
 
-  v_venta := fn_registrar_venta(v_cliente, v_hp, 1, null);
-  v_venta := fn_registrar_venta(v_cliente, v_hp, 1, null);
-  perform test_cierto(not fn_puede_usar_oferta(v_cliente), 'hoy ya gasto sus dos');
+  v_venta := fn_registrar_venta(v_hp, 1, null);
+  v_venta := fn_registrar_venta(v_hp, 1, null);
+  perform test_cierto(not fn_puede_usar_oferta(), 'hoy ya gasto sus dos');
 
   -- Se mueven ambas compras a ayer.
   update venta set fecha_hora = fecha_hora - interval '1 day'
    where id_cliente = v_cliente;
 
-  perform test_igual(fn_compras_del_dia(v_cliente)::text, '0',
+  perform test_igual(fn_compras_del_dia()::text, '0',
     'las compras de ayer no cuentan para el limite de hoy');
-  perform test_cierto(fn_puede_usar_oferta(v_cliente),
+  perform test_cierto(fn_puede_usar_oferta(),
     'el limite se renueva cada dia');
 end
 $$;

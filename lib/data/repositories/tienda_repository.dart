@@ -26,23 +26,21 @@ abstract class TiendaRepository {
   /// cambio; el consumidor no necesita saber que cambio.
   Stream<List<Producto>> observarCatalogo();
 
-  /// La escalera de ofertas de [idProducto] para [idCliente], en orden.
+  /// La escalera de ofertas de [idProducto] para el cliente de la sesion, en
+  /// orden.
   ///
   /// Viene vacia por cualquiera de estas razones, y a la app le da igual cual:
   /// el producto no tiene ofertas configuradas, ninguna esta vigente hoy, o el
   /// cliente ya gasto sus dos ofertas del dia. En los tres casos la respuesta
   /// es la misma: se queda en el precio normal.
-  Future<List<EscalonOferta>> ofertasDe({
-    required int idProducto,
-    required int idCliente,
-  });
+  Future<List<EscalonOferta>> ofertasDe(int idProducto);
 
-  /// Si al cliente le queda derecho a usar ofertas hoy. Lo decide el servidor
-  /// contando sus compras del dia, no la app.
+  /// Si al cliente de la sesion le queda derecho a usar ofertas hoy. Lo decide
+  /// el servidor contando sus compras del dia, no la app.
   ///
   /// Sirve para no encender la camara cuando no hay nada que negociar; la
   /// comprobacion de verdad la vuelve a hacer el servidor al vender.
-  Future<bool> puedeUsarOferta(int idCliente);
+  Future<bool> puedeUsarOferta();
 
   /// Registra la compra: cabecera, detalle y descuento de stock, todo en la
   /// misma transaccion del servidor.
@@ -54,23 +52,29 @@ abstract class TiendaRepository {
   /// mientras este decidia, y [LimiteOfertasException] si intenta usar una
   /// oferta habiendo agotado su cupo del dia.
   Future<int> registrarVenta({
-    required int idCliente,
     required int idProducto,
     int cantidad = 1,
     int? idOferta,
   });
 
-  /// Da de alta un cliente y devuelve el id que asigno el servidor.
+  /// Crea la ficha de negocio del usuario ya autenticado y devuelve su id.
+  ///
+  /// El correo no se pasa: lo toma el servidor del token, que es el que
+  /// Supabase ya verifico. Si la ficha ya existe, devuelve la suya — volver a
+  /// entrar no crea un cliente nuevo.
   Future<int> registrarCliente({
     required String nombre,
     String? paterno,
     String? materno,
     String? telefono,
-    String? correo,
   });
 
-  /// Ultimas compras del cliente, con los nombres ya resueltos.
-  Future<List<CompraHistorial>> historial(int idCliente, {int limite = 50});
+  /// Id del cliente de la sesion, o null si no ha iniciado sesion o todavia no
+  /// completo su ficha.
+  Future<int?> clienteActual();
+
+  /// Ultimas compras del cliente de la sesion.
+  Future<List<CompraHistorial>> historial({int limite = 50});
 }
 
 /// El producto se agoto entre que se mostro la oferta y que el cliente la
@@ -89,7 +93,8 @@ class SinStockException implements Exception {
 ///
 /// La app pregunta antes con [TiendaRepository.puedeUsarOferta], asi que
 /// llegar aqui significa que el limite se alcanzo mientras el cliente
-/// decidia — por ejemplo comprando desde otro dispositivo.
+/// decidia — por ejemplo comprando desde otro dispositivo. Con la sesion
+/// atada a una cuenta, eso ya no se esquiva reinstalando la app.
 class LimiteOfertasException implements Exception {
   const LimiteOfertasException(this.mensaje);
   final String mensaje;
@@ -114,4 +119,18 @@ class BackendNoConfiguradoException implements Exception {
   String toString() =>
       'Falta configurar el backend: compila con --dart-define-from-file=env.json '
       '(ver supabase/README.md).';
+}
+
+/// La operacion necesita una sesion iniciada y no la hay.
+///
+/// Casi todo lo que hace la tienda exige identidad: sin ella no se sabe de
+/// quien es el historial ni a quien cargarle el limite de ofertas del dia.
+class SinSesionException implements Exception {
+  const SinSesionException([
+    this.mensaje = 'Hay que iniciar sesion para continuar.',
+  ]);
+  final String mensaje;
+
+  @override
+  String toString() => mensaje;
 }

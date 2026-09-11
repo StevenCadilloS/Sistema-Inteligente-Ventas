@@ -1,10 +1,11 @@
 -- ============================================================================
--- Lo que la clave publica NO puede hacer.
+-- Lo que la clave publica NO puede hacer, y lo que un cliente no puede ver de
+-- otro.
 --
--- Esa clave viaja dentro del APK y cualquiera la extrae descomprimiendolo.
--- Que la app no pueda escribir tablas no es una precaucion decorativa: si
--- pudiera hacer INSERT, tambien podria hacer UPDATE de precios. Esta prueba
--- falla si la tienda queda abierta.
+-- La clave viaja dentro del APK y cualquiera la extrae descomprimiendolo. Que
+-- la app no pueda escribir tablas no es una precaucion decorativa: si pudiera
+-- hacer INSERT, tambien podria hacer UPDATE de precios. Esta prueba falla si
+-- la tienda queda abierta.
 --
 -- `set local role anon` hace que el resto de la transaccion corra con los
 -- permisos de la app, no con los del dueno de la base.
@@ -14,8 +15,17 @@ begin;
 
 -- Datos que la prueba necesita, creados antes de bajar de rol.
 do $$
+declare
+  v_otro bigint;
 begin
-  perform fn_registrar_cliente('Victima', 'Prueba');
+  insert into clientes (nombre, paterno) values ('Victima', 'Prueba')
+    returning id_cliente into v_otro;
+  -- Una compra de otra persona, para comprobar despues que no se ve.
+  perform fn_simular_sesion(v_otro);
+  perform fn_registrar_venta(
+    (select id_producto from productos where nombre = 'Laptop HP Pavilion'),
+    1, null);
+  perform fn_simular_sesion(null);
 end
 $$;
 
@@ -27,15 +37,11 @@ do $$
 begin
   perform test_cierto(
     (select count(*) from v_catalogo) > 0,
-    'la app puede leer el catalogo'
-  );
-  perform test_cierto(
-    (select count(*) from productos) > 0,
-    'la app puede leer los productos'
+    'la app puede leer el catalogo sin iniciar sesion'
   );
   perform test_cierto(
     (select count(*) from ofertas) > 0,
-    'la app puede leer las ofertas'
+    'la app puede leer las ofertas publicadas'
   );
 end
 $$;
@@ -90,27 +96,18 @@ select test_falla(
   'la app NO puede reordenar la escalera de ofertas'
 );
 
--- --------------- VENTAS Y DATOS PERSONALES ---------------
---
--- `venta` y `clientes` no son de lectura publica: contienen el historial de
--- compra y los datos de contacto de otras personas.
+-- --------------- DATOS PERSONALES Y VENTAS ---------------
 
 select test_falla(
   $q$ select count(*) from venta $q$,
   null,
-  'la app NO puede leer las ventas de todos'
+  'sin sesion NO se pueden leer las ventas'
 );
 
 select test_falla(
   $q$ select count(*) from clientes $q$,
   null,
-  'la app NO puede listar a los clientes'
-);
-
-select test_falla(
-  $q$ select count(*) from detalle_venta $q$,
-  null,
-  'la app NO puede leer el detalle de las ventas'
+  'sin sesion NO se puede listar a los clientes'
 );
 
 select test_falla(
@@ -126,41 +123,89 @@ select test_falla(
   'la app NO puede alterar el total de una venta'
 );
 
--- --------------- LO QUE SI PUEDE: LAS FUNCIONES ---------------
+-- --------------- SIN SESION NO SE COMPRA ---------------
 --
--- Las tres escrituras legitimas pasan por funciones que validan las reglas
--- antes de escribir.
+-- `anon` ni siquiera puede ejecutar las funciones: comprar, ver ofertas o
+-- consultar el historial exige estar autenticado.
+
+select test_falla(
+  $q$ select fn_registrar_venta(1, 1, null) $q$,
+  null,
+  'anon NO puede ejecutar fn_registrar_venta'
+);
+
+select test_falla(
+  $q$ select fn_historial(10) $q$,
+  null,
+  'anon NO puede ejecutar fn_historial'
+);
+
+select test_falla(
+  $q$ select fn_ofertas_de(1) $q$,
+  null,
+  'anon NO puede pedir la escalera de ofertas'
+);
+
+-- La sesion simulada es de las pruebas: si la app pudiera llamarla, cualquiera
+-- se haria pasar por cualquier cliente.
+select test_falla(
+  $q$ select fn_simular_sesion(1) $q$,
+  null,
+  'anon NO puede simular la sesion de otro'
+);
+
+reset role;
+
+-- --------------- UN CLIENTE NO VE LO DE OTRO ---------------
+--
+-- Con sesion, cada quien ve lo suyo. Es lo que hace que el historial sea
+-- personal y que el limite diario cuente las compras de una persona concreta.
 
 do $$
 declare
-  v_cliente bigint;
-  v_hp      bigint;
-  v_venta   bigint;
+  v_ana    bigint;
+  v_carlos bigint;
+  v_hp     bigint;
 begin
-  v_cliente := fn_registrar_cliente('Cliente', 'Legitimo');
-  perform test_cierto(v_cliente is not null,
-    'la app SI puede registrar un cliente por la funcion');
-
   select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
-  v_venta := fn_registrar_venta(v_cliente, v_hp, 1, null);
-  perform test_cierto(v_venta is not null,
-    'la app SI puede registrar una venta por la funcion');
 
-  -- Y puede leer su propio historial, no el de los demas.
+  insert into clientes (nombre, paterno) values ('Ana', 'Uno')
+    returning id_cliente into v_ana;
+  insert into clientes (nombre, paterno) values ('Carlos', 'Dos')
+    returning id_cliente into v_carlos;
+
+  -- Ana compra una vez.
+  perform fn_simular_sesion(v_ana);
+  perform fn_registrar_venta(v_hp, 1, null);
   perform test_igual(
-    (select count(*)::text from fn_historial(v_cliente, 50)),
-    '1',
-    'la app SI puede leer el historial del cliente en curso'
+    (select count(*)::text from fn_historial(50)), '1',
+    'Ana ve su compra'
   );
+
+  -- Carlos no ve nada: el historial va por la sesion, no por un parametro.
+  perform fn_simular_sesion(v_carlos);
+  perform test_igual(
+    (select count(*)::text from fn_historial(50)), '0',
+    'Carlos NO ve las compras de Ana'
+  );
+
+  -- Y el limite de Ana no consume el de Carlos.
+  perform test_igual(fn_compras_del_dia()::text, '0',
+    'las compras de Ana no cuentan para el cupo de Carlos');
+  perform test_cierto(fn_puede_usar_oferta(),
+    'Carlos conserva sus dos ofertas del dia');
+
+  perform fn_simular_sesion(null);
 end
 $$;
 
--- --------------- EL PRECIO LO PONE EL SERVIDOR ---------------
+-- --------------- EL PRECIO Y EL CLIENTE LOS PONE EL SERVIDOR ---------------
 --
--- fn_registrar_venta no acepta un total de la app: lo recalcula desde el
--- catalogo. Si aceptara, la app podria pagar 1 centavo por una laptop.
--- La firma de la funcion no tiene ningun parametro de precio, y esta prueba
--- lo deja por escrito: si alguien se lo agrega, falla aqui.
+-- fn_registrar_venta no recibe ni el total ni el id del cliente: el primero lo
+-- recalcula desde el catalogo, el segundo sale del token. Mientras recibiera
+-- el id como parametro, cualquiera con la clave publica podia registrar
+-- compras a nombre de otra persona. Esta prueba lo deja por escrito: si
+-- alguien se lo vuelve a agregar, falla aqui.
 
 do $$
 declare
@@ -173,12 +218,14 @@ begin
 
   perform test_cierto(
     v_params not ilike '%total%' and v_params not ilike '%precio%',
-    'fn_registrar_venta no recibe ningun precio de la app: lo calcula el servidor'
+    'fn_registrar_venta no recibe ningun precio: lo calcula el servidor'
+  );
+  perform test_cierto(
+    v_params not ilike '%cliente%',
+    'fn_registrar_venta no recibe el cliente: sale del token'
   );
 end
 $$;
-
-reset role;
 
 select test_ok('04_seguridad');
 

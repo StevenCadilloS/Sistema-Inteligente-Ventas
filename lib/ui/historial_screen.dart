@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../data/modelos/modelos.dart';
-import '../data/repositories/cliente_repository.dart';
 import '../data/repositories/tienda_repository.dart';
 import '../theme/app_theme.dart';
 
@@ -17,11 +16,9 @@ class HistorialScreen extends StatefulWidget {
   const HistorialScreen({
     super.key,
     required this.tienda,
-    required this.clienteRepository,
   });
 
   final TiendaRepository tienda;
-  final ClienteRepository clienteRepository;
 
   @override
   State<HistorialScreen> createState() => _HistorialScreenState();
@@ -39,17 +36,9 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   Future<void> _cargarHistorial() async {
-    final idCliente = widget.clienteRepository.clienteActivo();
-    if (idCliente == null) {
-      setState(() {
-        _cargando = false;
-        _filas = const [];
-      });
-      return;
-    }
 
     try {
-      final filas = await widget.tienda.historial(idCliente);
+      final filas = await widget.tienda.historial();
       if (mounted) {
         setState(() {
           _filas = filas;
