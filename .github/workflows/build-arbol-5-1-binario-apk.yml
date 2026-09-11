@@ -72,6 +72,13 @@ jobs:
             echo "::warning::La APK se generara, pero sin ambos secretos no podra conectarse al backend."
           fi
 
+      - name: Compilar APK solo para probar el detector
+        run: |
+          flutter build apk --release --dart-define=DETECTOR_TEST_MODE=true
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            dist/Sistema-Inteligente-Ventas-solo-detector.apk
+
       - name: Compilar APK de release
         run: flutter build apk --release --dart-define-from-file=env.json
 
@@ -92,8 +99,10 @@ jobs:
             para instalar, usar y demostrar.
           - `Sistema-Inteligente-Ventas-modelo-binario-debug.apk`: versión de
             diagnóstico para consultar registros con `adb logcat`.
+          - `Sistema-Inteligente-Ventas-solo-detector.apk`: abre directamente
+            la cámara y prueba el detector sin Supabase ni conexión a internet.
 
-          Ambas contienen el mismo detector facial binario. No se deben
+          Las tres contienen el mismo detector facial binario. No se deben
           instalar simultáneamente porque comparten el mismo identificador.
           NOTAS
 
@@ -120,6 +129,7 @@ jobs:
           gh release upload arbol-5-1-modelo-binario-latest \
             dist/Sistema-Inteligente-Ventas-modelo-binario.apk \
             dist/Sistema-Inteligente-Ventas-modelo-binario-debug.apk \
+            dist/Sistema-Inteligente-Ventas-solo-detector.apk \
             --clobber
 
           gh release edit arbol-5-1-modelo-binario-latest \

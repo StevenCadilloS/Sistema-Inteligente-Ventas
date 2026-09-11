@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -38,6 +39,8 @@ class CameraManager(
 ) {
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var previewSurfaceProvider: Preview.SurfaceProvider? = null
+    private var isRunning = false
     private val analyzerExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     // Callback que se ejecuta cuando se obtiene un frame
@@ -70,6 +73,7 @@ class CameraManager(
     // */
     fun startCamera(onFrameCaptured: (ImageProxy) -> Unit) {
         this.onFrameCaptured = onFrameCaptured
+        isRunning = true
 
         if (!hasPermission()) {
             requestPermission()
@@ -83,8 +87,23 @@ class CameraManager(
     // * Detiene la cámara y libera recursos.
     // */
     fun stopCamera() {
+        isRunning = false
         cameraProvider?.unbindAll()
         cameraProvider = null
+    }
+
+    /** Conecta la vista previa que Flutter muestra en el modo de prueba. */
+    fun attachPreview(surfaceProvider: Preview.SurfaceProvider) {
+        previewSurfaceProvider = surfaceProvider
+        if (isRunning && hasPermission()) bindCameraUseCases()
+    }
+
+    /** Desconecta la vista previa sin detener un analisis usado por la tienda. */
+    fun detachPreview(surfaceProvider: Preview.SurfaceProvider) {
+        if (previewSurfaceProvider === surfaceProvider) {
+            previewSurfaceProvider = null
+            if (isRunning && hasPermission()) bindCameraUseCases()
+        }
     }
 
     ///**
@@ -117,14 +136,28 @@ class CameraManager(
         }
 
         val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+        val preview = previewSurfaceProvider?.let { surfaceProvider ->
+            Preview.Builder().build().also {
+                it.setSurfaceProvider(surfaceProvider)
+            }
+        }
 
         try {
             provider.unbindAll()
-            provider.bindToLifecycle(
-                activity as LifecycleOwner,
-                cameraSelector,
-                imageAnalysis
-            )
+            if (preview == null) {
+                provider.bindToLifecycle(
+                    activity as LifecycleOwner,
+                    cameraSelector,
+                    imageAnalysis
+                )
+            } else {
+                provider.bindToLifecycle(
+                    activity as LifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    imageAnalysis
+                )
+            }
         } catch (error: Exception) {
             error.printStackTrace()
         }

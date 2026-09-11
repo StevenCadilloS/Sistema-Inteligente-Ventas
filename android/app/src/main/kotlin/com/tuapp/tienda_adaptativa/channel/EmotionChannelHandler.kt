@@ -8,6 +8,7 @@ import com.tuapp.tienda_adaptativa.context.CameraManager
 import com.tuapp.tienda_adaptativa.context.EmotionDetector
 import com.tuapp.tienda_adaptativa.context.EmotionResult
 import com.tuapp.tienda_adaptativa.processing.EmotionProcessor
+import androidx.camera.core.Preview
 import io.flutter.plugin.common.EventChannel
 
 class EmotionChannelHandler(
@@ -20,10 +21,26 @@ class EmotionChannelHandler(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        val diagnosticMode = (arguments as? Map<*, *>)?.get("diagnostic") == true
+        emotionProcessor.reset()
         cameraManager.startCamera { frame ->
             emotionDetector.detectEmotion(
                 frame,
                 onResult = { crudo ->
+                    if (diagnosticMode) {
+                        mainHandler.post {
+                            events?.success(
+                                mapOf(
+                                    "emotion" to crudo.emotion,
+                                    "confidence" to crudo.confidence,
+                                    "smileProbability" to crudo.smileProbability,
+                                    "status" to crudo.status,
+                                )
+                            )
+                        }
+                        return@detectEmotion
+                    }
+
                     val procesado = emotionProcessor.process(crudo)
                     if (procesado.rostroPerdido) {
                         // Sin este aviso la UI se quedaba con la ultima
@@ -60,6 +77,15 @@ class EmotionChannelHandler(
 
     override fun onCancel(arguments: Any?) {
         cameraManager.stopCamera()
+        emotionProcessor.reset()
+    }
+
+    fun attachPreview(surfaceProvider: Preview.SurfaceProvider) {
+        cameraManager.attachPreview(surfaceProvider)
+    }
+
+    fun detachPreview(surfaceProvider: Preview.SurfaceProvider) {
+        cameraManager.detachPreview(surfaceProvider)
     }
 
     fun dispose() {

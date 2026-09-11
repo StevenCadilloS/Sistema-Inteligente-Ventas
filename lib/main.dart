@@ -9,6 +9,7 @@ import 'data/repositories/tienda_repository.dart';
 import 'services/emotion_channel.dart';
 import 'theme/app_theme.dart';
 import 'ui/configuracion_faltante_screen.dart';
+import 'ui/detector_test_screen.dart';
 import 'ui/historial_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/tienda_screen.dart';
@@ -22,6 +23,14 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+
+  // Variante totalmente local para evaluar el detector sin inicializar ni
+  // requerir Supabase. GitHub Actions la publica como una APK separada.
+  const modoPruebaDetector = bool.fromEnvironment('DETECTOR_TEST_MODE');
+  if (modoPruebaDetector) {
+    runApp(const DetectorTestApp());
+    return;
+  }
 
   // Sin backend no hay catalogo, y sin catalogo no hay nada que adaptar. Se
   // avisa con una pantalla que explica que falta, en vez de arrancar y

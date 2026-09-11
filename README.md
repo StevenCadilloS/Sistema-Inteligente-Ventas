@@ -6,6 +6,8 @@
 
 [Descargar APK del modelo binario](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/arbol-5-1-modelo-binario-latest/Sistema-Inteligente-Ventas-modelo-binario.apk)
 
+[Descargar APK solo para probar el detector](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/arbol-5-1-modelo-binario-latest/Sistema-Inteligente-Ventas-solo-detector.apk)
+
 Cada actualización de esta rama ejecuta las pruebas, compila las versiones
 release y debug, y reemplaza la descarga permanente. La ejecución también se
 puede iniciar manualmente desde
@@ -13,7 +15,23 @@ puede iniciar manualmente desde
 
 > La descarga aparecerá cuando la primera ejecución termine correctamente. Si
 > los secretos `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` no están configurados
-> en GitHub, la APK se compila, pero mostrará la pantalla de backend faltante.
+> en GitHub, la APK normal mostrará la pantalla de backend faltante. Desde esa
+> pantalla se puede pulsar **Probar detector sin backend**. La APK **solo
+> detector** abre la prueba directamente y nunca necesita esos secretos.
+
+### Probar únicamente el detector
+
+Instala `Sistema-Inteligente-Ventas-solo-detector.apk`. Esta variante:
+
+- abre la cámara frontal directamente;
+- muestra favorable, desfavorable, incierto o sin rostro;
+- muestra la probabilidad de sonrisa y la confianza en tiempo real;
+- avisa si el rostro está lejos, girado o fuera del encuadre;
+- funciona sin Supabase y sin conexión a internet;
+- no guarda ni envía imágenes.
+
+La APK de prueba y la APK normal comparten identificador Android, por lo que no
+se instalan simultáneamente: una reemplaza a la otra.
 
 Aplicación Android (Flutter + Kotlin) que clasifica la respuesta facial del
 cliente con la cámara frontal y la usa para avanzar por una secuencia de

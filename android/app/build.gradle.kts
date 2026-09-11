@@ -19,7 +19,7 @@ android {
         applicationId = "com.tuapp.tienda_adaptativa"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 26 // CameraX + ML Kit Face Detection + TensorFlow Lite (ver README)
+        minSdk = 26 // CameraX + ML Kit Face Detection (ver README)
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
@@ -60,6 +60,7 @@ dependencies {
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
 
     implementation("com.google.mlkit:face-detection:16.1.6")
 

@@ -24,8 +24,13 @@ class BinaryResponseClassifier(
         yawDegrees: Float,
         rollDegrees: Float
     ): EmotionResult {
+        val smile = smileProbability?.coerceIn(0f, 1f)
+
         if (faceWidth < minFacePixels || faceHeight < minFacePixels) {
-            return EmotionResult.uncertain()
+            return EmotionResult.uncertain(
+                smileProbability = smile,
+                status = EmotionResult.STATUS_FACE_TOO_SMALL
+            )
         }
 
         if (
@@ -33,22 +38,32 @@ class BinaryResponseClassifier(
             abs(yawDegrees) > MAX_YAW_DEGREES ||
             abs(rollDegrees) > MAX_ROLL_DEGREES
         ) {
-            return EmotionResult.uncertain()
+            return EmotionResult.uncertain(
+                smileProbability = smile,
+                status = EmotionResult.STATUS_BAD_ANGLE
+            )
         }
 
-        val smile = smileProbability?.coerceIn(0f, 1f)
-            ?: return EmotionResult.uncertain()
+        if (smile == null) {
+            return EmotionResult.uncertain(
+                status = EmotionResult.STATUS_NO_SMILE_PROBABILITY
+            )
+        }
         return when {
             smile >= favorableThreshold -> EmotionResult(
                 response = EmotionResult.FAVORABLE,
-                confidence = smile
+                confidence = smile,
+                smileProbability = smile
             )
             smile <= unfavorableThreshold -> EmotionResult(
                 response = EmotionResult.UNFAVORABLE,
-                confidence = 1f - smile
+                confidence = 1f - smile,
+                smileProbability = smile
             )
             else -> EmotionResult.uncertain(
-                confidence = maxOf(smile, 1f - smile)
+                confidence = maxOf(smile, 1f - smile),
+                smileProbability = smile,
+                status = EmotionResult.STATUS_AMBIGUOUS
             )
         }
     }

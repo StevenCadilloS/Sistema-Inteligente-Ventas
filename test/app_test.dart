@@ -17,6 +17,7 @@ void main() {
       find.textContaining('--dart-define-from-file=env.json'),
       findsOneWidget,
     );
+    expect(find.text('Probar detector sin backend'), findsOneWidget);
   });
 
   // El arranque con sesion (MyApp, LoginScreen) necesita un SupabaseClient

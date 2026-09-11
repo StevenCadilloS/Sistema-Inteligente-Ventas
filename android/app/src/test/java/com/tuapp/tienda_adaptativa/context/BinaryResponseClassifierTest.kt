@@ -22,6 +22,8 @@ class BinaryResponseClassifierTest {
 
         assertEquals(EmotionResult.FAVORABLE, result.response)
         assertEquals(0.82f, result.confidence, 0.001f)
+        assertEquals(0.82f, result.smileProbability!!, 0.001f)
+        assertEquals(EmotionResult.STATUS_OK, result.status)
     }
 
     @Test
@@ -34,23 +36,26 @@ class BinaryResponseClassifierTest {
 
     @Test
     fun `zona intermedia no se fuerza a ninguna respuesta`() {
-        assertEquals(EmotionResult.UNCERTAIN, classify(0.50f).response)
+        val result = classify(0.50f)
+
+        assertEquals(EmotionResult.UNCERTAIN, result.response)
+        assertEquals(EmotionResult.STATUS_AMBIGUOUS, result.status)
     }
 
     @Test
     fun `rostro pequeno produce lectura incierta`() {
-        assertEquals(
-            EmotionResult.UNCERTAIN,
-            classify(smile = 0.95f, width = 80, height = 80).response
-        )
+        val result = classify(smile = 0.95f, width = 80, height = 80)
+
+        assertEquals(EmotionResult.UNCERTAIN, result.response)
+        assertEquals(EmotionResult.STATUS_FACE_TOO_SMALL, result.status)
     }
 
     @Test
     fun `rostro girado produce lectura incierta`() {
-        assertEquals(
-            EmotionResult.UNCERTAIN,
-            classify(smile = 0.95f, yaw = 25f).response
-        )
+        val result = classify(smile = 0.95f, yaw = 25f)
+
+        assertEquals(EmotionResult.UNCERTAIN, result.response)
+        assertEquals(EmotionResult.STATUS_BAD_ANGLE, result.status)
     }
 
     @Test
@@ -59,5 +64,6 @@ class BinaryResponseClassifierTest {
 
         assertEquals(EmotionResult.UNCERTAIN, result.response)
         assertTrue(result.confidence == 0f)
+        assertEquals(EmotionResult.STATUS_NO_SMILE_PROBABILITY, result.status)
     }
 }

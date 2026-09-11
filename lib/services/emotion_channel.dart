@@ -2,14 +2,30 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class EmocionDetectada {
-  const EmocionDetectada({required this.emotion, required this.confidence});
+  const EmocionDetectada({
+    required this.emotion,
+    required this.confidence,
+    this.smileProbability,
+    this.status = 'ok',
+  });
+
+  factory EmocionDetectada.fromMap(Map<dynamic, dynamic> mapa) {
+    return EmocionDetectada(
+      emotion: mapa['emotion'] as String,
+      confidence: (mapa['confidence'] as num).toDouble(),
+      smileProbability: (mapa['smileProbability'] as num?)?.toDouble(),
+      status: mapa['status'] as String? ?? 'ok',
+    );
+  }
 
   final String emotion;
   final double confidence;
+  final double? smileProbability;
+  final String status;
 }
 
-/// Puente con el detector de emociones nativo (Kotlin + ML Kit + TensorFlow
-/// Lite). Las imagenes de la camara no salen del dispositivo: lo que cruza
+/// Puente con el detector de respuesta facial nativo (Kotlin + ML Kit).
+/// Las imagenes de la camara no salen del dispositivo: lo que cruza
 /// este canal es el nombre de la emocion y su confianza.
 class EmotionChannel {
   const EmotionChannel();
@@ -30,12 +46,17 @@ class EmotionChannel {
   Stream<EmocionDetectada> get emociones {
     if (!disponible) return const Stream<EmocionDetectada>.empty();
 
-    return _channel.receiveBroadcastStream().map((evento) {
-      final mapa = evento as Map;
-      return EmocionDetectada(
-        emotion: mapa['emotion'] as String,
-        confidence: (mapa['confidence'] as num).toDouble(),
-      );
-    });
+    return _mapear(_channel.receiveBroadcastStream());
   }
+
+  /// Lecturas sin estabilizar para calibrar el detector fotograma a fotograma.
+  Stream<EmocionDetectada> get diagnostico {
+    if (!disponible) return const Stream<EmocionDetectada>.empty();
+    return _mapear(
+      _channel.receiveBroadcastStream(const {'diagnostic': true}),
+    );
+  }
+
+  Stream<EmocionDetectada> _mapear(Stream<dynamic> eventos) =>
+      eventos.map((evento) => EmocionDetectada.fromMap(evento as Map));
 }

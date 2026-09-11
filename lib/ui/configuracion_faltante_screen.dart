@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../services/emotion_channel.dart';
+import 'detector_test_screen.dart';
 
 /// Pantalla unica cuando la app se compilo sin las credenciales del backend.
 ///
@@ -59,6 +61,26 @@ class AppSinBackend extends StatelessWidget {
                       'clave publica del proyecto. Los pasos completos, incluido '
                       'como levantar tu propio servidor, estan en '
                       'supabase/README.md.',
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const DetectorTestScreen(
+                              emotionChannel: EmotionChannel(),
+                            ),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.face_retouching_natural),
+                      label: const Text('Probar detector sin backend'),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Esta prueba solo usa la camara del telefono y funciona '
+                      'sin Supabase ni conexion a internet.',
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),
