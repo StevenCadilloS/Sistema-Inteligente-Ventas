@@ -3,281 +3,197 @@ import 'dart:async';
 import 'package:tienda_adaptativa/data/modelos/modelos.dart';
 import 'package:tienda_adaptativa/data/repositories/tienda_repository.dart';
 
-/// Implementacion en memoria de [TiendaRepository] para las pruebas.
+/// Doble en memoria de [TiendaRepository].
 ///
-/// Antes estas pruebas levantaban una base SQLite en memoria: era posible
-/// porque la base era local. Con el backend compartido, hacerlo equivaldria a
-/// exigir un PostgreSQL corriendo para poder ejecutar `flutter test`, y el
-/// motor de decision no necesita una base para probarse — necesita que
-/// alguien le responda.
+/// Replica lo que hacen las funciones del servidor, incluidas las reglas que
+/// importan: el limite de dos ofertas por dia, el descuento de stock y el
+/// calculo del precio de cada escalon. Si este doble fuera mas permisivo que
+/// el servidor, las pruebas pasarian y la app fallaria contra la base real.
 ///
-/// El reparto de responsabilidades queda asi:
-///
-///   - Lo que prueba este doble: las reglas de adaptacion, la negociacion y
-///     el UCB1, es decir, la logica que vive en Dart.
-///   - Lo que prueban los archivos de supabase/tests/: el esquema, la
-///     atomicidad de la venta, los correlativos, el batch, los KPIs y los
-///     permisos, es decir, la logica que vive en SQL.
-///
-/// Este doble imita las mismas reglas que la base: descuenta stock al vender,
-/// se niega a vender lo agotado y cuenta intentos y exitos por proceso de
-/// persuasion. Si alguna de esas reglas cambia en SQL, tiene que cambiar aqui.
+/// Lo que NO replica es la seguridad: aqui no hay RLS ni permisos. Eso se
+/// prueba en SQL (supabase/tests/04_seguridad.sql), que es donde vive.
 class FakeTiendaRepository implements TiendaRepository {
   FakeTiendaRepository({
     List<Producto> productos = const [],
-    List<Estrategia> estrategias = const [],
-    List<String> clientes = const [],
-  }) : _productos = {for (final p in productos) p.codLoteProducto: p},
-       _estrategias = [...estrategias],
-       _clientes = {...clientes};
+    Map<int, List<EscalonOferta>> escaleras = const {},
+  }) : _productos = [...productos],
+       _escaleras = {...escaleras};
 
-  final Map<String, Producto> _productos;
-  List<Estrategia> _estrategias;
-  final Set<String> _clientes;
+  final List<Producto> _productos;
 
-  /// Todo lo registrado, para poder afirmar sobre ello en las pruebas.
-  final List<InteraccionRegistrada> interacciones = [];
-  final List<VentaRegistrada> ventas = [];
+  /// id de producto -> su escalera de ofertas, en orden.
+  final Map<int, List<EscalonOferta>> _escaleras;
 
-  int _secuenciaProceso = 0;
-  int _secuenciaCliente = 0;
+  final List<VentaFake> ventas = [];
+  final Map<int, String> clientes = {};
+
+  int _siguienteCliente = 1;
+  int _siguienteVenta = 1;
 
   StreamController<List<Producto>>? _controlador;
 
-  List<Producto> get productos => _productos.values.toList();
+  /// Reloj de la prueba. Se puede mover para comprobar que el limite diario
+  /// se renueva: `repo.ahora = () => DateTime(2026, 9, 12);`
+  DateTime Function() ahora = DateTime.now;
 
-  Producto producto(String cod) => _productos[cod]!;
+  Producto producto(int id) =>
+      _productos.firstWhere((p) => p.idProducto == id);
 
   // --------------- LECTURAS ---------------
 
   @override
   Future<List<Producto>> catalogo() async =>
-      _productos.values.where((p) => p.activo).toList();
+      _productos.where((p) => p.disponible).toList();
 
   @override
   Stream<List<Producto>> observarCatalogo() {
-    final controlador = _controlador ??=
-        StreamController<List<Producto>>.broadcast();
-    // La foto inicial se entrega en el siguiente turno del bucle de eventos,
-    // igual que hace la implementacion real al suscribirse.
-    scheduleMicrotask(() async {
-      if (!controlador.isClosed) controlador.add(await catalogo());
-    });
-    return controlador.stream;
-  }
+    final existente = _controlador;
+    if (existente != null && !existente.isClosed) return existente.stream;
 
-  /// Simula lo que hace Realtime cuando el administrador toca algo.
-  Future<void> emitirCambio() async {
-    final controlador = _controlador;
-    if (controlador != null && !controlador.isClosed) {
-      controlador.add(await catalogo());
-    }
-  }
-
-  /// Publica una oferta sobre un producto, como haria el administrador desde
-  /// el panel, y la empuja a quien este escuchando.
-  Future<void> publicarOferta(
-    String codLoteProducto, {
-    required int descuento,
-    String nombre = 'Oferta de prueba',
-  }) async {
-    final actual = _productos[codLoteProducto]!;
-    _productos[codLoteProducto] = Producto(
-      codLoteProducto: actual.codLoteProducto,
-      nombreProducto: actual.nombreProducto,
-      tipoProducto: actual.tipoProducto,
-      nombreTipoProducto: actual.nombreTipoProducto,
-      precioUnitarioCentavos: actual.precioUnitarioCentavos,
-      imagen: actual.imagen,
-      totalDisponible: actual.totalDisponible,
-      totalVecesMostrado: actual.totalVecesMostrado,
-      totalVendidos: actual.totalVendidos,
-      cierresVenta: actual.cierresVenta,
-      activo: actual.activo,
-      descuentoOferta: descuento,
-      nombreOferta: nombre,
-      codOferta: 'OF000001',
+    late final StreamController<List<Producto>> c;
+    c = StreamController<List<Producto>>.broadcast(
+      onListen: () async => c.add(await catalogo()),
     );
-    await emitirCambio();
+    _controlador = c;
+    return c.stream;
   }
 
   @override
-  Future<List<Estrategia>> estrategiasActivas() async {
-    // Mismo calculo que la vista v_estrategia_desempeno: procesos de
-    // persuasion distintos, no filas.
-    return _estrategias.where((e) => e.activo).map((e) {
-      final intentos = interacciones
-          .where((i) => i.codEstrategia == e.codEstrategia)
-          .map((i) => i.idProcesoPersuasion)
-          .toSet();
-      final exitos = ventas
-          .where((v) => intentos.contains(v.idProcesoPersuasion))
-          .map((v) => v.idProcesoPersuasion)
-          .toSet();
-      return Estrategia(
-        codEstrategia: e.codEstrategia,
-        nombreEstrategia: e.nombreEstrategia,
-        activo: e.activo,
-        intentos: intentos.length,
-        exitos: exitos.length,
-      );
-    }).toList();
-  }
+  Future<List<EscalonOferta>> ofertasDe({
+    required int idProducto,
+    required int idCliente,
+  }) async {
+    // Igual que fn_ofertas_de: si el cliente gasto su cupo, la escalera viene
+    // vacia. La app no tiene que saber por que.
+    if (!await puedeUsarOferta(idCliente)) return const [];
 
-  /// Reemplaza las estrategias disponibles (para probar el caso sin ninguna).
-  void definirEstrategias(List<Estrategia> estrategias) {
-    _estrategias = [...estrategias];
+    final escalera = _escaleras[idProducto] ?? const <EscalonOferta>[];
+    return [...escalera]..sort((a, b) => a.orden.compareTo(b.orden));
   }
 
   @override
-  Future<String?> ultimoProductoMostrado(String codCliente) async {
-    final propias = interacciones
-        .where((i) => i.codCliente == codCliente)
-        .toList();
-    return propias.isEmpty ? null : propias.last.codLoteProducto;
+  Future<bool> puedeUsarOferta(int idCliente) async =>
+      _comprasDeHoy(idCliente) < 2;
+
+  int _comprasDeHoy(int idCliente) {
+    final hoy = ahora();
+    return ventas
+        .where(
+          (v) =>
+              v.idCliente == idCliente &&
+              v.fecha.year == hoy.year &&
+              v.fecha.month == hoy.month &&
+              v.fecha.day == hoy.day,
+        )
+        .length;
   }
 
   @override
-  Future<List<InteraccionHistorial>> historial(
-    String codCliente, {
+  Future<List<CompraHistorial>> historial(
+    int idCliente, {
     int limite = 50,
   }) async {
-    return interacciones
-        .where((i) => i.codCliente == codCliente)
-        .toList()
-        .reversed
+    return ventas
+        .where((v) => v.idCliente == idCliente)
         .take(limite)
         .map(
-          (i) => InteraccionHistorial(
-            idProcesoPersuasion: i.idProcesoPersuasion,
-            codCliente: i.codCliente,
-            nivelDeInteres: i.nivelDeInteres,
-            fecha: i.fecha,
-            nombreGesto: i.emocion,
-            nombreProducto: _productos[i.codLoteProducto]?.nombreProducto,
+          (v) => CompraHistorial(
+            idVenta: v.idVenta,
+            fecha: v.fecha,
+            producto: producto(v.idProducto).nombre,
+            cantidad: v.cantidad,
+            totalCentavos: v.totalCentavos,
+            nombreOferta: v.nombreOferta,
           ),
         )
         .toList();
   }
 
-  @override
-  Future<bool> existeCliente(String codCliente) async =>
-      _clientes.contains(codCliente);
-
   // --------------- ESCRITURAS ---------------
 
   @override
-  Future<String> registrarCliente({
+  Future<int> registrarCliente({
     required String nombre,
-    required String apellido,
-    String? tipoCliente,
+    String? paterno,
+    String? materno,
+    String? telefono,
+    String? correo,
   }) async {
-    if (nombre.trim().isEmpty || apellido.trim().isEmpty) {
-      throw StateError('Nombre y apellido son obligatorios');
-    }
-    _secuenciaCliente++;
-    final cod = 'C${_secuenciaCliente.toString().padLeft(7, '0')}';
-    _clientes.add(cod);
-    return cod;
+    final id = _siguienteCliente++;
+    clientes[id] = nombre;
+    return id;
   }
 
   @override
-  Future<String> registrarInteraccion({
-    required String codCliente,
-    required String emocion,
-    required String codLoteProducto,
-    String? codEstrategia,
-    required int nivelDeInteres,
+  Future<int> registrarVenta({
+    required int idCliente,
+    required int idProducto,
+    int cantidad = 1,
+    int? idOferta,
   }) async {
-    _secuenciaProceso++;
-    final proceso = 'PP${_secuenciaProceso.toString().padLeft(8, '0')}';
+    final indice = _productos.indexWhere((p) => p.idProducto == idProducto);
+    if (indice < 0) {
+      throw StateError('No existe el producto $idProducto');
+    }
+    final p = _productos[indice];
 
-    interacciones.add(
-      InteraccionRegistrada(
-        idProcesoPersuasion: proceso,
-        codCliente: codCliente,
-        emocion: emocion,
-        codLoteProducto: codLoteProducto,
-        codEstrategia: codEstrategia,
-        nivelDeInteres: nivelDeInteres,
-        fecha: DateTime.now(),
-      ),
+    if (p.stock < cantidad) {
+      throw SinStockException('Sin stock de ${p.nombre}');
+    }
+
+    var unitario = p.precioCentavos;
+    String? nombreOferta;
+
+    if (idOferta != null) {
+      // El servidor valida el limite aunque la app ya haya preguntado: entre
+      // la pregunta y la compra el cliente pudo comprar desde otro sitio.
+      if (!await puedeUsarOferta(idCliente)) {
+        throw LimiteOfertasException(
+          'El cliente $idCliente ya uso sus dos ofertas de hoy',
+        );
+      }
+      final escalera = _escaleras[idProducto] ?? const <EscalonOferta>[];
+      final escalon = escalera.where((e) => e.idOferta == idOferta);
+      if (escalon.isEmpty) {
+        throw StateError('La oferta $idOferta no aplica al producto $idProducto');
+      }
+      unitario = escalon.first.precioFinalCentavos;
+      nombreOferta = escalon.first.nombreOferta;
+    }
+
+    _productos[indice] = p.copyWith(stock: p.stock - cantidad);
+
+    final venta = VentaFake(
+      idVenta: _siguienteVenta++,
+      idCliente: idCliente,
+      idProducto: idProducto,
+      cantidad: cantidad,
+      totalCentavos: unitario * cantidad,
+      fecha: ahora(),
+      nombreOferta: nombreOferta,
     );
+    ventas.add(venta);
+    return venta.idVenta;
+  }
 
-    // Igual que fn_registrar_interaccion: sin esto, las reglas "neutral" (lo
-    // mas mostrado) y "sorpresa" (lo menos mostrado) nunca cambiarian.
-    final actual = _productos[codLoteProducto];
-    if (actual != null) {
-      _productos[codLoteProducto] = actual.copyWith(
-        totalVecesMostrado: actual.totalVecesMostrado + 1,
+  // --------------- AYUDAS PARA LAS PRUEBAS ---------------
+
+  /// Deja a [idCliente] sin derecho a ofertas, simulando que ya compro dos
+  /// veces hoy.
+  void agotarCupoDe(int idCliente) {
+    for (var i = 0; i < 2; i++) {
+      ventas.add(
+        VentaFake(
+          idVenta: _siguienteVenta++,
+          idCliente: idCliente,
+          idProducto: _productos.first.idProducto,
+          cantidad: 1,
+          totalCentavos: 0,
+          fecha: ahora(),
+        ),
       );
     }
-
-    return proceso;
   }
-
-  /// Registra una interaccion con un proceso de persuasion elegido a mano.
-  ///
-  /// Sirve para armar el caso en que un mismo proceso tiene varias filas con
-  /// la misma estrategia (pasa de verdad: el cliente ve el producto, lo
-  /// rechaza y se le insiste dentro del mismo proceso). Es justo el caso que
-  /// distingue "contar procesos" de "contar filas" en el UCB1.
-  void registrarInteraccionEnProceso({
-    required String idProcesoPersuasion,
-    required String codCliente,
-    required String codLoteProducto,
-    String? codEstrategia,
-    String emocion = 'neutral',
-    int nivelDeInteres = 50,
-  }) {
-    interacciones.add(
-      InteraccionRegistrada(
-        idProcesoPersuasion: idProcesoPersuasion,
-        codCliente: codCliente,
-        emocion: emocion,
-        codLoteProducto: codLoteProducto,
-        codEstrategia: codEstrategia,
-        nivelDeInteres: nivelDeInteres,
-        fecha: DateTime.now(),
-      ),
-    );
-  }
-
-  @override
-  Future<void> registrarVenta({
-    required String idProcesoPersuasion,
-    int? precioFinalCentavos,
-  }) async {
-    final propias = interacciones
-        .where((i) => i.idProcesoPersuasion == idProcesoPersuasion)
-        .toList();
-    if (propias.isEmpty) {
-      throw StateError('No existe el proceso $idProcesoPersuasion');
-    }
-    final interaccion = propias.last;
-
-    final producto = _productos[interaccion.codLoteProducto]!;
-    if (producto.totalDisponible <= 0) {
-      throw SinStockException('Sin stock de ${producto.nombreProducto}');
-    }
-
-    _productos[producto.codLoteProducto] = producto.copyWith(
-      totalDisponible: producto.totalDisponible - 1,
-    );
-
-    ventas.add(
-      VentaRegistrada(
-        idProcesoPersuasion: idProcesoPersuasion,
-        codLoteProducto: producto.codLoteProducto,
-        codEstrategia: interaccion.codEstrategia,
-        precioUnitarioCentavos:
-            precioFinalCentavos ?? producto.precioUnitarioCentavos,
-      ),
-    );
-  }
-
-  @override
-  Future<void> ejecutarCierreDiario() async {}
 
   Future<void> cerrar() async {
     await _controlador?.close();
@@ -285,36 +201,22 @@ class FakeTiendaRepository implements TiendaRepository {
   }
 }
 
-class InteraccionRegistrada {
-  const InteraccionRegistrada({
-    required this.idProcesoPersuasion,
-    required this.codCliente,
-    required this.emocion,
-    required this.codLoteProducto,
-    required this.codEstrategia,
-    required this.nivelDeInteres,
+class VentaFake {
+  VentaFake({
+    required this.idVenta,
+    required this.idCliente,
+    required this.idProducto,
+    required this.cantidad,
+    required this.totalCentavos,
     required this.fecha,
+    this.nombreOferta,
   });
 
-  final String idProcesoPersuasion;
-  final String codCliente;
-  final String emocion;
-  final String codLoteProducto;
-  final String? codEstrategia;
-  final int nivelDeInteres;
+  final int idVenta;
+  final int idCliente;
+  final int idProducto;
+  final int cantidad;
+  final int totalCentavos;
   final DateTime fecha;
-}
-
-class VentaRegistrada {
-  const VentaRegistrada({
-    required this.idProcesoPersuasion,
-    required this.codLoteProducto,
-    required this.codEstrategia,
-    required this.precioUnitarioCentavos,
-  });
-
-  final String idProcesoPersuasion;
-  final String codLoteProducto;
-  final String? codEstrategia;
-  final int precioUnitarioCentavos;
+  final String? nombreOferta;
 }

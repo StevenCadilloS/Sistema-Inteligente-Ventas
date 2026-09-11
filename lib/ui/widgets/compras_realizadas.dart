@@ -74,16 +74,13 @@ class ComprasRealizadas extends StatelessWidget {
                 itemCount: compras.length,
                 itemBuilder: (context, index) {
                   final compra = compras[index];
-                  final pagado =
-                      (compra.pagadoCentavos / 100).toStringAsFixed(2);
-                  final lista =
-                      (compra.producto.precioUnitarioCentavos / 100)
-                          .toStringAsFixed(2);
-                  final huboDescuento = compra.pagadoCentavos <
-                      compra.producto.precioUnitarioCentavos;
+                  final pagado = soles(compra.pagadoCentavos);
+                  final lista = soles(compra.producto.precioCentavos);
+                  final huboDescuento =
+                      compra.pagadoCentavos < compra.producto.precioCentavos;
 
                   return ListTile(
-                    key: ValueKey('${compra.producto.codLoteProducto}_$index'),
+                    key: ValueKey('${compra.producto.idProducto}_\$index'),
                     contentPadding: EdgeInsets.zero,
                     leading: CircleAvatar(
                       backgroundColor: AppTheme.success.withValues(alpha: 0.12),
@@ -92,12 +89,12 @@ class ComprasRealizadas extends StatelessWidget {
                         style: const TextStyle(color: AppTheme.success),
                       ),
                     ),
-                    title: Text(compra.producto.nombreProducto),
+                    title: Text(compra.producto.nombre),
                     subtitle: huboDescuento
-                        ? Text('Precio de lista S/$lista')
+                        ? Text('Precio de lista $lista')
                         : null,
                     trailing: Text(
-                      'S/$pagado',
+                      pagado,
                       style: textTheme.titleMedium?.copyWith(
                         color: AppTheme.success,
                       ),

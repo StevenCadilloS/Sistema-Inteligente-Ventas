@@ -7,11 +7,14 @@ import 'tienda_repository.dart';
 
 /// Implementacion de [TiendaRepository] contra PostgreSQL (Supabase).
 ///
-/// Lecturas por PostgREST sobre las vistas `v_catalogo`, `v_estrategia_desempeno`
-/// e `interacciones`; escrituras exclusivamente por RPC contra las funciones
-/// de supabase/migrations/0002_funciones.sql. La app no tiene permiso de
-/// INSERT ni de UPDATE sobre ninguna tabla: la clave anonima esta dentro del
-/// APK y quien la extraiga no debe poder tocar precios ni stock.
+/// Lecturas por PostgREST sobre la vista `v_catalogo`; escrituras y consultas
+/// de ofertas exclusivamente por RPC contra las funciones de
+/// supabase/migrations/0002_funciones.sql.
+///
+/// La app no tiene permiso de INSERT ni de UPDATE sobre ninguna tabla, y
+/// tampoco de SELECT sobre `clientes`, `venta` ni `detalle_venta`: la clave
+/// publica esta dentro del APK y quien la extraiga no debe poder tocar
+/// precios, stock ni leer las compras de otras personas.
 class SupabaseTiendaRepository implements TiendaRepository {
   SupabaseTiendaRepository(this._cliente);
 
@@ -29,7 +32,8 @@ class SupabaseTiendaRepository implements TiendaRepository {
     final filas = await _cliente
         .from('v_catalogo')
         .select()
-        .eq('activo', true);
+        .eq('activo', true)
+        .gt('stock', 0);
     return filas.map(Producto.desdeFila).toList();
   }
 
@@ -58,6 +62,12 @@ class SupabaseTiendaRepository implements TiendaRepository {
               table: 'ofertas',
               callback: (_) => _emitirCatalogo(controlador),
             )
+            .onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'ofertas_productos',
+              callback: (_) => _emitirCatalogo(controlador),
+            )
             .subscribe();
       },
       onCancel: () async {
@@ -70,9 +80,8 @@ class SupabaseTiendaRepository implements TiendaRepository {
     return controlador.stream;
   }
 
-  /// El evento de Realtime dice que cambio una fila de `productos` u `ofertas`,
-  /// pero lo que la tienda necesita es el catalogo ya compuesto (producto +
-  /// oferta vigente + precio resultante), y eso vive en una vista. Postgres
+  /// El evento de Realtime dice que cambio una fila, pero lo que la tienda
+  /// necesita es el catalogo ya compuesto, y eso vive en una vista. Postgres
   /// solo replica cambios de tablas fisicas, asi que el evento se usa como
   /// senal para releer, no como dato.
   Future<void> _emitirCatalogo(StreamController<List<Producto>> destino) async {
@@ -85,125 +94,104 @@ class SupabaseTiendaRepository implements TiendaRepository {
   }
 
   @override
-  Future<List<Estrategia>> estrategiasActivas() async {
-    final filas = await _cliente
-        .from('v_estrategia_desempeno')
-        .select()
-        .eq('activo', true);
-    return filas.map(Estrategia.desdeFila).toList();
+  Future<List<EscalonOferta>> ofertasDe({
+    required int idProducto,
+    required int idCliente,
+  }) async {
+    // fn_ofertas_de ya aplica las tres condiciones (producto, vigencia y
+    // limite diario del cliente) en el servidor. La app no las reimplementa:
+    // duplicar una regla es como se termina con dos versiones que no
+    // coinciden.
+    final filas = await _cliente.rpc<List<dynamic>>(
+      'fn_ofertas_de',
+      params: {'p_id_producto': idProducto, 'p_id_cliente': idCliente},
+    );
+    return filas
+        .cast<Map<String, dynamic>>()
+        .map(EscalonOferta.desdeFila)
+        .toList();
   }
 
   @override
-  Future<String?> ultimoProductoMostrado(String codCliente) async {
-    final fila = await _cliente
-        .from('interacciones')
-        .select('cod_lote_producto')
-        .eq('cod_cliente', codCliente)
-        .not('cod_lote_producto', 'is', null)
-        .order('timestamp', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    return fila?['cod_lote_producto'] as String?;
+  Future<bool> puedeUsarOferta(int idCliente) async {
+    final resultado = await _cliente.rpc<bool>(
+      'fn_puede_usar_oferta',
+      params: {'p_id_cliente': idCliente},
+    );
+    return resultado;
   }
 
   @override
-  Future<List<InteraccionHistorial>> historial(
-    String codCliente, {
+  Future<List<CompraHistorial>> historial(
+    int idCliente, {
     int limite = 50,
   }) async {
-    // Los joins van embebidos en el select: PostgREST los resuelve por las
-    // claves foraneas declaradas en el esquema. Es el equivalente del join
-    // manual que hacia la pantalla contra drift, en un solo viaje.
-    final filas = await _cliente
-        .from('interacciones')
-        .select(
-          'id_proceso_persuasion, cod_cliente, nivel_de_interes, timestamp, '
-          'gestos(nombre_gesto), estrategias(nombre_estrategia), '
-          'productos(nombre_producto)',
-        )
-        .eq('cod_cliente', codCliente)
-        .order('timestamp', ascending: false)
-        .limit(limite);
-    return filas.map(InteraccionHistorial.desdeFila).toList();
-  }
-
-  @override
-  Future<bool> existeCliente(String codCliente) async {
-    final fila = await _cliente
-        .from('clientes')
-        .select('cod_cliente')
-        .eq('cod_cliente', codCliente)
-        .maybeSingle();
-    return fila != null;
+    // `venta` no es de lectura publica: el historial sale por una funcion que
+    // devuelve solo las compras del cliente que se pide.
+    final filas = await _cliente.rpc<List<dynamic>>(
+      'fn_historial',
+      params: {'p_id_cliente': idCliente, 'p_limite': limite},
+    );
+    return filas
+        .cast<Map<String, dynamic>>()
+        .map(CompraHistorial.desdeFila)
+        .toList();
   }
 
   // --------------- ESCRITURAS ---------------
 
   @override
-  Future<String> registrarCliente({
+  Future<int> registrarCliente({
     required String nombre,
-    required String apellido,
-    String? tipoCliente,
+    String? paterno,
+    String? materno,
+    String? telefono,
+    String? correo,
   }) async {
-    final codCliente = await _cliente.rpc<String>(
+    final id = await _cliente.rpc<int>(
       'fn_registrar_cliente',
       params: {
         'p_nombre': nombre,
-        'p_apellido': apellido,
-        'p_tipo_cliente': tipoCliente,
+        'p_paterno': paterno,
+        'p_materno': materno,
+        'p_telefono': telefono,
+        'p_correo': correo,
       },
     );
-    return codCliente;
+    return id;
   }
 
   @override
-  Future<String> registrarInteraccion({
-    required String codCliente,
-    required String emocion,
-    required String codLoteProducto,
-    String? codEstrategia,
-    required int nivelDeInteres,
-  }) async {
-    final proceso = await _cliente.rpc<String>(
-      'fn_registrar_interaccion',
-      params: {
-        'p_cod_cliente': codCliente,
-        'p_emocion': emocion,
-        'p_cod_lote_producto': codLoteProducto,
-        'p_cod_estrategia': codEstrategia,
-        'p_nivel_de_interes': nivelDeInteres,
-      },
-    );
-    return proceso;
-  }
-
-  @override
-  Future<void> registrarVenta({
-    required String idProcesoPersuasion,
-    int? precioFinalCentavos,
+  Future<int> registrarVenta({
+    required int idCliente,
+    required int idProducto,
+    int cantidad = 1,
+    int? idOferta,
   }) async {
     try {
-      await _cliente.rpc<Object?>(
+      return await _cliente.rpc<int>(
         'fn_registrar_venta',
         params: {
-          'p_id_proceso_persuasion': idProcesoPersuasion,
-          'p_precio_final_centavos': precioFinalCentavos,
+          'p_id_cliente': idCliente,
+          'p_id_producto': idProducto,
+          'p_cantidad': cantidad,
+          'p_id_oferta': idOferta,
         },
       );
     } on PostgrestException catch (e) {
-      // El `hint` lo pone la funcion SQL a proposito, para poder distinguir
-      // "se agoto" de un fallo real sin leer el texto del mensaje, que cambia
+      // El `hint` lo ponen las funciones SQL a proposito, para poder
+      // distinguir un caso de otro sin leer el texto del mensaje, que cambia
       // con el idioma del servidor.
-      if (e.hint == 'sin_stock') {
-        throw SinStockException(e.message);
+      switch (e.hint) {
+        case 'sin_stock':
+          throw SinStockException(e.message);
+        case 'limite_diario':
+          throw LimiteOfertasException(e.message);
+        default:
+          rethrow;
       }
-      rethrow;
     }
   }
-
-  @override
-  Future<void> ejecutarCierreDiario() =>
-      _cliente.rpc<Object?>('fn_cierre_diario');
 
   /// Cierra el canal de Realtime. La app lo llama al salir de la tienda; sin
   /// esto queda un websocket abierto consumiendo bateria en segundo plano.

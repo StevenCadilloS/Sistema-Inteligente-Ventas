@@ -1,199 +1,182 @@
 /// Modelos del dominio.
 ///
-/// Antes estas clases las generaba drift a partir de las tablas locales. Al
-/// pasar la base a PostgreSQL compartido dejaron de tener dueno, asi que se
-/// declaran a mano: son objetos de lectura, inmutables, sin dependencia de
-/// ningun motor de base de datos. Eso permite que las pruebas construyan un
-/// catalogo en memoria sin levantar nada.
+/// Objetos de lectura, inmutables, sin dependencia de ningun motor de base de
+/// datos: las pruebas construyen un catalogo en memoria sin levantar nada.
 ///
 /// Las claves de los mapas son las columnas de PostgreSQL en snake_case, que
 /// es como las devuelve PostgREST.
 library;
 
-/// Un producto del catalogo, tal como lo publica la vista `v_catalogo`: el
-/// producto mas la oferta que el administrador tenga vigente sobre el.
+/// Un producto del catalogo, tal como lo publica la vista `v_catalogo`.
 class Producto {
   const Producto({
-    required this.codLoteProducto,
-    required this.nombreProducto,
-    required this.precioUnitarioCentavos,
-    this.tipoProducto,
-    this.nombreTipoProducto,
+    required this.idProducto,
+    required this.nombre,
+    required this.precioCentavos,
+    this.descripcion,
+    this.idCategoria,
+    this.categoria,
+    this.idMarca,
+    this.marca,
     this.imagen,
-    this.totalDisponible = 0,
-    this.totalVecesMostrado = 0,
-    this.totalVendidos = 0,
-    this.cierresVenta = 0,
+    this.stock = 0,
     this.activo = true,
-    this.descuentoOferta = 0,
-    this.nombreOferta,
-    this.codOferta,
+    this.tieneOfertas = false,
   });
 
-  final String codLoteProducto;
-  final String nombreProducto;
-  final String? tipoProducto;
-  final String? nombreTipoProducto;
+  final int idProducto;
+  final String nombre;
+  final String? descripcion;
 
-  /// Precio de lista, sin ninguna rebaja. Siempre en centavos enteros: el
-  /// dinero nunca pasa por punto flotante (RNF-05).
-  final int precioUnitarioCentavos;
+  /// Precio normal, siempre en centavos enteros: el dinero nunca pasa por
+  /// punto flotante. S/2500.00 se guarda como 250000.
+  final int precioCentavos;
 
-  /// Nombre del archivo en `assets/products/` o URL completa. Nulo en los
-  /// productos que el administrador crea sin imagen.
+  final int? idCategoria;
+  final String? categoria;
+  final int? idMarca;
+  final String? marca;
+
+  /// Nombre del archivo en `assets/products/` o URL completa.
   final String? imagen;
 
-  final int totalDisponible;
-  final int totalVecesMostrado;
-  final int totalVendidos;
-  final int cierresVenta;
+  final int stock;
   final bool activo;
 
-  /// Descuento publicado por el administrador en la tabla `ofertas`, ya
-  /// filtrado por vigencia. 0 cuando no hay ninguna oferta activa.
-  ///
-  /// Es distinto del descuento adaptativo que calcula AdaptationEngine a
-  /// partir de la emocion: este lo decide una persona y vive en la base, aquel
-  /// lo decide la cara del cliente y vive en una decision.
-  final int descuentoOferta;
-  final String? nombreOferta;
-  final String? codOferta;
+  /// Si el producto tiene al menos una oferta vigente configurada. Lo calcula
+  /// la vista, y sirve para no encender la camara cuando no hay a donde
+  /// avanzar: sin ofertas, el precio se queda en el normal pase lo que pase
+  /// con la cara del cliente (README, regla 8).
+  final bool tieneOfertas;
 
-  bool get enOferta => descuentoOferta > 0;
-
-  bool get disponible => activo && totalDisponible > 0;
-
-  /// Precio que ve el cliente en el catalogo: el de lista menos la oferta del
-  /// administrador, si la hay. Division entera, igual que en la vista SQL.
-  int get precioVigenteCentavos =>
-      precioUnitarioCentavos - (precioUnitarioCentavos * descuentoOferta ~/ 100);
+  bool get disponible => activo && stock > 0;
 
   factory Producto.desdeFila(Map<String, dynamic> fila) => Producto(
-    codLoteProducto: fila['cod_lote_producto'] as String,
-    nombreProducto: fila['nombre_producto'] as String,
-    tipoProducto: fila['tipo_producto'] as String?,
-    nombreTipoProducto: fila['nombre_tipo_producto'] as String?,
-    precioUnitarioCentavos: _entero(fila['precio_unitario_centavos']),
+    idProducto: _entero(fila['id_producto']),
+    nombre: fila['nombre'] as String,
+    descripcion: fila['descripcion'] as String?,
+    precioCentavos: _entero(fila['precio_centavos']),
+    idCategoria: fila['id_categoria'] == null
+        ? null
+        : _entero(fila['id_categoria']),
+    categoria: fila['categoria'] as String?,
+    idMarca: fila['id_marca'] == null ? null : _entero(fila['id_marca']),
+    marca: fila['marca'] as String?,
     imagen: fila['imagen'] as String?,
-    totalDisponible: _entero(fila['total_disponible']),
-    totalVecesMostrado: _entero(fila['total_veces_mostrado']),
-    totalVendidos: _entero(fila['total_vendidos']),
-    cierresVenta: _entero(fila['cierres_venta']),
+    stock: _entero(fila['stock']),
     activo: fila['activo'] as bool? ?? true,
-    descuentoOferta: _entero(fila['descuento_oferta']),
-    nombreOferta: fila['nombre_oferta'] as String?,
-    codOferta: fila['cod_oferta'] as String?,
+    tieneOfertas: fila['tiene_ofertas'] as bool? ?? false,
   );
 
-  Producto copyWith({int? totalDisponible, int? totalVecesMostrado}) => Producto(
-    codLoteProducto: codLoteProducto,
-    nombreProducto: nombreProducto,
-    tipoProducto: tipoProducto,
-    nombreTipoProducto: nombreTipoProducto,
-    precioUnitarioCentavos: precioUnitarioCentavos,
+  Producto copyWith({int? stock}) => Producto(
+    idProducto: idProducto,
+    nombre: nombre,
+    descripcion: descripcion,
+    precioCentavos: precioCentavos,
+    idCategoria: idCategoria,
+    categoria: categoria,
+    idMarca: idMarca,
+    marca: marca,
     imagen: imagen,
-    totalDisponible: totalDisponible ?? this.totalDisponible,
-    totalVecesMostrado: totalVecesMostrado ?? this.totalVecesMostrado,
-    totalVendidos: totalVendidos,
-    cierresVenta: cierresVenta,
+    stock: stock ?? this.stock,
     activo: activo,
-    descuentoOferta: descuentoOferta,
-    nombreOferta: nombreOferta,
-    codOferta: codOferta,
+    tieneOfertas: tieneOfertas,
   );
 
   @override
   bool operator ==(Object other) =>
-      other is Producto && other.codLoteProducto == codLoteProducto;
+      other is Producto && other.idProducto == idProducto;
 
   @override
-  int get hashCode => codLoteProducto.hashCode;
+  int get hashCode => idProducto.hashCode;
 }
 
-/// Estrategia comercial con su desempeno acumulado, tal como lo publica la
-/// vista `v_estrategia_desempeno`.
+/// Un escalon de la secuencia de ofertas de un producto.
 ///
-/// `intentos` y `exitos` llegan calculados desde la base en la misma consulta
-/// que trae la estrategia. Antes eran dos GROUP BY que el dispositivo lanzaba
-/// por separado en cada decision; ahora es un solo viaje de red, que en una
-/// base remota importa mucho mas que en una local.
-class Estrategia {
-  const Estrategia({
-    required this.codEstrategia,
-    required this.nombreEstrategia,
-    this.activo = true,
-    this.intentos = 0,
-    this.exitos = 0,
+/// El sistema no inventa descuentos: sube por esta escalera, que un
+/// administrador configuro antes en `ofertas_productos.orden`. El
+/// `precioFinalCentavos` lo calcula el servidor, no la app, para que el precio
+/// que se muestra y el que se cobra salgan de la misma formula.
+class EscalonOferta {
+  const EscalonOferta({
+    required this.orden,
+    required this.idOferta,
+    required this.nombreOferta,
+    required this.tipo,
+    required this.precioFinalCentavos,
+    this.porcentajeDescuento,
   });
 
-  final String codEstrategia;
-  final String nombreEstrategia;
-  final bool activo;
+  /// Posicion en la secuencia, empezando en 1.
+  final int orden;
 
-  /// Procesos de persuasion distintos en los que se aplico (no filas de
-  /// interaccion: un mismo proceso puede tener varias).
-  final int intentos;
+  final int idOferta;
+  final String nombreOferta;
 
-  /// De esos procesos, cuantos terminaron en venta.
-  final int exitos;
+  /// 'Descuento' o 'Combo'. Una oferta es de una clase o de la otra, nunca de
+  /// las dos: lo garantiza `chk_oferta_coherente` en la base.
+  final String tipo;
 
-  factory Estrategia.desdeFila(Map<String, dynamic> fila) => Estrategia(
-    codEstrategia: fila['cod_estrategia'] as String,
-    nombreEstrategia: fila['nombre_estrategia'] as String,
-    activo: fila['activo'] as bool? ?? true,
-    intentos: _entero(fila['intentos']),
-    exitos: _entero(fila['exitos']),
+  /// Porcentaje entero (20 = 20%). Nulo cuando la oferta es un combo, que fija
+  /// el precio final en vez de rebajar un porcentaje.
+  final int? porcentajeDescuento;
+
+  /// Lo que el cliente pagaria en este escalon, en centavos.
+  final int precioFinalCentavos;
+
+  bool get esCombo => porcentajeDescuento == null;
+
+  factory EscalonOferta.desdeFila(Map<String, dynamic> fila) => EscalonOferta(
+    orden: _entero(fila['orden']),
+    idOferta: _entero(fila['id_oferta']),
+    nombreOferta: fila['nombre_oferta'] as String,
+    tipo: fila['tipo'] as String,
+    porcentajeDescuento: fila['porcentaje_descuento'] == null
+        ? null
+        : _entero(fila['porcentaje_descuento']),
+    precioFinalCentavos: _entero(fila['precio_final_centavos']),
   );
-
-  @override
-  bool operator ==(Object other) =>
-      other is Estrategia && other.codEstrategia == codEstrategia;
-
-  @override
-  int get hashCode => codEstrategia.hashCode;
 }
 
-/// Una fila del historial: la interaccion con los nombres ya resueltos, que es
-/// lo unico que la pantalla necesita mostrar.
-class InteraccionHistorial {
-  const InteraccionHistorial({
-    required this.idProcesoPersuasion,
-    required this.codCliente,
-    required this.nivelDeInteres,
+/// Una fila del historial de compras.
+class CompraHistorial {
+  const CompraHistorial({
+    required this.idVenta,
     required this.fecha,
-    this.nombreGesto,
-    this.nombreEstrategia,
-    this.nombreProducto,
+    required this.producto,
+    required this.cantidad,
+    required this.totalCentavos,
+    this.nombreOferta,
   });
 
-  final String idProcesoPersuasion;
-  final String codCliente;
-  final int nivelDeInteres;
+  final int idVenta;
   final DateTime fecha;
-  final String? nombreGesto;
-  final String? nombreEstrategia;
-  final String? nombreProducto;
+  final String producto;
+  final int cantidad;
+  final int totalCentavos;
 
-  /// PostgREST devuelve los joins anidados como mapas: `gestos` es null si la
-  /// interaccion se registro con una emocion fuera del catalogo (por ejemplo
-  /// cuando el rostro salio de cuadro).
-  factory InteraccionHistorial.desdeFila(Map<String, dynamic> fila) {
-    String? nombreDe(String tabla, String campo) {
-      final anidado = fila[tabla];
-      return anidado is Map ? anidado[campo] as String? : null;
-    }
+  /// Nulo cuando la compra fue a precio normal, sin oferta.
+  final String? nombreOferta;
 
-    return InteraccionHistorial(
-      idProcesoPersuasion: fila['id_proceso_persuasion'] as String,
-      codCliente: fila['cod_cliente'] as String,
-      nivelDeInteres: _entero(fila['nivel_de_interes']),
-      fecha: DateTime.parse(fila['timestamp'] as String).toLocal(),
-      nombreGesto: nombreDe('gestos', 'nombre_gesto'),
-      nombreEstrategia: nombreDe('estrategias', 'nombre_estrategia'),
-      nombreProducto: nombreDe('productos', 'nombre_producto'),
-    );
-  }
+  bool get tuvoOferta => nombreOferta != null;
+
+  factory CompraHistorial.desdeFila(Map<String, dynamic> fila) =>
+      CompraHistorial(
+        idVenta: _entero(fila['id_venta']),
+        fecha: DateTime.parse(fila['fecha_hora'] as String).toLocal(),
+        producto: fila['producto'] as String,
+        cantidad: _entero(fila['cantidad']),
+        totalCentavos: _entero(fila['total_centavos']),
+        nombreOferta: fila['nombre_oferta'] as String?,
+      );
 }
+
+/// Formatea centavos como soles: 225000 -> "S/2250.00".
+///
+/// Vive aqui y no en cada pantalla porque el redondeo tiene que ser el mismo
+/// en todas: un precio que se ve distinto en el feed y en el popup parece un
+/// error de la tienda.
+String soles(int centavos) => 'S/${(centavos / 100).toStringAsFixed(2)}';
 
 /// PostgREST puede devolver un entero como `int` o, si la columna es bigint o
 /// viene de un calculo, como `num`. Un cast directo a `int` falla en el

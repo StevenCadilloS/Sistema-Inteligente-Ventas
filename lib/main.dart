@@ -3,13 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'data/batch/cierre_diario_scheduler.dart';
 import 'data/remote/supabase_config.dart';
 import 'data/repositories/cliente_repository.dart';
 import 'data/repositories/supabase_tienda_repository.dart';
 import 'data/repositories/tienda_repository.dart';
-import 'decision/adaptation_engine.dart';
-import 'decision/learning/bandit_optimizer.dart';
 import 'services/emotion_channel.dart';
 import 'theme/app_theme.dart';
 import 'ui/configuracion_faltante_screen.dart';
@@ -40,22 +37,16 @@ Future<void> main() async {
     publishableKey: SupabaseConfig.clavePublica,
   );
 
-  await programarCierreDiario();
-
   final tienda = SupabaseTiendaRepository(Supabase.instance.client);
   final prefs = await SharedPreferences.getInstance();
 
   final clienteRepository = ClienteRepository(tienda, prefs);
-  final bandit = BanditOptimizer(tienda);
-  final adaptationEngine = AdaptationEngine(tienda, bandit);
   final emotionChannel = EmotionChannel();
 
   runApp(
     MyApp(
       tienda: tienda,
       clienteRepository: clienteRepository,
-      adaptationEngine: adaptationEngine,
-      bandit: bandit,
       emotionChannel: emotionChannel,
     ),
   );
@@ -66,15 +57,11 @@ class MyApp extends StatelessWidget {
     super.key,
     required this.tienda,
     required this.clienteRepository,
-    required this.adaptationEngine,
-    required this.bandit,
     required this.emotionChannel,
   });
 
   final TiendaRepository tienda;
   final ClienteRepository clienteRepository;
-  final AdaptationEngine adaptationEngine;
-  final BanditOptimizer bandit;
   final EmotionChannel emotionChannel;
 
   @override
@@ -90,8 +77,6 @@ class MyApp extends StatelessWidget {
         '/': (context) => LoginScreen(clienteRepository: clienteRepository),
         '/tienda': (context) => TiendaScreen(
           clienteRepository: clienteRepository,
-          adaptationEngine: adaptationEngine,
-          banditOptimizer: bandit,
           emotionChannel: emotionChannel,
           tienda: tienda,
         ),

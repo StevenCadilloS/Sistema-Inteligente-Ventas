@@ -40,10 +40,9 @@ class ProductoCard extends StatelessWidget {
       Color(0xFF059669),
       Color(0xFFEA580C),
     ];
-    final indice = (producto.tipoProducto ?? producto.codLoteProducto)
-            .hashCode
-            .abs() %
-        iconos.length;
+    final indice =
+        (producto.categoria ?? '${producto.idProducto}').hashCode.abs() %
+            iconos.length;
     return (iconos[indice], colores[indice]);
   }
 
@@ -51,12 +50,10 @@ class ProductoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final (icono, color) = _visualCategoria;
-    // El precio que se anuncia es el vigente: si el administrador publico una
-    // oferta, el catalogo debe mostrarla ya aplicada. `precioLista` solo se
-    // pinta tachado al lado, como referencia.
-    final precio = (producto.precioVigenteCentavos / 100).toStringAsFixed(2);
-    final precioLista = (producto.precioUnitarioCentavos / 100)
-        .toStringAsFixed(2);
+    // El catalogo muestra siempre el precio normal. Las rebajas no viven
+    // aqui: aparecen durante la negociacion, cuando el cliente selecciona el
+    // producto y la camara empieza a leer su respuesta.
+    final precio = soles(producto.precioCentavos);
 
     final bordeColor = seleccionado
         ? Colors.amber
@@ -116,10 +113,11 @@ class ProductoCard extends StatelessWidget {
                           respaldo: Icon(icono, size: 40, color: color),
                         ),
                       ),
-                      // La promocion del administrador se anuncia en la
-                      // esquina opuesta a las etiquetas de estado, para que no
-                      // compitan por el mismo hueco.
-                      if (producto.enOferta)
+                      // Que el producto tenga ofertas se anuncia, pero no
+                      // cual ni de cuanto: el escalon que le toque a este
+                      // cliente se decide durante la negociacion, y adelantar
+                      // el 30% aqui haria que nadie se quedara en el 10%.
+                      if (producto.tieneOfertas)
                         Positioned(
                           top: 8,
                           right: 8,
@@ -133,7 +131,7 @@ class ProductoCard extends StatelessWidget {
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              '-${producto.descuentoOferta}%',
+                              'Negociable',
                               style: textTheme.bodyMedium?.copyWith(
                                 color: Colors.white,
                                 fontSize: 11,
@@ -214,7 +212,7 @@ class ProductoCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      producto.nombreProducto,
+                      producto.nombre,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: textTheme.bodyLarge,
@@ -223,28 +221,11 @@ class ProductoCard extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          'S/$precio',
+                          precio,
                           style: textTheme.titleMedium?.copyWith(
                             color: AppTheme.success,
                           ),
                         ),
-                        // Con una oferta vigente se muestran los dos precios:
-                        // el tachado es lo que justifica el descuento.
-                        if (producto.enOferta) ...[
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              'S/$precioLista',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: textTheme.bodyMedium?.copyWith(
-                                fontSize: 12,
-                                color: AppTheme.mutedText,
-                                decoration: TextDecoration.lineThrough,
-                              ),
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -252,12 +233,12 @@ class ProductoCard extends StatelessWidget {
                     // Realtime: si otro cliente compra la ultima unidad, este
                     // numero baja aqui sin que nadie refresque nada.
                     Text(
-                      producto.totalDisponible <= 3
-                          ? 'Quedan ${producto.totalDisponible}'
-                          : '${producto.totalDisponible} disponibles',
+                      producto.stock <= 3
+                          ? 'Quedan ${producto.stock}'
+                          : '${producto.stock} disponibles',
                       style: textTheme.bodyMedium?.copyWith(
                         fontSize: 11,
-                        color: producto.totalDisponible <= 3
+                        color: producto.stock <= 3
                             ? AppTheme.danger
                             : AppTheme.mutedText,
                       ),

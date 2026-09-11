@@ -5,152 +5,170 @@ import 'package:flutter/material.dart';
 import '../data/modelos/modelos.dart';
 import '../data/repositories/cliente_repository.dart';
 import '../data/repositories/tienda_repository.dart';
-import '../decision/adaptation_engine.dart';
-import '../decision/learning/bandit_optimizer.dart';
+import '../decision/negociacion.dart';
 import '../services/emotion_channel.dart';
 import '../theme/app_theme.dart';
 import 'widgets/banner_esperando.dart';
-import 'widgets/compras_realizadas.dart';
 import 'widgets/chip_emocion.dart';
+import 'widgets/compras_realizadas.dart';
 import 'widgets/popup_oferta.dart';
 import 'widgets/producto_card.dart';
 import 'widgets/titulo_feed.dart';
 
-/// Tienda con feed de productos. La camara corre de fondo (sin preview) y
-/// cada vez que cambia la emocion estable del cliente, el feed se reordena y
-/// se destaca una oferta nueva — sin que el usuario toque nada, que es el
-/// requisito eliminatorio del taller.
+/// Pantalla principal de la tienda.
+///
+/// El flujo es el del README: el cliente navega el catalogo con la camara
+/// APAGADA; al seleccionar un producto empieza la interaccion adaptativa, se
+/// enciende la camara, se muestra el precio normal y se observa su respuesta.
+/// Si es desfavorable se avanza por la escalera de ofertas que configuro el
+/// administrador. Al terminar — compra, abandono o fin de la escalera — la
+/// camara se apaga.
+///
+/// La camara no sigue encendida durante toda la navegacion, y eso no es solo
+/// bateria: mantener la camara viva mientras alguien mira un catalogo es
+/// bastante mas invasivo que encenderla para una negociacion concreta.
 class TiendaScreen extends StatefulWidget {
   const TiendaScreen({
     super.key,
     required this.clienteRepository,
-    required this.adaptationEngine,
-    required this.banditOptimizer,
     required this.emotionChannel,
     required this.tienda,
+    this.clasificador = const ClasificadorRespuesta(),
+    this.ventanaObservacion = const Duration(seconds: 4),
   });
 
   final ClienteRepository clienteRepository;
-  final AdaptationEngine adaptationEngine;
-  final BanditOptimizer banditOptimizer;
   final EmotionChannel emotionChannel;
   final TiendaRepository tienda;
+
+  /// Como se agrupan las lecturas de la camara en una respuesta.
+  final ClasificadorRespuesta clasificador;
+
+  /// Cuanto se observa antes de decidir. La duracion la fija el rendimiento
+  /// real del clasificador en el dispositivo: demasiado corta y decide con
+  /// dos fotogramas, demasiado larga y el cliente se cansa.
+  final Duration ventanaObservacion;
 
   @override
   State<TiendaScreen> createState() => _TiendaScreenState();
 }
 
-class _TiendaScreenState extends State<TiendaScreen>
-    with SingleTickerProviderStateMixin {
-  /// Catalogo ya ordenado por la regla de la emocion vigente: lo que se pinta.
+class _TiendaScreenState extends State<TiendaScreen> {
   List<Producto> _catalogo = const [];
+  bool _cargando = true;
+  String? _errorCatalogo;
+  StreamSubscription<List<Producto>>? _catalogoSubscription;
 
-  /// Ultima foto que llego del servidor, sin ordenar. Se guarda aparte para
-  /// poder reordenar al cambiar la emocion sin volver a pedir el catalogo: con
-  /// la base remota, un viaje de red por cada gesto haria que la adaptacion
-  /// llegara tarde.
-  List<Producto> _catalogoCrudo = const [];
+  // --------------- ESTADO DE LA INTERACCION ---------------
+  //
+  // Todo esto solo existe mientras hay una negociacion abierta.
+
+  Negociacion? _negociacion;
+  StreamSubscription<EmocionDetectada>? _emociones;
+  Timer? _ventana;
+
+  /// Lecturas de la camara en la ventana en curso. Se vacia en cada ronda.
+  final List<String> _lecturas = [];
 
   String? _emocionDetectada;
   double _confianza = 0;
-  bool _cargando = true;
-  String? _errorCatalogo;
-  StreamSubscription<EmocionDetectada>? _subscription;
-  StreamSubscription<List<Producto>>? _catalogoSubscription;
-
-  Timer? _ofertaTimer;
-  int _segundosRestantes = 0;
-  bool _ofertaBloqueada = false;
-  OverlayEntry? _overlayEntry;
-  bool _emocionCambioDurantePopup = false;
-  String? _emocionAntesDelPopup;
+  OverlayEntry? _overlay;
 
   /// Compras cerradas en esta sesion, con lo realmente pagado por cada una.
   final List<CompraRealizada> _compras = [];
-
-  /// Productos que el cliente ya rechazo: la siguiente oferta los salta.
-  final Set<String> _rechazados = {};
-
-  /// Producto de la oferta abierta, para reofrecerlo con mejor descuento si
-  /// la expresion del cliente cambia mientras la mira.
-  Producto? _productoEnOferta;
-
-  /// Paso de la negociacion en curso: 0 precio de lista, 1 contraoferta con
-  /// descuento, 2 bien sustituto. Es un contador explicito y no se deduce del
-  /// descuento de la oferta, porque hay estrategias (envio gratis, premium)
-  /// que persuaden sin tocar el precio: inferirlo dejaria la escalada en
-  /// bucle sobre el mismo paso.
-  int _pasoNegociacion = 0;
-
-  String? _productoSeleccionadoId;
-  Timer? _seleccionTimer;
 
   @override
   void initState() {
     super.initState();
     _escucharCatalogo();
-    _iniciarDeteccion();
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
     _catalogoSubscription?.cancel();
-    _ofertaTimer?.cancel();
-    _seleccionTimer?.cancel();
-    _overlayEntry?.remove();
+    _terminarInteraccion(); // apaga la camara y cierra el popup
     super.dispose();
   }
 
-  String? get _codCliente => widget.clienteRepository.clienteActivo();
+  int? get _idCliente => widget.clienteRepository.clienteActivo();
+
+  bool get _negociando => _negociacion != null;
+
+  // --------------- CATALOGO ---------------
 
   /// El catalogo llega del servidor y se vuelve a emitir cada vez que el
   /// administrador cambia un producto, su stock o una oferta. No hay boton de
-  /// refrescar: si alguien vende la ultima unidad o se publica una promocion,
-  /// el feed de todos los usuarios se entera solo.
+  /// refrescar: si alguien vende la ultima unidad, el feed de todos se entera
+  /// solo.
   void _escucharCatalogo() {
     _catalogoSubscription = widget.tienda.observarCatalogo().listen(
-      (productos) async {
-        final codCliente = _codCliente;
-        if (codCliente == null || !mounted) return;
-
-        // Se reordena con la emocion vigente, no con "neutral": si el catalogo
-        // cambia mientras el cliente esta enojado, el orden debe seguir siendo
-        // el que le corresponde.
-        final ordenado = await widget.adaptationEngine.catalogoPara(
-          codCliente: codCliente,
-          emocion: _emocionDetectada ?? 'neutral',
-          catalogo: productos,
-        );
-
+      (productos) {
         if (!mounted) return;
         setState(() {
-          _catalogoCrudo = productos;
-          _catalogo = ordenado;
-          _errorCatalogo = null;
+          _catalogo = productos;
           _cargando = false;
+          _errorCatalogo = null;
         });
       },
       onError: (Object e) {
         if (!mounted) return;
         setState(() {
-          _errorCatalogo = '$e';
           _cargando = false;
+          _errorCatalogo = e.toString();
         });
       },
     );
   }
 
-  void _iniciarDeteccion() {
-    final codCliente = _codCliente;
-    if (codCliente == null) return;
+  // --------------- INTERACCION ADAPTATIVA ---------------
 
-    _subscription = widget.emotionChannel.emociones.listen((emocion) {
+  /// El cliente selecciono un producto: empieza la interaccion.
+  ///
+  /// Se pide la escalera antes de encender la camara. Si viene vacia — sin
+  /// ofertas configuradas, ninguna vigente, o el cliente sin cupo — no hay
+  /// nada que negociar y se ofrece a precio normal sin encender nada.
+  Future<void> _seleccionarProducto(Producto producto) async {
+    final idCliente = _idCliente;
+    if (idCliente == null || _negociando) return;
+
+    if (_yaComprado(producto)) {
+      _avisar('Ya compraste ${producto.nombre} en esta sesion.');
+      return;
+    }
+
+    List<EscalonOferta> escalera;
+    try {
+      escalera = await widget.tienda.ofertasDe(
+        idProducto: producto.idProducto,
+        idCliente: idCliente,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      _avisar('No se pudieron consultar las ofertas: $e');
+      return;
+    }
+
+    if (!mounted) return;
+
+    final negociacion = Negociacion(producto: producto, escalera: escalera);
+    setState(() => _negociacion = negociacion);
+    _mostrarPopup();
+
+    // Sin escalera no hay nada que observar: se muestra el precio normal y se
+    // deja al cliente decidir, con la camara apagada.
+    if (escalera.isEmpty) return;
+
+    _encenderCamara();
+    _abrirVentana();
+  }
+
+  void _encenderCamara() {
+    _emociones = widget.emotionChannel.emociones.listen((e) {
       if (!mounted) return;
 
-      // El rostro salio de cuadro: el chip vuelve a "Leyendo..." en vez de
-      // quedarse congelado con la ultima emocion detectada.
-      if (emocion.emotion == 'no_face') {
+      if (e.emotion == 'no_face') {
+        // El rostro salio de cuadro: el chip vuelve a "Leyendo..." en vez de
+        // quedarse congelado con la ultima emocion.
         setState(() {
           _emocionDetectada = null;
           _confianza = 0;
@@ -158,402 +176,162 @@ class _TiendaScreenState extends State<TiendaScreen>
         return;
       }
 
-      final cambioDeEmocion = emocion.emotion != _emocionDetectada;
+      _lecturas.add(e.emotion);
       setState(() {
-        _emocionDetectada = emocion.emotion;
-        _confianza = emocion.confidence;
+        _emocionDetectada = e.emotion;
+        _confianza = e.confidence;
       });
-
-      if (_ofertaBloqueada) {
-        if (_emocionAntesDelPopup != null &&
-            emocion.emotion != _emocionAntesDelPopup) {
-          _emocionCambioDurantePopup = true;
-        }
-        return;
-      }
-
-      if (cambioDeEmocion) {
-        // Lo que no quiso estando enojado puede quererlo contento: los
-        // rechazos se olvidan al cambiar de expresion.
-        _rechazados.clear();
-        _adaptarA(emocion, codCliente);
-      }
     });
   }
 
-  Future<void> _adaptarA(EmocionDetectada emocion, String codCliente) async {
-    try {
-      final catalogo = await widget.adaptationEngine.catalogoPara(
-        codCliente: codCliente,
-        emocion: emocion.emotion,
-        catalogo: _catalogoCrudo,
-      );
+  /// Abre una ventana de observacion. Al cerrarse se clasifica lo leido y se
+  /// decide si mantener el precio o avanzar de escalon.
+  void _abrirVentana() {
+    _lecturas.clear();
+    _ventana?.cancel();
+    _ventana = Timer(widget.ventanaObservacion, _evaluarVentana);
+  }
 
-      // El feed se reordena solo al cambiar la emocion, sin que el cliente
-      // toque nada: esa es la adaptacion automatica que exige el taller. La
-      // oferta no se dispara aqui — interrumpir cada cambio de cara es
-      // molesto; nace cuando el cliente toca un producto (ver
-      // [_seleccionarProducto]).
-      if (!mounted) return;
-      setState(() {
-        _catalogo = catalogo;
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo adaptar el catálogo: $e')),
-        );
-      }
+  void _evaluarVentana() {
+    final negociacion = _negociacion;
+    if (negociacion == null || !mounted) return;
+
+    final respuesta = widget.clasificador.clasificar(_lecturas);
+
+    switch (negociacion.siguientePaso(respuesta)) {
+      case PasoNegociacion.mantener:
+        // Se queda donde esta y se sigue observando: el cliente puede cambiar
+        // de opinion mientras mira.
+        _abrirVentana();
+
+      case PasoNegociacion.avanzar:
+        negociacion.avanzar();
+        setState(() {});
+        _refrescarPopup();
+        _abrirVentana();
+
+      case PasoNegociacion.terminar:
+        // No quedan ofertas. Se deja la ultima en pantalla y se apaga la
+        // camara: seguir mirando una cara que ya no puede cambiar nada solo
+        // gasta bateria.
+        _apagarCamara();
     }
   }
 
-  void _mostrarPopupOferta(Oferta oferta, String mensaje) {
-    _overlayEntry?.remove();
-    _ofertaTimer?.cancel();
+  // --------------- POPUP ---------------
 
-    _emocionAntesDelPopup = _emocionDetectada;
-    _emocionCambioDurantePopup = false;
-    _productoEnOferta = oferta.producto;
-
-    setState(() {
-      _ofertaBloqueada = true;
-      _segundosRestantes = 10;
-    });
-
-    _overlayEntry = _construirOverlay(oferta, mensaje);
-    Overlay.of(context).insert(_overlayEntry!);
-    _iniciarCuentaRegresiva();
+  void _mostrarPopup() {
+    _overlay?.remove();
+    _overlay = OverlayEntry(builder: (_) => _construirPopup());
+    Overlay.of(context).insert(_overlay!);
   }
 
-  OverlayEntry _construirOverlay(Oferta oferta, String mensaje) {
-    return OverlayEntry(
-      builder: (context) => PopupOferta(
-        oferta: oferta,
-        mensaje: mensaje,
-        segundosRestantes: _segundosRestantes,
-        // seguira: responder no termina la negociacion, sigue en
-        // _responderOferta. Si se soltara el bloqueo aqui, el hueco hasta el
-        // popup siguiente dejaria la tienda viva y cualquier toque en ese
-        // hueco arrancaria otra negociacion desde el peldano 0.
-        onAceptar: () {
-          _cerrarPopup(seguira: true);
-          _responderOferta(oferta, aceptada: true);
-        },
-        onRechazar: () {
-          _cerrarPopup(seguira: true);
-          _responderOferta(oferta, aceptada: false);
-        },
-        // Descartar el popup si termina la negociacion.
-        onCerrar: _cerrarPopup,
-      ),
+  void _refrescarPopup() => _overlay?.markNeedsBuild();
+
+  Widget _construirPopup() {
+    final negociacion = _negociacion;
+    if (negociacion == null) return const SizedBox.shrink();
+
+    return PopupOferta(
+      negociacion: negociacion,
+      mensaje: negociacion.mensaje,
+      segundosRestantes: 0,
+      onAceptar: () => _comprar(negociacion),
+      onRechazar: _terminarInteraccion,
+      onCerrar: _terminarInteraccion,
     );
   }
 
-  /// La oferta caduca a los 10 segundos. Sin esto se queda abierta bloqueando
-  /// la tienda si el cliente no responde nada.
-  void _iniciarCuentaRegresiva() {
-    _ofertaTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
+  // --------------- CIERRE ---------------
 
-      setState(() {
-        _segundosRestantes--;
-      });
+  Future<void> _comprar(Negociacion negociacion) async {
+    final idCliente = _idCliente;
+    if (idCliente == null) return;
 
-      _overlayEntry?.markNeedsBuild();
+    final pagado = negociacion.precioActualCentavos;
+    final producto = negociacion.producto;
 
-      if (_segundosRestantes <= 0) {
-        _cerrarPopup(porTimeout: true);
-      }
-    });
-  }
+    // La camara se apaga antes de la llamada: la decision ya esta tomada y
+    // seguir leyendo la cara mientras se registra la venta no sirve de nada.
+    _apagarCamara();
 
-  /// Cierra la oferta abierta.
-  ///
-  /// [porTimeout] distingue quien cerro: si se agotaron los 10 segundos el
-  /// cliente no respondio nada, y ahi si vale mejorarle el precio cuando su
-  /// expresion cambio mientras miraba. Si fue el quien cerro — la X, el fondo,
-  /// "lo quiero" o "no, gracias" — reabrir la oferta es un bucle: cerraba y
-  /// volvia a salir, sin salida posible.
-  void _cerrarPopup({bool porTimeout = false, bool seguira = false}) {
-    _ofertaTimer?.cancel();
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-
-    final producto = _productoEnOferta;
-    // La mejora por cambio de expresion es un peldano mas de la escalera, no
-    // una via paralela: consume el paso 0 -> 1 y por eso termina, igual que
-    // el rechazo explicito.
-    final mejorar =
-        porTimeout &&
-        _emocionCambioDurantePopup &&
-        _pasoNegociacion == 0 &&
-        producto != null;
-
-    _emocionCambioDurantePopup = false;
-    _emocionAntesDelPopup = null;
-
-    setState(() {
-      _ofertaBloqueada = seguira || mejorar;
-    });
-
-    if (!mejorar) {
-      _productoEnOferta = null;
-      if (!seguira) _pasoNegociacion = 0;
-      return;
-    }
-
-    _pasoNegociacion = 1;
-    _ofertarRetencion(
-      producto,
-      conDescuento: true,
-      mensaje: 'Veo que lo dudas, te mejoro el precio:',
-    );
-  }
-
-  /// Cierra el proceso de persuasion. Aceptar crea la venta con el precio
-  /// realmente ofrecido (con descuento); rechazar no escribe nada, porque la
-  /// ausencia de venta para ese idProcesoPersuasion *es* el rechazo — asi lo
-  /// mide el KPI 2 (ver v_kpi2_ventas_sin_alternativa en
-  /// supabase/migrations/0002_funciones.sql).
-  Future<void> _responderOferta(Oferta oferta, {required bool aceptada}) async {
     try {
-      await widget.banditOptimizer.registrarRespuesta(
-        idProcesoPersuasion: oferta.idProcesoPersuasion,
-        aceptada: aceptada,
-        precioFinalCentavos: oferta.precioFinalCentavos,
+      await widget.tienda.registrarVenta(
+        idCliente: idCliente,
+        idProducto: producto.idProducto,
+        idOferta: negociacion.idOfertaActual,
       );
-
-      if (!mounted) return;
-      if (aceptada) {
-        _registrarCompra(oferta.producto, oferta.precioFinalCentavos);
-        _terminarNegociacion();
-        return;
-      }
-
-      await _siguientePeldano(oferta);
     } on SinStockException {
-      // Con la base compartida esto deja de ser teorico: otro cliente pudo
-      // llevarse la ultima unidad mientras este miraba el popup. El servidor
-      // rechaza la venta y aqui se explica, en vez de mostrar un error crudo.
-      _terminarNegociacion();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Se agoto ${oferta.producto.nombreProducto} justo ahora. '
-              'Alguien se llevo la ultima unidad.',
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      _terminarNegociacion();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo registrar la respuesta: $e')),
-        );
-      }
-    }
-  }
-
-  /// Escalada tras un rechazo: precio de lista -> precio rebajado -> bien
-  /// sustituto -> dejar de insistir.
-  ///
-  /// El peldano vive en [_pasoNegociacion] y solo avanza, nunca retrocede: por
-  /// eso la escalada siempre termina, aunque el cliente rechace todo.
-  Future<void> _siguientePeldano(Oferta oferta) async {
-    // Dijo que no a precio de lista: se responde con la mejor oferta que
-    // permitan su expresion y la estrategia elegida.
-    _rechazados.add(oferta.producto.codLoteProducto);
-
-    if (_pasoNegociacion == 0) {
-      _pasoNegociacion = 1;
-      await _ofertarTrasPausa(oferta.producto);
+      if (!mounted) return;
+      _terminarInteraccion();
+      _avisar('Alguien se llevo la ultima unidad de ${producto.nombre}.');
       return;
-    }
-
-    // Rechazo tambien el precio rebajado. Cada intento quedo registrado como
-    // su propio proceso de persuasion, que es lo que alimenta al UCB1.
-    if (_pasoNegociacion == 1 && await _ofrecerSustituto(oferta.producto)) {
-      return;
-    }
-
-    _terminarNegociacion();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Listo, te dejamos seguir mirando')),
+    } on LimiteOfertasException {
+      if (!mounted) return;
+      _terminarInteraccion();
+      _avisar(
+        'Ya usaste tus dos ofertas de hoy. Puedes comprarlo a precio normal.',
       );
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      _terminarInteraccion();
+      _avisar('No se pudo completar la compra: $e');
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _compras.add((producto: producto, pagadoCentavos: pagado));
+    });
+    _terminarInteraccion();
+    _avisar('Compraste ${producto.nombre} por ${soles(pagado)}.');
+  }
+
+  /// Termina la interaccion: apaga la camara, cierra el popup y olvida la
+  /// negociacion. Se llama tanto al comprar como al abandonar.
+  void _terminarInteraccion() {
+    _apagarCamara();
+    _overlay?.remove();
+    _overlay = null;
+    if (mounted) {
+      setState(() => _negociacion = null);
+    } else {
+      _negociacion = null;
     }
   }
 
-  /// Fin de la negociacion: se reabre la tienda y la escalera vuelve a cero.
-  void _terminarNegociacion() {
-    _pasoNegociacion = 0;
-    _productoEnOferta = null;
+  void _apagarCamara() {
+    _ventana?.cancel();
+    _ventana = null;
+    _emociones?.cancel();
+    _emociones = null;
+    _lecturas.clear();
     if (mounted) {
       setState(() {
-        _ofertaBloqueada = false;
+        _emocionDetectada = null;
+        _confianza = 0;
       });
     }
   }
 
-  /// Insistir con lo que ya rechazo dos veces no tiene sentido, pero si
-  /// ofrecerle otra cosa de su misma categoria y mas economica.
-  ///
-  /// Devuelve si habia sustituto que ofrecer; si no, la negociacion termina.
-  Future<bool> _ofrecerSustituto(Producto rechazado) async {
-    final sustituto = await widget.adaptationEngine.sustitutoPara(
-      rechazado,
-      excluir: {
-        ..._rechazados,
-        ..._compras.map((c) => c.producto.codLoteProducto),
-      },
-      catalogo: _catalogoCrudo,
-    );
-    if (sustituto == null || !mounted) return false;
+  // --------------- AYUDAS ---------------
 
-    _pasoNegociacion = 2;
-    await _ofertarTrasPausa(sustituto, mensaje: 'Quiza este te acomode mejor:');
-    return true;
-  }
+  bool _yaComprado(Producto producto) =>
+      _compras.any((c) => c.producto.idProducto == producto.idProducto);
 
-  /// Medio segundo entre el rechazo y la oferta siguiente: encadenarlas sin
-  /// pausa se ve como un parpadeo del popup, no como una respuesta.
-  Future<void> _ofertarTrasPausa(Producto producto, {String? mensaje}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+  void _avisar(String mensaje) {
     if (!mounted) return;
-    await _ofertarRetencion(producto, conDescuento: true, mensaje: mensaje);
-  }
-
-  bool _yaComprado(Producto producto) => _compras.any(
-    (c) => c.producto.codLoteProducto == producto.codLoteProducto,
-  );
-
-  /// Tocar un producto es la senal de interes: se le propone de inmediato, a
-  /// precio de lista. Si dice que no, ahi entra el descuento segun su cara.
-  Future<void> _seleccionarProducto(Producto producto) async {
-    // Durante una negociacion la tienda no acepta otro producto. Sin esto,
-    // cada toque en el hueco entre dos popups reiniciaba _pasoNegociacion a 0
-    // y la escalada no llegaba nunca a su tope: ese era el bucle.
-    if (_ofertaBloqueada) return;
-
-    // Lo que acaba de rechazar no se vuelve a ofrecer. Al cerrarse la
-    // negociacion la tarjeta queda justo donde estaba el boton "No, gracias",
-    // asi que el toque siguiente caia sobre ella y arrancaba otra ronda: para
-    // el cliente eso es el mismo bucle, aunque cada ronda termine bien.
-    // Los rechazos se olvidan cuando cambia su expresion (ver _iniciarDeteccion).
-    if (_rechazados.contains(producto.codLoteProducto)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Listo, no insistimos. Mira otra cosa'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-      return;
-    }
-
-    // Lo que ya compro sale del circuito de ofertas: insistir con el mismo
-    // producto terminaba vendiendoselo dos veces el mismo dia, y la segunda
-    // mas barata que la primera.
-    if (_yaComprado(producto)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ya compraste ${producto.nombreProducto}')),
-      );
-      return;
-    }
-
-    _pasoNegociacion = 0;
-
-    setState(() {
-      _productoSeleccionadoId = producto.codLoteProducto;
-    });
-
-    _seleccionTimer?.cancel();
-    _seleccionTimer = Timer(const Duration(milliseconds: 800), () {
-      if (mounted) {
-        setState(() {
-          _productoSeleccionadoId = null;
-        });
-      }
-    });
-
-    await _ofertarRetencion(producto);
-  }
-
-  /// Oferta sobre el producto que el cliente acaba de mostrar interes.
-  ///
-  /// [conDescuento] escala la negociacion: la primera va a precio de lista, y
-  /// solo si dice que no se le mejora el precio segun su expresion.
-  Future<void> _ofertarRetencion(
-    Producto producto, {
-    bool conDescuento = false,
-    String? mensaje,
-  }) async {
-    final codCliente = _codCliente;
-    if (codCliente == null || _yaComprado(producto)) {
-      _terminarNegociacion();
-      return;
-    }
-
-    // Se bloquea antes de consultar, no al mostrar el popup: decidirOferta
-    // tarda cerca de un segundo calculando el UCB1, y en esa ventana la
-    // tienda seguia aceptando toques.
-    setState(() {
-      _ofertaBloqueada = true;
-    });
-
-    try {
-      final oferta = await widget.adaptationEngine.decidirOferta(
-        codCliente: codCliente,
-        emocion: _emocionDetectada ?? 'neutral',
-        nivelDeInteres: (_confianza * 100).round(),
-        productoObjetivo: producto,
-        conDescuento: conDescuento,
-        catalogo: _catalogoCrudo,
-      );
-      final texto =
-          mensaje ??
-          (oferta.tieneDescuento
-              ? 'Espera, te mejoro el precio:'
-              : '¿Te lo llevas?');
-      if (mounted) _mostrarPopupOferta(oferta, texto);
-    } catch (e) {
-      // Sin esto un fallo de consulta dejaria la tienda bloqueada para siempre.
-      _terminarNegociacion();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No se pudo generar la oferta: $e')),
-        );
-      }
-    }
-  }
-
-  void _registrarCompra(Producto producto, int pagadoCentavos) {
-    setState(() {
-      _compras.add((producto: producto, pagadoCentavos: pagadoCentavos));
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${producto.nombreProducto} agregado al carrito'),
-        backgroundColor: AppTheme.success,
-        duration: const Duration(seconds: 1),
-      ),
-    );
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(mensaje)));
   }
 
   void _abrirCarrito() {
     showModalBottomSheet<void>(
       context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      isScrollControlled: true,
-      builder: (sheetContext) => ComprasRealizadas(compras: _compras),
+      backgroundColor: Colors.transparent,
+      builder: (_) => ComprasRealizadas(compras: _compras),
     );
   }
 
@@ -567,11 +345,14 @@ class _TiendaScreenState extends State<TiendaScreen>
         title: const Text('Tienda Adaptativa'),
         centerTitle: false,
         actions: [
-          ChipEmocion(
-            estilo: estilo,
-            detectando: detectando,
-            confianza: _confianza,
-          ),
+          // El chip solo aparece durante una negociacion: fuera de ella la
+          // camara esta apagada y anunciar una emocion seria mentira.
+          if (_negociando)
+            ChipEmocion(
+              estilo: estilo,
+              detectando: detectando,
+              confianza: _confianza,
+            ),
           Stack(
             alignment: Alignment.center,
             children: [
@@ -609,113 +390,103 @@ class _TiendaScreenState extends State<TiendaScreen>
           ),
         ],
       ),
-      body: SafeArea(
-        child: _cargando
-            ? const Center(child: CircularProgressIndicator())
-            : _errorCatalogo != null
-            // Sin catalogo no hay nada que adaptar. La app ya no guarda copia
-            // local, asi que sin conexion la tienda no puede seguir: se dice
-            // claro en vez de mostrar una cuadricula vacia.
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.cloud_off,
-                        size: 40,
-                        color: AppTheme.mutedText,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'No se pudo cargar el catalogo.\n$_errorCatalogo',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.tonal(
-                        onPressed: () {
-                          setState(() {
-                            _cargando = true;
-                            _errorCatalogo = null;
-                          });
-                          _catalogoSubscription?.cancel();
-                          _escucharCatalogo();
-                        },
-                        child: const Text('Reintentar'),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 900),
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final columnas = (constraints.maxWidth / 190)
-                          .floor()
-                          .clamp(2, 4);
+      body: SafeArea(child: _cuerpo(estilo, detectando)),
+    );
+  }
 
-                      return CustomScrollView(
-                        slivers: [
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                            sliver: SliverToBoxAdapter(
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 250),
-                                child: BannerEsperando(
-                                  key: const ValueKey('esperando'),
-                                  detectando: detectando,
-                                ),
-                              ),
-                            ),
-                          ),
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                            sliver: SliverToBoxAdapter(
-                              child: TituloFeed(
-                                estilo: estilo,
-                                detectando: detectando,
-                              ),
-                            ),
-                          ),
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                            sliver: SliverGrid(
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: columnas,
-                                    mainAxisSpacing: 12,
-                                    crossAxisSpacing: 12,
-                                    childAspectRatio: 0.72,
-                                  ),
-                              delegate: SliverChildBuilderDelegate((
-                                context,
-                                index,
-                              ) {
-                                final producto = _catalogo[index];
-                                return ProductoCard(
-                                  key: ValueKey(producto.codLoteProducto),
-                                  producto: producto,
-                                  destacado: index == 0 && detectando,
-                                  seleccionado:
-                                      _productoSeleccionadoId ==
-                                      producto.codLoteProducto,
-                                  comprado: _yaComprado(producto),
-                                  estilo: estilo,
-                                  onTap: () => _seleccionarProducto(producto),
-                                );
-                              }, childCount: _catalogo.length),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+  Widget _cuerpo(EmotionStyle estilo, bool detectando) {
+    if (_cargando) return const Center(child: CircularProgressIndicator());
+
+    // Sin catalogo no hay tienda. La app no guarda copia local, asi que sin
+    // conexion se dice claro en vez de mostrar una cuadricula vacia.
+    if (_errorCatalogo != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off, size: 40, color: AppTheme.mutedText),
+              const SizedBox(height: 12),
+              Text(
+                'No se pudo cargar el catalogo.\n$_errorCatalogo',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              FilledButton.tonal(
+                onPressed: () {
+                  setState(() {
+                    _cargando = true;
+                    _errorCatalogo = null;
+                  });
+                  _catalogoSubscription?.cancel();
+                  _escucharCatalogo();
+                },
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final columnas = (constraints.maxWidth / 190).floor().clamp(2, 4);
+
+            return CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  sliver: SliverToBoxAdapter(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: BannerEsperando(
+                        key: const ValueKey('esperando'),
+                        detectando: detectando,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                  sliver: SliverToBoxAdapter(
+                    child: TituloFeed(estilo: estilo, detectando: detectando),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                  sliver: SliverGrid(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columnas,
+                      mainAxisSpacing: 12,
+                      crossAxisSpacing: 12,
+                      childAspectRatio: 0.72,
+                    ),
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      final producto = _catalogo[index];
+                      return ProductoCard(
+                        key: ValueKey(producto.idProducto),
+                        producto: producto,
+                        destacado: false,
+                        seleccionado:
+                            _negociacion?.producto.idProducto ==
+                            producto.idProducto,
+                        comprado: _yaComprado(producto),
+                        estilo: estilo,
+                        onTap: () => _seleccionarProducto(producto),
+                      );
+                    }, childCount: _catalogo.length),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

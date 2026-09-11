@@ -28,7 +28,7 @@ class HistorialScreen extends StatefulWidget {
 }
 
 class _HistorialScreenState extends State<HistorialScreen> {
-  List<InteraccionHistorial> _filas = const [];
+  List<CompraHistorial> _filas = const [];
   bool _cargando = true;
   String? _error;
 
@@ -39,8 +39,8 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   Future<void> _cargarHistorial() async {
-    final codCliente = widget.clienteRepository.clienteActivo();
-    if (codCliente == null) {
+    final idCliente = widget.clienteRepository.clienteActivo();
+    if (idCliente == null) {
       setState(() {
         _cargando = false;
         _filas = const [];
@@ -49,7 +49,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
     }
 
     try {
-      final filas = await widget.tienda.historial(codCliente);
+      final filas = await widget.tienda.historial(idCliente);
       if (mounted) {
         setState(() {
           _filas = filas;
@@ -74,7 +74,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Historial de Interacciones')),
+      appBar: AppBar(title: const Text('Mis compras')),
       body: SafeArea(child: _cuerpo(context)),
     );
   }
@@ -131,46 +131,45 @@ class _HistorialScreenState extends State<HistorialScreen> {
     );
   }
 
-  Widget _tarjeta(BuildContext context, InteraccionHistorial fila) {
-    final estilo = fila.nombreGesto != null
-        ? EmotionStyle.of(fila.nombreGesto!)
-        : null;
+  Widget _tarjeta(BuildContext context, CompraHistorial fila) {
+    final textTheme = Theme.of(context).textTheme;
 
     return Card(
-      key: ValueKey(fila.idProcesoPersuasion),
+      key: ValueKey(fila.idVenta),
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: (estilo?.color ?? AppTheme.mutedText).withValues(
-            alpha: 0.12,
-          ),
+          backgroundColor: (fila.tuvoOferta ? AppTheme.danger : AppTheme.success)
+              .withValues(alpha: 0.12),
           child: Icon(
-            estilo?.icon ?? Icons.help_outline,
-            color: estilo?.color ?? AppTheme.mutedText,
+            fila.tuvoOferta ? Icons.local_offer_outlined : Icons.check,
+            color: fila.tuvoOferta ? AppTheme.danger : AppTheme.success,
           ),
         ),
-        title: Text(
-          'Proceso ${fila.idProcesoPersuasion}',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+        title: Text(fila.producto, style: textTheme.titleMedium),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            if (fila.nombreProducto != null) Text(fila.nombreProducto!),
-            Text(
-              'Emocion: ${estilo?.label ?? "sin dato"}'
-              '${fila.nombreEstrategia != null ? " · Estrategia: ${fila.nombreEstrategia}" : ""}',
-            ),
-            Text('Interes: ${fila.nivelDeInteres}%'),
+            // Que oferta se aplico, si hubo alguna: es lo que explica por que
+            // dos compras del mismo producto pueden costar distinto.
+            Text(fila.nombreOferta ?? 'Precio normal'),
+            if (fila.cantidad > 1) Text('Cantidad: ${fila.cantidad}'),
           ],
         ),
-        isThreeLine: true,
-        trailing: Text(
-          _formatearFecha(fila.fecha),
-          style: Theme.of(
-            context,
-          ).textTheme.bodyMedium?.copyWith(fontSize: 12),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              soles(fila.totalCentavos),
+              style: textTheme.titleMedium?.copyWith(color: AppTheme.success),
+            ),
+            Text(
+              _formatearFecha(fila.fecha),
+              style: textTheme.bodyMedium?.copyWith(fontSize: 11),
+            ),
+          ],
         ),
       ),
     );

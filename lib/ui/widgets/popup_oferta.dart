@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import '../../decision/adaptation_engine.dart';
+import '../../data/modelos/modelos.dart';
+import '../../decision/negociacion.dart';
 import '../../theme/app_theme.dart';
 import 'imagen_producto.dart';
 
 class PopupOferta extends StatelessWidget {
   const PopupOferta({
     super.key,
-    required this.oferta,
+    required this.negociacion,
     required this.mensaje,
     required this.segundosRestantes,
     required this.onAceptar,
@@ -14,7 +15,7 @@ class PopupOferta extends StatelessWidget {
     required this.onCerrar,
   });
 
-  final Oferta oferta;
+  final Negociacion negociacion;
   final String mensaje;
   final int segundosRestantes;
   final VoidCallback onAceptar;
@@ -24,9 +25,11 @@ class PopupOferta extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
-    final precio =
-        (oferta.producto.precioUnitarioCentavos / 100).toStringAsFixed(2);
-    final precioFinal = (oferta.precioFinalCentavos / 100).toStringAsFixed(2);
+    final producto = negociacion.producto;
+    final escalon = negociacion.escalonActual;
+    final hayRebaja = escalon != null;
+    final precio = soles(producto.precioCentavos);
+    final precioFinal = soles(negociacion.precioActualCentavos);
 
     return Stack(
       children: [
@@ -92,7 +95,9 @@ class PopupOferta extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    mensaje,
+                    hayRebaja
+                        ? 'Oferta ${escalon.orden} de ${negociacion.totalEscalones}'
+                        : 'Precio normal',
                     style: textTheme.bodyMedium?.copyWith(
                       color: AppTheme.mutedText,
                       fontStyle: FontStyle.italic,
@@ -101,7 +106,7 @@ class PopupOferta extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   ImagenProducto(
-                    producto: oferta.producto,
+                    producto: producto,
                     ancho: 120,
                     alto: 120,
                     radio: 12,
@@ -118,7 +123,7 @@ class PopupOferta extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    oferta.producto.nombreProducto,
+                    producto.nombre,
                     style: textTheme.titleLarge,
                     textAlign: TextAlign.center,
                   ),
@@ -130,9 +135,9 @@ class PopupOferta extends StatelessWidget {
                       // Con descuento se muestra el precio de lista tachado
                       // junto al final: el que se cobra y se registra en
                       // detalleVenta es el final.
-                      if (oferta.tieneDescuento) ...[
+                      if (hayRebaja) ...[
                         Text(
-                          'S/$precio',
+                          precio,
                           style: textTheme.titleMedium?.copyWith(
                             color: AppTheme.mutedText,
                             decoration: TextDecoration.lineThrough,
@@ -141,13 +146,13 @@ class PopupOferta extends StatelessWidget {
                         const SizedBox(width: 8),
                       ],
                       Text(
-                        'S/$precioFinal',
+                        precioFinal,
                         style: textTheme.headlineMedium?.copyWith(
                           color: AppTheme.success,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      if (oferta.tieneDescuento) ...[
+                      if (hayRebaja) ...[
                         const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -157,7 +162,9 @@ class PopupOferta extends StatelessWidget {
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
-                            '-${oferta.descuentoPorcentaje}%',
+                            escalon.esCombo
+                                ? escalon.nombreOferta
+                                : '-${escalon.porcentajeDescuento}%',
                             style: textTheme.bodyMedium?.copyWith(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -169,24 +176,15 @@ class PopupOferta extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    oferta.texto,
+                    mensaje,
                     style: textTheme.bodyMedium,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${oferta.producto.totalDisponible} disponibles',
+                    '${producto.stock} disponibles',
                     style: textTheme.bodyMedium?.copyWith(fontSize: 12),
                   ),
-                  if (oferta.estrategia != null) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'Estrategia: ${oferta.estrategia!.nombreEstrategia}',
-                      style: textTheme.bodySmall?.copyWith(
-                        color: AppTheme.mutedText,
-                      ),
-                    ),
-                  ],
                   const SizedBox(height: 20),
                   Row(
                     children: [

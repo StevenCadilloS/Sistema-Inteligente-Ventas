@@ -71,7 +71,6 @@ cupertino_icons ^1.0.8
 google_fonts ^6.2.1
 shared_preferences ^2.5.5           # sesion del cliente activo (en el equipo)
 supabase_flutter ^2.17.2            # PostgREST + Realtime contra la base compartida
-workmanager ^0.10.9                 # programador del cierre diario (batch)
 
 # dev_dependencies:
 flutter_test (SDK)
@@ -91,23 +90,25 @@ org.tensorflow:tensorflow-lite                 2.16.1
 #   # backend: opcion A (panel de Supabase) u opcion B (contenedor local)
 #   cp env.example.json env.json          # y rellenar con tus credenciales
 #
-#   flutter test                          # 39 pruebas Dart, sin celular ni red
+#   flutter test                          # 37 pruebas Dart, sin celular ni red
 #   flutter run --dart-define-from-file=env.json          # requiere celular
 #   flutter build apk --release --dart-define-from-file=env.json
 
 # ══ 6. PRUEBAS ════════════════════════════════════════════════════════════
-# flutter test                         39 casos - reglas de adaptacion,
-#                                      negociacion y UCB1, contra una
-#                                      implementacion en memoria (sin red)
-# bash supabase/tests/ejecutar.sh       4 suites SQL - esquema, venta atomica,
-#                                      vigencia de ofertas, cierre diario,
-#                                      los 4 KPIs y los permisos.
+# flutter test                         37 casos - clasificacion de la
+#                                      respuesta, escalera de ofertas y limite
+#                                      diario, contra una implementacion en
+#                                      memoria (sin red)
+# bash supabase/tests/ejecutar.sh       3 suites SQL - ciclo de venta, catalogo
+#                                      y ofertas, y los permisos.
 #                                      Necesita el contenedor levantado, o
 #                                      PGURL apuntando a otra base
 # cd android && ./gradlew test          9 casos JUnit del modulo Kotlin
 
 # ══ 7. YA NO HACE FALTA (estaba en versiones anteriores) ══════════════════
 # drift, drift_dev, sqlite3_flutter_libs, path_provider, path, build_runner
+# workmanager  (se fue con el cierre diario: el modelo de ofertas
+#               preconfiguradas no tiene procesos derivados que recalcular)
 #
 # La base dejo de vivir en el telefono, asi que no hay esquema SQLite que
 # generar. En particular, `dart run build_runner build` era obligatorio antes

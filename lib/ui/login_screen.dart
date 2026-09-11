@@ -39,7 +39,7 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       await widget.clienteRepository.registrar(
         nombre: nombre,
-        apellido: apellido,
+        paterno: apellido,
       );
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/tienda');
