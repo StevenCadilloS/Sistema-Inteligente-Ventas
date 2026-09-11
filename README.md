@@ -2,6 +2,19 @@
 
 > Rama: `arbol-5.1(MODELO-BINARIO)`
 
+## Descargar APK
+
+[Descargar APK del modelo binario](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/arbol-5-1-modelo-binario-latest/Sistema-Inteligente-Ventas-modelo-binario.apk)
+
+Cada actualización de esta rama ejecuta las pruebas, compila las versiones
+release y debug, y reemplaza la descarga permanente. La ejecución también se
+puede iniciar manualmente desde
+[GitHub Actions](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/actions/workflows/build-arbol-5-1-binario-apk.yml).
+
+> La descarga aparecerá cuando la primera ejecución termine correctamente. Si
+> los secretos `SUPABASE_URL` y `SUPABASE_PUBLISHABLE_KEY` no están configurados
+> en GitHub, la APK se compila, pero mostrará la pantalla de backend faltante.
+
 Aplicación Android (Flutter + Kotlin) que clasifica la respuesta facial del
 cliente con la cámara frontal y la usa para avanzar por una secuencia de
 ofertas que un administrador configuró antes.
