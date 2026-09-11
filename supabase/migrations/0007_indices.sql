@@ -35,7 +35,7 @@ create index if not exists ix_ofertas_productos_oferta
 -- fn_compras_del_dia cuenta las ventas del cliente de hoy. ix_venta_cliente_fecha
 -- (id_cliente, fecha_hora desc) ya sirve: el planificador lo usa para el
 -- filtro por cliente y luego descarta por fecha. No hace falta uno por fecha
--- sola — con el volumen de una tienda, un cliente no acumula tantas ventas
+-- sola -- con el volumen de una tienda, un cliente no acumula tantas ventas
 -- como para que ese descarte pese.
 
 -- --------------- DETALLE DE VENTA ---------------

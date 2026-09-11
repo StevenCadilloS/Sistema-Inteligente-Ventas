@@ -8,7 +8,7 @@
 --
 -- Con un bucket publico, `imagen` guarda una URL y la foto se cambia desde el
 -- panel. La columna no cambia de tipo: ya aceptaba URL completa, asi que los
--- dos modos conviven — util para migrar sin prisa.
+-- dos modos conviven -- util para migrar sin prisa.
 --
 -- Por que publico y no privado: el catalogo se ve sin iniciar sesion, asi que
 -- sus fotos no son un secreto. Un bucket privado obligaria a firmar cada URL
@@ -49,7 +49,7 @@ begin
   --
   -- La clave publica va dentro del APK. Sin estas politicas, quien la extraiga
   -- podria subir lo que quisiera a un bucket que la tienda muestra a todos sus
-  -- clientes — y el problema no seria el espacio en disco, sino lo que apareceria
+  -- clientes -- y el problema no seria el espacio en disco, sino lo que apareceria
   -- en las tarjetas de productos.
   execute $sql$
     drop policy if exists p_productos_escritura on storage.objects

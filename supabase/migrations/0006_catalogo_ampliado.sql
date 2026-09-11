@@ -48,7 +48,7 @@ insert into productos (id_categoria, id_marca, nombre, descripcion,
 select c.id_categoria, m.id_marca, v.nombre, v.descripcion,
        v.precio_centavos, v.stock
   from (values
-    -- ── Tecnologia (completan las categorias que ya existian) ──────────────
+    -- -- Tecnologia (completan las categorias que ya existian) --------------
     ('Accesorios', 'TecnoPlus',  'Smartwatch Deportivo',
      'Reloj inteligente con medidor de ritmo cardiaco',   29900, 18),
      -- P0000002_smartwatch.jpg
@@ -59,7 +59,7 @@ select c.id_categoria, m.id_marca, v.nombre, v.descripcion,
      'Carga rapida para laptop y celular, USB-C',          8900, 40),
      -- P0000004_cargador.jpg
 
-    -- ── Hogar ──────────────────────────────────────────────────────────────
+    -- -- Hogar --------------------------------------------------------------
     ('Hogar',      'CasaBella',  'Juego de Sartenes Antiadherentes',
      'Tres piezas con recubrimiento ceramico',            15900, 14),
      -- P0000006_sartenes.jpg
@@ -73,7 +73,7 @@ select c.id_categoria, m.id_marca, v.nombre, v.descripcion,
      'Inalambrica, ideal para auto y espacios pequenos',   21900, 11),
      -- P0000009_aspiradora.jpg
 
-    -- ── Ropa ───────────────────────────────────────────────────────────────
+    -- -- Ropa ---------------------------------------------------------------
     ('Ropa',       'UrbanFit',   'Polo Basico de Algodon',
      'Algodon peinado, corte regular',                     3900, 50),
      -- P0000010_polo.jpg
@@ -87,7 +87,7 @@ select c.id_categoria, m.id_marca, v.nombre, v.descripcion,
      'Cortavientos ligero con capucha',                    13900, 16),
      -- P0000013_casaca.jpg
 
-    -- ── Belleza ────────────────────────────────────────────────────────────
+    -- -- Belleza ------------------------------------------------------------
     ('Belleza',    'NaturaSkin', 'Kit de Cuidado Facial',
      'Limpiador, tonico e hidratante para piel mixta',     11900, 28),
      -- P0000014_skincare.jpg
@@ -145,7 +145,7 @@ select o.id_oferta, p.id_producto, v.orden, 1
 
     -- Sin escalera a proposito: Lampara de Escritorio, Organizador Multiuso y
     -- Polo Basico, que se suman a la Laptop HP de 0003. Son el caso de la
-    -- regla 8 —sin oferta el precio no se mueve— y conviene tenerlo a mano en
+    -- regla 8 --sin oferta el precio no se mueve-- y conviene tenerlo a mano en
     -- la demostracion. Cuatro sobre veinte productos: suficiente para que
     -- aparezca sin que la tienda parezca que no negocia.
   ) as v(producto, oferta, orden)
@@ -169,8 +169,8 @@ select o.id_oferta, p.id_producto, v.orden, 1
 -- SUBE. fn_registrar_venta lo rechaza con `oferta_incoherente` y la venta
 -- nunca se cierra, pero para entonces el cliente ya vio la oferta absurda.
 --
--- Las ofertas de combo se conservan en `ofertas` —son datos validos y el
--- esquema las soporta— pero dejan de colgar de la escalera de un producto
+-- Las ofertas de combo se conservan en `ofertas` --son datos validos y el
+-- esquema las soporta-- pero dejan de colgar de la escalera de un producto
 -- suelto. Cuando la app sepa vender varios productos a la vez, volveran por
 -- la puerta correcta.
 

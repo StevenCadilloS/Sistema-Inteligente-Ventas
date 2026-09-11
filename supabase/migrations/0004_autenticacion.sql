@@ -56,7 +56,7 @@ create unique index if not exists ux_clientes_correo
 -- `auth.uid()` va por EXECUTE y no como llamada directa a proposito: PL/pgSQL
 -- resuelve los nombres al compilar la funcion, asi que una llamada directa
 -- falla con `schema "auth" does not exist` en el momento de crearla, fuera de
--- Supabase — y un bloque EXCEPTION alrededor no ayuda, porque el error no
+-- Supabase -- y un bloque EXCEPTION alrededor no ayuda, porque el error no
 -- ocurre en ejecucion. Con EXECUTE, el nombre se resuelve al llamarla y el
 -- catch si puede atraparlo.
 create or replace function fn_cliente_actual()
@@ -89,7 +89,7 @@ end;
 $fn$;
 
 -- Para las pruebas fuera de Supabase: fija a mano quien es "el cliente en
--- curso". En Supabase no se usa nunca — alli manda el token — y por eso no se
+-- curso". En Supabase no se usa nunca -- alli manda el token -- y por eso no se
 -- concede a anon ni a authenticated.
 create or replace function fn_simular_sesion(p_id_cliente bigint)
 returns void
@@ -107,7 +107,7 @@ comment on function fn_cliente_actual is
 --
 -- Se llama una vez, despues de que Supabase Auth creo la cuenta: crea la ficha
 -- de negocio y la ata al uid del token. La firma anterior (nombre libre, sin
--- identidad) queda reemplazada — ya no se puede crear un cliente anonimo.
+-- identidad) queda reemplazada -- ya no se puede crear un cliente anonimo.
 
 drop function if exists fn_registrar_cliente(text, text, text, text, text);
 

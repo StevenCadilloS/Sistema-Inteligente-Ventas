@@ -241,7 +241,7 @@ create index if not exists ix_detalle_venta_venta
 --
 -- La app lee el catalogo y nada mas. No puede insertar ni actualizar ninguna
 -- tabla: las tres escrituras que necesita pasan por funciones validadas en
--- 0002_funciones.sql. Que no pueda hacer INSERT no es decorativo — si pudiera,
+-- 0002_funciones.sql. Que no pueda hacer INSERT no es decorativo -- si pudiera,
 -- tambien podria hacer UPDATE de precios, y la clave esta dentro del APK.
 -- ============================================================================
 
