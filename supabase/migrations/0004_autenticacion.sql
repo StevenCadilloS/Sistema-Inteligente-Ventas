@@ -51,7 +51,7 @@ create unique index if not exists ux_clientes_correo
 -- tiene ficha de cliente.
 --
 -- `auth.uid()` no existe fuera de Supabase; en un Postgres pelado la funcion
--- devuelve null y las pruebas usan fn_cliente_actual_para_pruebas.
+-- cae a la sesion simulada que fija fn_simular_sesion, definida mas abajo.
 
 -- `auth.uid()` va por EXECUTE y no como llamada directa a proposito: PL/pgSQL
 -- resuelve los nombres al compilar la funcion, asi que una llamada directa
