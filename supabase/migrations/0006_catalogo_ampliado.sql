@@ -144,8 +144,10 @@ select o.id_oferta, p.id_producto, v.orden, 1
     ('Cargador Rapido 65W',              'Descuento 10%', 1)
 
     -- Sin escalera a proposito: Lampara de Escritorio, Organizador Multiuso y
-    -- Polo Basico. Son el caso de la regla 8, y conviene tenerlo a mano en la
-    -- demostracion junto a la Laptop HP que ya lo cubria.
+    -- Polo Basico, que se suman a la Laptop HP de 0003. Son el caso de la
+    -- regla 8 —sin oferta el precio no se mueve— y conviene tenerlo a mano en
+    -- la demostracion. Cuatro sobre veinte productos: suficiente para que
+    -- aparezca sin que la tienda parezca que no negocia.
   ) as v(producto, oferta, orden)
   join productos p on p.nombre = v.producto
   join ofertas   o on o.nombre = v.oferta
@@ -181,3 +183,29 @@ delete from ofertas_productos op
 
 -- Los huecos de orden que deja el delete no importan: fn_ofertas_de ordena
 -- por `orden`, no exige que sea consecutivo.
+
+-- --------------- REPONER LO QUE EL DELETE DEJO SIN ESCALERA ---------------
+--
+-- Sacar los combos tuvo un efecto que hay que reparar: los Audifonos Sony y el
+-- Teclado Logitech tenian el combo como UNICO escalon, asi que se quedaron sin
+-- nada que ofrecer. Eran productos que la demostracion presentaba como
+-- negociables, y sin esto pasan a comportarse como los de la regla 8 por
+-- accidente, no por diseno.
+--
+-- El Mouse conserva su "Descuento 10%", que 0003 le habia dado ademas del
+-- combo, asi que no necesita reparacion.
+
+insert into ofertas_productos (id_oferta, id_producto, orden, cantidad)
+select o.id_oferta, p.id_producto, v.orden, 1
+  from (values
+    ('Audifonos Sony WH-CH520', 'Descuento 10%', 1),
+    ('Audifonos Sony WH-CH520', 'Descuento 20%', 2),
+    ('Teclado Logitech K380',   'Descuento 10%', 1),
+    ('Teclado Logitech K380',   'Descuento 20%', 2)
+  ) as v(producto, oferta, orden)
+  join productos p on p.nombre = v.producto
+  join ofertas   o on o.nombre = v.oferta
+ where not exists (
+   select 1 from ofertas_productos op
+    where op.id_producto = p.id_producto and op.orden = v.orden
+ );
