@@ -23,56 +23,77 @@ class EmotionChannelHandler(
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         val diagnosticMode = (arguments as? Map<*, *>)?.get("diagnostic") == true
         emotionProcessor.reset()
-        cameraManager.startCamera { frame ->
-            emotionDetector.detectEmotion(
-                frame,
-                onResult = { crudo ->
-                    if (diagnosticMode) {
-                        mainHandler.post {
-                            events?.success(
-                                mapOf(
-                                    "emotion" to crudo.emotion,
-                                    "confidence" to crudo.confidence,
-                                    "smileProbability" to crudo.smileProbability,
-                                    "status" to crudo.status,
+        cameraManager.startCamera(
+            onFrameCaptured = { frame ->
+                emotionDetector.detectEmotion(
+                    frame,
+                    onResult = { crudo ->
+                        if (diagnosticMode) {
+                            mainHandler.post {
+                                events?.success(
+                                    mapOf(
+                                        "emotion" to crudo.emotion,
+                                        "confidence" to crudo.confidence,
+                                        "smileProbability" to crudo.smileProbability,
+                                        "status" to crudo.status,
+                                    )
                                 )
-                            )
+                            }
+                            return@detectEmotion
                         }
-                        return@detectEmotion
-                    }
 
-                    val procesado = emotionProcessor.process(crudo)
-                    if (procesado.rostroPerdido) {
-                        // Sin este aviso la UI se quedaba con la ultima
-                        // respuesta para siempre aunque ya no haya nadie
-                        // delante de la camara.
-                        mainHandler.post {
-                            events?.success(
-                                mapOf(
-                                    "emotion" to EmotionResult.NO_FACE,
-                                    "confidence" to 0.0f,
+                        val procesado = emotionProcessor.process(crudo)
+                        if (procesado.rostroPerdido) {
+                            // Sin este aviso la UI se quedaba con la ultima
+                            // respuesta para siempre aunque ya no haya nadie
+                            // delante de la camara.
+                            mainHandler.post {
+                                events?.success(
+                                    mapOf(
+                                        "emotion" to EmotionResult.NO_FACE,
+                                        "confidence" to 0.0f,
+                                    )
                                 )
+                            }
+                        } else if (procesado.isStable) {
+                            // EventSink.success() es @UiThread, pero este callback
+                            // corre en el executor de ML Kit: sin el post al hilo
+                            // principal, Flutter lanza "Methods marked with
+                            // @UiThread must be executed on the main thread" y el
+                            // evento nunca cruza a Dart.
+                            mainHandler.post {
+                                events?.success(
+                                    mapOf(
+                                        "emotion" to procesado.emotion,
+                                        "confidence" to procesado.confidence,
+                                    )
+                                )
+                            }
+                        }
+                    },
+                    onError = { error ->
+                        Log.e(TAG, "error detectando emocion", error)
+                        mainHandler.post {
+                            events?.error(
+                                "DETECTOR_ERROR",
+                                "No se pudo analizar la imagen de la camara.",
+                                null
                             )
                         }
-                    } else if (procesado.isStable) {
-                        // EventSink.success() es @UiThread, pero este callback
-                        // corre en el executor de ML Kit: sin el post al hilo
-                        // principal, Flutter lanza "Methods marked with
-                        // @UiThread must be executed on the main thread" y el
-                        // evento nunca cruza a Dart.
-                        mainHandler.post {
-                            events?.success(
-                                mapOf(
-                                    "emotion" to procesado.emotion,
-                                    "confidence" to procesado.confidence,
-                                )
-                            )
-                        }
-                    }
-                },
-                onError = { error -> Log.e(TAG, "error detectando emocion", error) },
-            )
-        }
+                    },
+                )
+            },
+            onError = { error ->
+                Log.e(TAG, "no se pudo iniciar la camara", error)
+                mainHandler.post {
+                    events?.error(
+                        "CAMERA_UNAVAILABLE",
+                        error.message ?: "No se pudo iniciar la camara.",
+                        null
+                    )
+                }
+            }
+        )
     }
 
     override fun onCancel(arguments: Any?) {

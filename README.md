@@ -33,6 +33,12 @@ Instala `Sistema-Inteligente-Ventas-solo-detector.apk`. Esta variante:
 La APK de prueba y la APK normal comparten identificador Android, por lo que no
 se instalan simultáneamente: una reemplaza a la otra.
 
+En la APK normal también aparece el botón de rostro en la barra superior para
+abrir esta prueba. Android solicita el permiso de cámara al comenzar la prueba
+o al seleccionar un producto con ofertas activas. Si el permiso fue rechazado
+permanentemente, hay que habilitarlo en **Ajustes → Aplicaciones → Tienda
+Adaptativa → Permisos → Cámara**.
+
 Aplicación Android (Flutter + Kotlin) que clasifica la respuesta facial del
 cliente con la cámara frontal y la usa para avanzar por una secuencia de
 ofertas que un administrador configuró antes.

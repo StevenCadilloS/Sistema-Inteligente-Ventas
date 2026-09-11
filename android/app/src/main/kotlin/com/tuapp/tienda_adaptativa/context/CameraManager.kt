@@ -45,6 +45,7 @@ class CameraManager(
 
     // Callback que se ejecuta cuando se obtiene un frame
     private var onFrameCaptured: ((ImageProxy) -> Unit)? = null
+    private var onCameraError: ((Throwable) -> Unit)? = null
 
     ///**
     // * Verifica si la app tiene permiso de cámara concedido.
@@ -71,8 +72,12 @@ class CameraManager(
     // *                        El caller es responsable de cerrar el ImageProxy
     // *                        después de procesarlo.
     // */
-    fun startCamera(onFrameCaptured: (ImageProxy) -> Unit) {
+    fun startCamera(
+        onFrameCaptured: (ImageProxy) -> Unit,
+        onError: (Throwable) -> Unit = {}
+    ) {
         this.onFrameCaptured = onFrameCaptured
+        this.onCameraError = onError
         isRunning = true
 
         if (!hasPermission()) {
@@ -159,7 +164,7 @@ class CameraManager(
                 )
             }
         } catch (error: Exception) {
-            error.printStackTrace()
+            onCameraError?.invoke(error)
         }
     }
 
@@ -173,6 +178,13 @@ class CameraManager(
         if (isGranted) {
             // Permiso concedido: iniciar cámara con el callback previamente configurado
             onFrameCaptured?.let { bindCameraUseCases() }
+        } else {
+            isRunning = false
+            onCameraError?.invoke(
+                SecurityException(
+                    "Permiso de camara rechazado. Habilitalo desde Ajustes de Android."
+                )
+            )
         }
     }
 }

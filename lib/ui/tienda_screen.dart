@@ -8,6 +8,7 @@ import '../data/repositories/tienda_repository.dart';
 import '../decision/negociacion.dart';
 import '../services/emotion_channel.dart';
 import '../theme/app_theme.dart';
+import 'detector_test_screen.dart';
 import 'widgets/banner_esperando.dart';
 import 'widgets/chip_emocion.dart';
 import 'widgets/compras_realizadas.dart';
@@ -74,6 +75,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
 
   String? _emocionDetectada;
   double _confianza = 0;
+  String? _errorCamara;
   OverlayEntry? _overlay;
 
   /// Compras cerradas en esta sesion, con lo realmente pagado por cada una.
@@ -197,26 +199,47 @@ class _TiendaScreenState extends State<TiendaScreen> {
   }
 
   void _encenderCamara() {
-    _emociones = widget.emotionChannel.emociones.listen((e) {
-      if (!mounted) return;
+    setState(() => _errorCamara = null);
+    _emociones = widget.emotionChannel.emociones.listen(
+      (e) {
+        if (!mounted) return;
 
-      if (e.emotion == 'no_face') {
-        // El rostro salio de cuadro: el chip vuelve a "Leyendo..." en vez de
-        // quedarse congelado con la ultima emocion.
+        if (e.emotion == 'no_face') {
+          // El rostro salio de cuadro: el chip vuelve a "Leyendo..." en vez de
+          // quedarse congelado con la ultima emocion.
+          setState(() {
+            _emocionDetectada = null;
+            _confianza = 0;
+          });
+          return;
+        }
+
+        _lecturas.add(e.emotion);
+        setState(() {
+          _emocionDetectada = e.emotion;
+          _confianza = e.confidence;
+        });
+        _refrescarPopup();
+      },
+      onError: (Object error) {
+        if (!mounted) return;
+        _ventana?.cancel();
+        _ventana = null;
+        _emociones?.cancel();
+        _emociones = null;
+        _lecturas.clear();
         setState(() {
           _emocionDetectada = null;
           _confianza = 0;
+          _errorCamara =
+              'Camara bloqueada. Habilita el permiso desde Ajustes de Android.';
         });
-        return;
-      }
-
-      _lecturas.add(e.emotion);
-      setState(() {
-        _emocionDetectada = e.emotion;
-        _confianza = e.confidence;
-      });
-      _refrescarPopup();
-    });
+        _refrescarPopup();
+        _avisar(
+          'Activa Camara en Ajustes > Aplicaciones > Tienda Adaptativa > Permisos.',
+        );
+      },
+    );
   }
 
   /// Abre una ventana de observacion. Al cerrarse se clasifica lo leido y se
@@ -374,6 +397,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
       setState(() {
         _emocionDetectada = null;
         _confianza = 0;
+        _errorCamara = null;
       });
     }
   }
@@ -410,6 +434,17 @@ class _TiendaScreenState extends State<TiendaScreen> {
     );
   }
 
+  Future<void> _abrirPruebaDetector() async {
+    if (_negociando) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DetectorTestScreen(
+          emotionChannel: widget.emotionChannel,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final estilo = EmotionStyle.of(_emocionDetectada ?? 'neutral');
@@ -428,6 +463,11 @@ class _TiendaScreenState extends State<TiendaScreen> {
               detectando: detectando,
               confianza: _confianza,
             ),
+          IconButton(
+            icon: const Icon(Icons.face_retouching_natural),
+            tooltip: 'Probar detector y camara',
+            onPressed: _negociando ? null : _abrirPruebaDetector,
+          ),
           Stack(
             alignment: Alignment.center,
             children: [
@@ -527,7 +567,10 @@ class _TiendaScreenState extends State<TiendaScreen> {
                       duration: const Duration(milliseconds: 250),
                       child: BannerEsperando(
                         key: const ValueKey('esperando'),
+                        negociando: _negociando,
+                        camaraEncendida: _camaraEncendida,
                         detectando: detectando,
+                        errorCamara: _errorCamara,
                       ),
                     ),
                   ),

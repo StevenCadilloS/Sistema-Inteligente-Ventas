@@ -59,8 +59,11 @@ class _DetectorTestScreenState extends State<DetectorTestScreen> {
       },
       onError: (Object error) {
         if (!mounted) return;
+        _subscription?.cancel();
+        _subscription = null;
         setState(() {
-          _error = 'No se pudo iniciar el detector. Revisa el permiso de camara.';
+          _error = 'Camara bloqueada. Ve a Ajustes > Aplicaciones > '
+              'Tienda Adaptativa > Permisos y habilita Camara.';
           _leyendo = false;
         });
       },
