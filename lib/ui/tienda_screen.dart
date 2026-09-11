@@ -34,7 +34,7 @@ class TiendaScreen extends StatefulWidget {
     required this.emotionChannel,
     required this.tienda,
     this.clasificador = const ClasificadorRespuesta(),
-    this.ventanaObservacion = const Duration(seconds: 8),
+    this.ventanaObservacion = const Duration(seconds: 3),
   });
 
   final SesionService sesion;
@@ -46,15 +46,9 @@ class TiendaScreen extends StatefulWidget {
 
   /// Cuanto se observa antes de decidir.
   ///
-  /// El modulo nativo no entrega una lectura por frame: EmotionProcessor exige
-  /// 26 frames consecutivos de la misma emocion antes de declararla estable, y
-  /// a ~20 fps eso es ~1,3 s por lectura — mas si el rostro se mueve y el
-  /// contador se reinicia. Con una ventana de 4 s apenas caben dos, y en
-  /// condiciones reales a veces ninguna: la ventana se cerraba sin votos, el
-  /// clasificador devolvia sinSenal y la escalera no avanzaba nunca.
-  ///
-  /// 8 s deja sitio para 4-5 lecturas estables, que es lo que el clasificador
-  /// necesita para decidir por mayoria y no por casualidad.
+  /// El detector binario estabiliza una ventana movil de 12 frames y deja las
+  /// lecturas ambiguas como `incierto`. Tres segundos permiten reunir varias
+  /// salidas estables sin hacer esperar ocho segundos por cada escalon.
   final Duration ventanaObservacion;
 
   @override

@@ -15,7 +15,7 @@ class EmotionChannelHandler(
 ) : EventChannel.StreamHandler {
 
     private val cameraManager = CameraManager(activity)
-    private val emotionDetector = EmotionDetector(activity)
+    private val emotionDetector = EmotionDetector()
     private val emotionProcessor = EmotionProcessor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -27,8 +27,8 @@ class EmotionChannelHandler(
                     val procesado = emotionProcessor.process(crudo)
                     if (procesado.rostroPerdido) {
                         // Sin este aviso la UI se quedaba con la ultima
-                        // emocion para siempre (celular sobre la mesa
-                        // mostrando "triste 97%" sin nadie delante).
+                        // respuesta para siempre aunque ya no haya nadie
+                        // delante de la camara.
                         mainHandler.post {
                             events?.success(
                                 mapOf(

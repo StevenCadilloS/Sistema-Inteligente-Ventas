@@ -18,11 +18,14 @@ class EmotionProcessorTest {
 
     private val umbral = EmotionProcessor.DEFAULT_STABILITY_THRESHOLD
 
-    private fun feliz(confianza: Float = 0.9f) =
-        EmotionResult(EmotionResult.HAPPY, confianza)
+    private fun favorable(confianza: Float = 0.9f) =
+        EmotionResult(EmotionResult.FAVORABLE, confianza)
 
-    private fun triste(confianza: Float = 0.9f) =
-        EmotionResult(EmotionResult.SAD, confianza)
+    private fun desfavorable(confianza: Float = 0.9f) =
+        EmotionResult(EmotionResult.UNFAVORABLE, confianza)
+
+    private fun incierto(confianza: Float = 0.5f) =
+        EmotionResult.uncertain(confianza)
 
     private fun sinRostro() = EmotionResult.noFace()
 
@@ -40,7 +43,7 @@ class EmotionProcessorTest {
     fun `no confirma nada antes de llenar la ventana`() {
         val processor = EmotionProcessor()
 
-        val resultado = processor.alimentar(feliz(), umbral - 1)
+        val resultado = processor.alimentar(favorable(), umbral - 1)
 
         assertFalse(resultado.isStable)
     }
@@ -49,10 +52,10 @@ class EmotionProcessorTest {
     fun `confirma la emocion cuando domina la ventana`() {
         val processor = EmotionProcessor()
 
-        val resultado = processor.alimentar(feliz(), umbral)
+        val resultado = processor.alimentar(favorable(), umbral)
 
         assertTrue(resultado.isStable)
-        assertEquals(EmotionResult.HAPPY, resultado.emotion)
+        assertEquals(EmotionResult.FAVORABLE, resultado.emotion)
     }
 
     /**
@@ -64,18 +67,18 @@ class EmotionProcessorTest {
     fun `un frame suelto sin rostro no descarta la ventana`() {
         val processor = EmotionProcessor()
 
-        processor.alimentar(feliz(), umbral - 1)
+        processor.alimentar(favorable(), umbral - 1)
         processor.process(sinRostro()) // parpadeo de ML Kit
-        val resultado = processor.process(feliz())
+        val resultado = processor.process(favorable())
 
         assertTrue(resultado.isStable)
-        assertEquals(EmotionResult.HAPPY, resultado.emotion)
+        assertEquals(EmotionResult.FAVORABLE, resultado.emotion)
     }
 
     @Test
     fun `perder el rostro de verdad se avisa una sola vez`() {
         val processor = EmotionProcessor()
-        processor.alimentar(feliz(), umbral)
+        processor.alimentar(favorable(), umbral)
 
         val avisos = (1..EmotionProcessor.MAX_FRAMES_SIN_ROSTRO * 2).count {
             processor.process(sinRostro()).rostroPerdido
@@ -88,7 +91,7 @@ class EmotionProcessorTest {
     @Test
     fun `sin rostro se reporta no_face y no una emocion estable`() {
         val processor = EmotionProcessor()
-        processor.alimentar(feliz(), umbral)
+        processor.alimentar(favorable(), umbral)
 
         val resultado = processor.process(sinRostro())
 
@@ -104,30 +107,30 @@ class EmotionProcessorTest {
     @Test
     fun `una emocion nueva sin ventaja clara no desplaza a la vigente`() {
         val processor = EmotionProcessor()
-        processor.alimentar(feliz(), umbral)
+        processor.alimentar(favorable(), umbral)
 
         // Empate practico: la mitad de la ventana pasa a triste.
-        val resultado = processor.alimentar(triste(), umbral / 2)
+        val resultado = processor.alimentar(desfavorable(), umbral / 2)
 
-        assertEquals(EmotionResult.HAPPY, resultado.emotion)
+        assertEquals(EmotionResult.FAVORABLE, resultado.emotion)
     }
 
     @Test
     fun `una emocion sostenida si desplaza a la vigente`() {
         val processor = EmotionProcessor()
-        processor.alimentar(feliz(), umbral)
+        processor.alimentar(favorable(), umbral)
 
-        val resultado = processor.alimentar(triste(), umbral)
+        val resultado = processor.alimentar(desfavorable(), umbral)
 
         assertTrue(resultado.isStable)
-        assertEquals(EmotionResult.SAD, resultado.emotion)
+        assertEquals(EmotionResult.UNFAVORABLE, resultado.emotion)
     }
 
     @Test
     fun `la confianza reportada promedia solo los frames de la emocion ganadora`() {
         val processor = EmotionProcessor()
 
-        val resultado = processor.alimentar(feliz(confianza = 0.8f), umbral)
+        val resultado = processor.alimentar(favorable(confianza = 0.8f), umbral)
 
         assertEquals(0.8f, resultado.confidence, 0.01f)
     }
@@ -135,11 +138,21 @@ class EmotionProcessorTest {
     @Test
     fun `reset deja el filtro como recien creado`() {
         val processor = EmotionProcessor()
-        processor.alimentar(feliz(), umbral)
+        processor.alimentar(favorable(), umbral)
 
         processor.reset()
-        val resultado = processor.process(feliz())
+        val resultado = processor.process(favorable())
 
         assertFalse(resultado.isStable)
+    }
+
+    @Test
+    fun `la zona incierta se conserva como incierta`() {
+        val processor = EmotionProcessor()
+
+        val resultado = processor.alimentar(incierto(), umbral)
+
+        assertTrue(resultado.isStable)
+        assertEquals(EmotionResult.UNCERTAIN, resultado.emotion)
     }
 }

@@ -108,11 +108,7 @@ class AppTheme {
   }
 }
 
-/// Como se ve cada una de las 5 emociones del pipeline (ver
-/// lib/decision/adaptation_engine.dart) en la UI: color de acento, icono y
-/// etiqueta en espanol. Es la pieza que hace visible el requisito de
-/// "funcionalidad adaptativa" (8 pts, Taller 01.pdf) - la tarjeta de oferta
-/// cambia de identidad visual sola, sin que el usuario toque nada.
+/// Presentacion de la respuesta facial binaria en la UI.
 class EmotionStyle {
   const EmotionStyle({
     required this.label,
@@ -131,6 +127,22 @@ class EmotionStyle {
   );
 
   static const _porEmocion = <String, EmotionStyle>{
+    'favorable': EmotionStyle(
+      label: 'Respuesta favorable',
+      color: AppTheme.success,
+      icon: Icons.sentiment_satisfied_alt,
+    ),
+    'desfavorable': EmotionStyle(
+      label: 'Respuesta desfavorable',
+      color: AppTheme.danger,
+      icon: Icons.sentiment_dissatisfied,
+    ),
+    'incierto': EmotionStyle(
+      label: 'Lectura incierta',
+      color: AppTheme.mutedText,
+      icon: Icons.help_outline,
+    ),
+    // Estilos legados para registros anteriores a la migracion.
     'triste': EmotionStyle(
       label: 'Triste',
       color: Color(0xFF64748B),

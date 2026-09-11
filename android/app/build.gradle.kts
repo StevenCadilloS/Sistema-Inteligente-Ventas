@@ -55,17 +55,13 @@ flutter {
 }
 
 dependencies {
-    // Modulo nativo: camara, deteccion facial y clasificacion de emociones (ver README)
+    // Modulo nativo: camara y clasificacion binaria de respuesta facial.
     val cameraxVersion = "1.3.4"
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
 
     implementation("com.google.mlkit:face-detection:16.1.6")
-    // 2.16.1 (no 2.14.0): tensorflow-lite y tensorflow-lite-api 2.14.0
-    // declaran el mismo namespace de manifest, lo que rompe el manifest
-    // merger con AGP moderno. 2.16.1 lo corrige; misma API (org.tensorflow.lite.*).
-    implementation("org.tensorflow:tensorflow-lite:2.16.1")
 
     // Pruebas JVM del modulo nativo (no requieren emulador ni dispositivo):
     // EmotionProcessor es logica pura y se puede verificar aqui.

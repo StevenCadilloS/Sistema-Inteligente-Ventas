@@ -8,11 +8,11 @@ import java.util.ArrayDeque
  * Fase 2 del pipeline adaptativo.
  *
  * Responsabilidades:
- * - Recibir emociones crudas provenientes de EmotionDetector.
+ * - Recibir respuestas binarias crudas provenientes de EmotionDetector.
  * - Mantener una ventana de N frames.
- * - Confirmar una emocion solo si se repite durante N frames consecutivos.
- * - Calcular la confianza promedio de la emocion estable.
- * - Conservar la ultima emocion estable mientras la lectura aun oscila.
+ * - Confirmar una respuesta solo cuando domina una ventana de N frames.
+ * - Calcular la confianza promedio de la respuesta estable.
+ * - Conservar la ultima respuesta estable mientras la lectura aun oscila.
  *
  * Flujo:
  * EmotionResult -> buffer de N frames -> ProcessedEmotion
@@ -23,7 +23,7 @@ class EmotionProcessor(
 
     private val buffer = ArrayDeque<EmotionResult>()
 
-    private var currentStableEmotion: String = EmotionResult.NEUTRAL
+    private var currentStableEmotion: String = EmotionResult.UNCERTAIN
     private var currentStableConfidence: Float = 0f
     private var framesSinRostro: Int = 0
 
@@ -138,32 +138,32 @@ class EmotionProcessor(
     @Synchronized
     fun reset() {
         buffer.clear()
-        currentStableEmotion = EmotionResult.NEUTRAL
+        currentStableEmotion = EmotionResult.UNCERTAIN
         currentStableConfidence = 0f
         framesSinRostro = 0
     }
 
     companion object {
         /**
-         * Tamano de la ventana de votacion. A ~20 fps reales en dispositivo,
-         * 20 frames son ~1s: filtra el ruido del clasificador sin que la app
-         * se sienta lenta.
+         * La salida binaria de ML Kit es mas estable que el antiguo modelo de
+         * cinco clases. Doce frames filtran parpadeos sin imponer la espera de
+         * 26 frames que hacia lenta la respuesta.
          */
-        const val DEFAULT_STABILITY_THRESHOLD = 26
+        const val DEFAULT_STABILITY_THRESHOLD = 12
 
         /**
          * Cuantos votos de ventaja necesita una emocion nueva para desplazar
          * a la vigente. Evita el ida y vuelta entre dos clases empatadas.
          */
-        const val MARGEN_PARA_CAMBIAR = 6
+        const val MARGEN_PARA_CAMBIAR = 3
 
         /**
          * Fraccion de la ventana que una emocion debe ganar para confirmarse.
-         * 0.45 y no mas alto porque medido en dispositivo la clase correcta
-         * gana con ~54% de los frames (el resto se reparte entre 4 clases, y
-         * el azar seria 20%): con 0.6 no se confirmaba ninguna emocion nunca.
+         * En un problema binario se exige una mayoria clara. Las lecturas de
+         * la zona gris llegan como `incierto`, por lo que no se fuerza una
+         * reaccion ambigua a favorable o desfavorable.
          */
-        const val MAYORIA_MINIMA = 0.45f
+        const val MAYORIA_MINIMA = 0.65f
 
         const val MAX_FRAMES_SIN_ROSTRO = 5
     }

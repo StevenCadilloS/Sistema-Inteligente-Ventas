@@ -1,10 +1,10 @@
 # Sistema Inteligente de Ventas - Tienda Adaptativa
 
-Aplicación Android (Flutter + Kotlin) que lee la respuesta emocional del
+Aplicación Android (Flutter + Kotlin) que clasifica la respuesta facial del
 cliente con la cámara frontal y la usa para avanzar por una secuencia de
 ofertas que un administrador configuró antes.
 
-> **La emoción no calcula el descuento.** Decide si el sistema se queda donde
+> **La respuesta facial no calcula el descuento.** Decide si el sistema se queda donde
 > está o pasa al siguiente escalón de una escalera que vive en la base de
 > datos. La app no inventa precios.
 
@@ -39,16 +39,15 @@ no el código.
 
 ### Clasificación de la respuesta
 
-| Grupo | Emociones | Efecto |
+| Resultado | Criterio | Efecto |
 |---|---|---|
-| **Favorable** | `happy`, `surprise` | Mantiene el precio actual |
-| **Desfavorable** | `neutral`, `sad`, `angry` | Avanza un escalón |
-| **Sin señal** | `no_face`, o pocas lecturas | No hace nada |
+| **Favorable** | Sonrisa ≥ 65% | Mantiene el precio actual |
+| **Desfavorable** | Sonrisa ≤ 35% | Avanza un escalón |
+| **Incierto** | Zona intermedia, mala pose o rostro pequeño | No hace nada |
+| **Sin señal** | `no_face` | No hace nada |
 
-Se cuentan votos en una ventana de observación, no una sola lectura. `neutral`
-cuenta como desfavorable por decisión de producto — conviene saber que eso hace
-que la mayoría de clientes vea avanzar la escalera, porque la cara en reposo
-frente a una pantalla suele clasificarse así.
+Se cuentan votos en una ventana de observación, no una sola lectura. La franja
+incierta evita convertir una lectura ambigua en descuento.
 
 ---
 
@@ -59,7 +58,7 @@ frente a una pantalla suele clasificarse así.
 | Backend: esquema, funciones validadas, RLS, Storage | ✅ 6 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
 | Motor de negociación (escalera de ofertas) | ✅ 46 pruebas Dart |
-| Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
+| Detección facial y clasificación binaria (Kotlin nativo) | ✅ ML Kit, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
 | Catálogo de demostración | ✅ 20 productos en 7 categorías |
@@ -72,7 +71,7 @@ frente a una pantalla suele clasificarse así.
 | Vive en el APK (celular) | Vive en el servidor |
 |---|---|
 | Las pantallas | El catálogo, precios y stock |
-| **La detección de emociones** (sin subir imágenes) | Las ofertas y **su orden** |
+| **La clasificación de respuesta facial** (sin subir imágenes) | Las ofertas y **su orden** |
 | Decidir *cuándo* pedir el siguiente escalón | El registro de ventas |
 | | Las reglas: límite diario, stock, que el total cuadre |
 
@@ -104,7 +103,7 @@ extrae, así que las escrituras pasan por funciones que validan las reglas.
 | Componente | Tecnología |
 |---|---|
 | Framework | Flutter 3.47.x (Dart 3.13.x) |
-| Módulo nativo | Kotlin — CameraX, ML Kit, TensorFlow Lite |
+| Módulo nativo | Kotlin — CameraX y ML Kit |
 | Base de datos | PostgreSQL vía [Supabase](https://supabase.com) (Apache-2.0, autohospedable) |
 | Identidad | Supabase Auth — bcrypt en un esquema al que la app no accede |
 | Tiempo real | Supabase Realtime (WebSocket) |
@@ -126,11 +125,11 @@ Android); las dos últimas en **Dart**.
 ```
 ┌──────────────── CELULAR ────────────────┐     ┌──── SERVIDOR ────┐
 │                                          │     │                  │
-│  CameraX ──> ML Kit ──> TensorFlow Lite  │     │  v_catalogo      │
+│  CameraX ──> ML Kit (clasif. binaria)     │     │  v_catalogo      │
 │                   │                      │     │  v_secuencia_    │
 │                   v                      │     │    ofertas       │
 │         EmotionProcessor                 │     │                  │
-│    (26 frames para estabilizar)          │     │  fn_ofertas_de   │
+│    (12 frames para estabilizar)          │     │  fn_ofertas_de   │
 │                   │                      │     │  fn_registrar_   │
 │          EventChannel                    │     │    venta         │
 │                   │                      │     │  fn_historial    │
@@ -164,10 +163,10 @@ Android); las dos últimas en **Dart**.
 ├── android/app/src/main/
 │   ├── kotlin/com/tuapp/tienda_adaptativa/
 │   │   ├── context/CameraManager.kt              FASE 1: captura
-│   │   ├── context/EmotionDetector.kt            FASE 1: ML Kit + TFLite
+│   │   ├── context/EmotionDetector.kt            FASE 1: ML Kit binario
 │   │   ├── processing/EmotionProcessor.kt        FASE 2: filtro de estabilidad
 │   │   └── channel/EmotionChannelHandler.kt      expone el pipeline a Flutter
-│   └── assets/emotion_model.tflite               modelo FER-2013
+│   └── assets/emotion_model.tflite               legado, ya no se carga
 │
 ├── supabase/
 │   ├── migrations/                               0001 a 0006

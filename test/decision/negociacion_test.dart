@@ -31,6 +31,24 @@ void main() {
   ];
 
   group('clasificacion de la respuesta', () {
+    test('acepta directamente las etiquetas del detector binario', () {
+      expect(
+        clasificador.clasificar(['favorable', 'favorable']),
+        Respuesta.favorable,
+      );
+      expect(
+        clasificador.clasificar(['desfavorable', 'desfavorable']),
+        Respuesta.desfavorable,
+      );
+    });
+
+    test('una lectura binaria incierta no vota', () {
+      expect(
+        clasificador.clasificar(['incierto', 'incierto', 'favorable']),
+        Respuesta.sinSenal,
+      );
+    });
+
     const clasificador = ClasificadorRespuesta();
 
     test('happy y surprise son favorables', () {
@@ -259,7 +277,7 @@ void main() {
   });
 
   group('minimo de votos', () {
-    /// Cada lectura del modulo nativo ya viene filtrada por 26 frames
+    /// Cada lectura del modulo nativo ya viene filtrada por 12 frames
     /// consecutivos (~1,3 s), asi que dos lecturas son ~3 s de cara sostenida:
     /// suficiente para decidir. Con el minimo en 3 se perdian ventanas enteras.
     test('dos lecturas bastan para decidir', () {

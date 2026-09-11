@@ -2,19 +2,14 @@ import '../data/modelos/modelos.dart';
 
 /// Como se clasifica la respuesta del cliente a lo que tiene delante.
 enum Respuesta {
-  /// `happy` o `surprise`: el cliente esta respondiendo bien a este precio.
+  /// El detector binario observa una respuesta facial favorable.
   favorable,
 
-  /// `neutral`, `sad` o `angry`: no termina de convencerle.
-  ///
-  /// `neutral` cuenta como desfavorable por decision de producto, siguiendo
-  /// las reglas del sistema. Conviene saber lo que implica: la cara en reposo
-  /// frente a una pantalla suele clasificarse como neutral, asi que la
-  /// mayoria de los clientes vera avanzar la escalera. Si algun dia la tienda
-  /// regala mas margen del que quiere, este es el primer sitio donde mirar.
+  /// El detector binario observa una respuesta facial desfavorable.
   desfavorable,
 
-  /// No hubo cara suficiente para decidir (`no_face`, o una ventana vacia).
+  /// No hubo cara suficiente para decidir (`no_face`, `incierto` o ventana
+  /// vacia).
   /// No es favorable ni desfavorable: no se hace nada.
   sinSenal,
 }
@@ -33,14 +28,19 @@ class ClasificadorRespuesta {
   /// Cuantas lecturas hacen falta para decidir. Con menos, se considera que no
   /// hubo senal suficiente.
   ///
-  /// Son 2 y no 3 porque cada lectura ya viene filtrada: el modulo nativo solo
-  /// emite tras 26 frames consecutivos de la misma emocion (~1,3 s), asi que
-  /// una lectura aqui no es un fotograma suelto sino un segundo largo de cara
-  /// sostenida. Exigir 3 dejaba ventanas enteras sin decidir.
+  /// Son 2 porque cada lectura ya viene filtrada por una ventana movil de 12
+  /// fotogramas en el modulo nativo. Una lectura aqui nunca es un fotograma
+  /// suelto.
   final int minimoVotos;
 
-  static const _favorables = {'feliz', 'sorpresa', 'happy', 'surprise'};
+  static const _favorables = {
+    'favorable',
+    // Compatibilidad con el detector multiclase anterior.
+    'feliz', 'sorpresa', 'happy', 'surprise',
+  };
   static const _desfavorables = {
+    'desfavorable',
+    // Compatibilidad con el detector multiclase anterior.
     'neutral', 'triste', 'enojo', 'sad', 'angry',
   };
 
