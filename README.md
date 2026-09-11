@@ -1,4 +1,6 @@
-# Sistema Inteligente de Ventas - Tienda Adaptativa
+# Sistema Inteligente de Ventas — Modelo binario
+
+> Rama: `arbol-5.1(MODELO-BINARIO)`
 
 Aplicación Android (Flutter + Kotlin) que clasifica la respuesta facial del
 cliente con la cámara frontal y la usa para avanzar por una secuencia de
@@ -49,16 +51,56 @@ no el código.
 Se cuentan votos en una ventana de observación, no una sola lectura. La franja
 incierta evita convertir una lectura ambigua en descuento.
 
+### Detector binario
+
+Esta rama reemplaza el antiguo clasificador FER-2013 de cinco emociones por un
+detector binario alineado con la decisión que realmente necesita la tienda:
+
+```text
+CameraX
+  → ML Kit detecta el rostro y sus puntos faciales
+  → valida tamaño y posición de la cabeza
+  → obtiene smilingProbability
+  → favorable / desfavorable / incierto
+  → EmotionProcessor estabiliza 12 fotogramas
+  → EventChannel entrega el resultado a Flutter
+```
+
+El detector no afirma conocer el estado emocional interno de una persona.
+Interpreta una señal facial observable —principalmente la probabilidad de
+sonrisa— como respuesta comercial favorable o desfavorable. Esta distinción es
+importante: ausencia de sonrisa no demuestra tristeza, enojo ni rechazo.
+
+#### Controles de calidad
+
+| Control | Valor actual | Motivo |
+|---|---:|---|
+| Rostro mínimo | 96 × 96 px | Evitar clasificar caras sin suficiente detalle |
+| Yaw máximo | ±18° | ML Kit clasifica mejor rostros frontales |
+| Roll máximo | ±18° | Evitar lecturas con la cabeza inclinada |
+| Pitch máximo | ±20° | Evitar lecturas mirando demasiado arriba o abajo |
+| Umbral favorable | ≥ 0.65 | Exigir una sonrisa suficientemente clara |
+| Umbral desfavorable | ≤ 0.35 | Exigir ausencia suficientemente clara de sonrisa |
+| Zona incierta | 0.35–0.65 | No forzar señales ambiguas |
+| Ventana nativa | 12 fotogramas | Filtrar parpadeos sin introducir mucha demora |
+| Observación en Flutter | 3 segundos | Reunir varias lecturas estables antes de decidir |
+
+Los parámetros del primer bloque están centralizados en
+`BinaryResponseClassifier.kt`. No deben ajustarse usando solamente una persona:
+hay que probar distintas personas, distancias, tonos de piel, gafas y
+condiciones de iluminación.
+
 ---
 
 ## Estado actual
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | ✅ 6 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | ✅ 7 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
-| Motor de negociación (escalera de ofertas) | ✅ 46 pruebas Dart |
+| Motor de negociación (escalera de ofertas) | ✅ Pruebas Dart incluidas |
 | Detección facial y clasificación binaria (Kotlin nativo) | ✅ ML Kit, en el dispositivo |
+| Pruebas del clasificador y estabilizador binario | ✅ Pruebas JVM incluidas |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
 | Catálogo de demostración | ✅ 20 productos en 7 categorías |
@@ -163,13 +205,15 @@ Android); las dos últimas en **Dart**.
 ├── android/app/src/main/
 │   ├── kotlin/com/tuapp/tienda_adaptativa/
 │   │   ├── context/CameraManager.kt              FASE 1: captura
-│   │   ├── context/EmotionDetector.kt            FASE 1: ML Kit binario
+│   │   ├── context/EmotionDetector.kt            integración con ML Kit
+│   │   ├── context/BinaryResponseClassifier.kt   umbrales, pose y clase binaria
+│   │   ├── context/EmotionResult.kt               contrato de resultados
 │   │   ├── processing/EmotionProcessor.kt        FASE 2: filtro de estabilidad
 │   │   └── channel/EmotionChannelHandler.kt      expone el pipeline a Flutter
 │   └── assets/emotion_model.tflite               legado, ya no se carga
 │
 ├── supabase/
-│   ├── migrations/                               0001 a 0006
+│   ├── migrations/                               0001 a 0007
 │   ├── tests/                                    3 suites SQL + ejecutar.sh
 │   └── README.md                                 guía del backend y administración
 │
@@ -198,27 +242,31 @@ Los detalles están en [requirements.txt](requirements.txt).
 # 1. Clonar
 git clone https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas.git
 cd Sistema-Inteligente-Ventas
+git switch "arbol-5.1(MODELO-BINARIO)"
 
 # 2. Dependencias de Flutter
 flutter pub get
 
-# 3. Backend: crear el proyecto en Supabase y aplicar las 6 migraciones
+# 3. Backend: crear el proyecto en Supabase y aplicar las 7 migraciones
 #    de supabase/migrations/ en orden (ver supabase/README.md)
 
 # 4. Credenciales: copiar env.example.json a env.json y poner ahí la URL y
 #    la publishable key del proyecto
 cp env.example.json env.json
 
-# 5. Pruebas (no necesitan celular, emulador ni backend)
+# 5. Pruebas Dart (no necesitan celular, emulador ni backend)
 flutter test
 
-# 6. Ejecutar
+# 6. Compilar Android: también valida el código Kotlin del detector
+flutter build apk --debug --dart-define-from-file=env.json
+
+# 7. Ejecutar
 flutter run --dart-define-from-file=env.json              # en celular
 flutter run -d chrome --dart-define-from-file=env.json    # en navegador
 ```
 
 > En navegador funciona el catálogo, el login y la compra, pero **no la
-> detección de emociones**: es un módulo nativo de Android. La negociación se
+> clasificación de respuesta facial**: es un módulo nativo de Android. La negociación se
 > queda en el precio normal.
 
 ### Pruebas del backend
@@ -243,10 +291,13 @@ La cámara se pide al iniciar la primera interacción, no al abrir la app.
 ## Cómo demostrar la adaptación
 
 1. Entrar con una cuenta y seleccionar la **Laptop Lenovo IdeaPad** (tiene los tres escalones)
-2. Mirar la cámara con expresión neutra → la escalera avanza sola
-3. Sonreír → se queda donde está
+2. Mantener el rostro frontal y sin sonreír → la respuesta puede clasificarse como desfavorable
+3. Sonreír claramente → se clasifica como favorable y mantiene el precio
 4. Pulsar **"No, gracias"** → avanza al siguiente escalón, igual que una cara desfavorable
 5. Seleccionar la **Laptop HP Pavilion** → no tiene ofertas, el precio no se mueve pase lo que pase
+
+Durante la prueba, una mala pose, un rostro lejano o una probabilidad intermedia
+debe mostrarse como **Lectura incierta** y no debe avanzar la oferta.
 
 Para ver el límite diario: comprar dos veces y seleccionar un tercer producto.
 La escalera viene vacía y todo se queda a precio normal.
