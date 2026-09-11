@@ -80,21 +80,33 @@ $do$;
 -- Devuelve null si se le pasa null, para que asignarla a un producto sin foto
 -- no invente una URL rota.
 
+-- Nota de sintaxis, que costo una migracion fallida: las cadenas de este
+-- cuerpo NO pueden contener la secuencia de dos guiones seguida de barras.
+-- El SQL Editor del panel la trata como inicio de comentario aunque este
+-- dentro de comillas, y a partir de ahi comenta el resto de la funcion,
+-- incluido el $fn$ de cierre: el error que sale es "unterminated
+-- dollar-quoted string", que no dice nada de la causa. Por eso el prefijo
+-- se compone con concat en vez de escribirse literal.
 create or replace function fn_url_imagen(p_archivo text)
 returns text
 language plpgsql
 stable
 as $fn$
 declare
-  v_base text;
+  v_base   text;
+  v_ruta   text := '/storage/v1/object/public/productos/';
+  v_es_url boolean;
 begin
   if p_archivo is null or btrim(p_archivo) = '' then
     return null;
   end if;
 
   -- Una URL completa se devuelve tal cual: permite mezclar fotos del bucket
-  -- con otras alojadas fuera.
-  if p_archivo like 'http://%' or p_archivo like 'https://%' then
+  -- con otras alojadas fuera. El patron se arma con concat para no escribir
+  -- las barras dobles literalmente (ver la nota de arriba).
+  v_es_url := p_archivo like concat('http', '://', '%')
+           or p_archivo like concat('https', '://', '%');
+  if v_es_url then
     return p_archivo;
   end if;
 
@@ -111,10 +123,10 @@ begin
   if v_base is null or v_base = '' then
     -- Fuera de Supabase (o sin ese ajuste) se devuelve una ruta relativa, que
     -- es inutil para la app pero honesta: mejor que una URL inventada.
-    return '/storage/v1/object/public/productos/' || p_archivo;
+    return v_ruta || p_archivo;
   end if;
 
-  return v_base || '/storage/v1/object/public/productos/' || p_archivo;
+  return v_base || v_ruta || p_archivo;
 end;
 $fn$;
 
