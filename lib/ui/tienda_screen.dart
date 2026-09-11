@@ -77,10 +77,31 @@ class _TiendaScreenState extends State<TiendaScreen> {
   /// Compras cerradas en esta sesion, con lo realmente pagado por cada una.
   final List<CompraRealizada> _compras = [];
 
+  /// Hay sesion pero falta la ficha de cliente. Se puede mirar el catalogo,
+  /// no comprar.
+  bool _sinFicha = false;
+
   @override
   void initState() {
     super.initState();
     _escucharCatalogo();
+    _comprobarFicha();
+  }
+
+  /// Hay sesion, pero puede no haber ficha de cliente: pasa si la app se
+  /// cerro justo despues de confirmar el correo, o si la cuenta se creo desde
+  /// otro dispositivo. Sin ficha, fn_cliente_actual() devuelve null y la
+  /// tienda no podria ni ofertar ni vender — mejor detectarlo al entrar que
+  /// cuando el cliente ya eligio un producto.
+  Future<void> _comprobarFicha() async {
+    try {
+      final id = await widget.tienda.clienteActual();
+      if (!mounted) return;
+      setState(() => _sinFicha = id == null);
+    } catch (_) {
+      // Un fallo de red aqui no debe bloquear la tienda: el catalogo se lee
+      // igual, y al comprar el servidor volveria a decir que falta sesion.
+    }
   }
 
   @override
@@ -127,6 +148,11 @@ class _TiendaScreenState extends State<TiendaScreen> {
   /// nada que negociar y se ofrece a precio normal sin encender nada.
   Future<void> _seleccionarProducto(Producto producto) async {
     if (_negociando) return;
+
+    if (_sinFicha) {
+      _avisar('Completa tu registro para poder comprar.');
+      return;
+    }
 
     if (_yaComprado(producto)) {
       _avisar('Ya compraste ${producto.nombre} en esta sesion.');

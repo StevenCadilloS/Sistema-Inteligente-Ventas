@@ -256,4 +256,37 @@ void main() {
       expect(catalogo.map((e) => e.nombre), ['Disponible']);
     });
   });
+
+  group('confirmacion de correo', () {
+    /// Con "Confirm email" activado en Supabase, signUp no devuelve sesion: el
+    /// usuario tiene cuenta en auth.users pero todavia no ficha en `clientes`.
+    /// La ficha se crea al ingresar por primera vez, y hasta entonces la app
+    /// esta autenticada pero sin cliente.
+    test('con sesion pero sin ficha, clienteActual devuelve null', () async {
+      // Se simula el estado intermedio: sesion abierta, ninguna ficha creada.
+      repo.iniciarSesion(99);
+      expect(await repo.clienteActual(), 99);
+
+      repo.iniciarSesion(null);
+      expect(
+        await repo.clienteActual(),
+        isNull,
+        reason: 'sin sesion no hay cliente que devolver',
+      );
+    });
+
+    test('registrarCliente es idempotente: llamarla de mas no duplica', () async {
+      final primera = await entrarComo('Ana');
+      final segunda = await repo.registrarCliente(nombre: 'Ana');
+      final tercera = await repo.registrarCliente(nombre: 'Ana');
+
+      expect(segunda, primera);
+      expect(tercera, primera);
+      expect(
+        repo.clientes.length,
+        1,
+        reason: 'confirmar el correo y volver a entrar no crea clientes nuevos',
+      );
+    });
+  });
 }

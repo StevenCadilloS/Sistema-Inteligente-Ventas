@@ -36,6 +36,10 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _cargando = false;
   String? _error;
 
+  /// La cuenta se creo pero falta abrir el correo. Se muestra un aviso propio
+  /// en vez de un mensaje de error, porque no hay nada que corregir.
+  bool _confirmacionPendiente = false;
+
   @override
   void dispose() {
     _correo.dispose();
@@ -77,24 +81,27 @@ class _LoginScreenState extends State<LoginScreen> {
         );
 
         // Si el proyecto exige confirmar el correo, la sesion viene null. No
-        // es un fallo: falta que el usuario abra su correo.
+        // es un fallo: falta que el usuario abra su correo. La ficha de
+        // negocio no se puede crear todavia —fn_registrar_cliente exige
+        // sesion— asi que se crea al ingresar, con [_asegurarFicha].
         if (respuesta.session == null) {
           if (!mounted) return;
           setState(() {
             _cargando = false;
             _registrando = false;
-            _error = 'Revisa tu correo para confirmar la cuenta y luego ingresa.';
+            _confirmacionPendiente = true;
+            _error = null;
           });
           return;
         }
 
-        // Con sesion ya abierta se crea la ficha de negocio.
-        await widget.tienda.registrarCliente(
-          nombre: _nombre.text.trim(),
-          paterno: _apellido.text.trim().isEmpty ? null : _apellido.text.trim(),
-        );
+        await _asegurarFicha();
       } else {
         await widget.sesion.ingresar(correo: correo, clave: clave);
+        // Quien confirmo su correo entra por aqui la primera vez, todavia sin
+        // ficha: sin ella fn_cliente_actual() devuelve null y no podria ni
+        // comprar ni ver ofertas.
+        await _asegurarFicha();
       }
 
       if (!mounted) return;
@@ -110,6 +117,54 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _cargando = false;
         _error = 'No se pudo continuar: $e';
+      });
+    }
+  }
+
+  /// Crea la ficha de negocio si el usuario todavia no la tiene.
+  ///
+  /// `fn_registrar_cliente` es idempotente: si ya existe devuelve la suya, asi
+  /// que llamarla de mas no duplica nada. El nombre solo se usa cuando hay que
+  /// crearla; si el usuario confirmo su correo en otro dispositivo y el
+  /// formulario de ingreso no lo pidio, se cae al nombre del correo, que el
+  /// cliente puede corregir despues.
+  Future<void> _asegurarFicha() async {
+    final yaTiene = await widget.tienda.clienteActual();
+    if (yaTiene != null) return;
+
+    final nombre = _nombre.text.trim();
+    await widget.tienda.registrarCliente(
+      nombre: nombre.isEmpty ? _correo.text.trim().split('@').first : nombre,
+      paterno: _apellido.text.trim().isEmpty ? null : _apellido.text.trim(),
+    );
+  }
+
+  Future<void> _recuperarClave() async {
+    final correo = _correo.text.trim();
+    if (correo.isEmpty) {
+      setState(() => _error = 'Escribe tu correo y vuelve a pulsar.');
+      return;
+    }
+
+    setState(() {
+      _cargando = true;
+      _error = null;
+    });
+
+    try {
+      await widget.sesion.recuperarClave(correo);
+      if (!mounted) return;
+      setState(() {
+        _cargando = false;
+        // No se dice si la cuenta existe: eso revelaria a cualquiera que
+        // correos estan registrados en la tienda.
+        _error = 'Si esa cuenta existe, le enviamos un correo para cambiar la clave.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cargando = false;
+        _error = 'No se pudo enviar el correo: $e';
       });
     }
   }
@@ -151,6 +206,44 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 24),
+
+                  // Cuenta creada, falta abrir el correo. No es un error: no
+                  // hay nada que corregir en el formulario, solo un paso
+                  // pendiente fuera de la app.
+                  if (_confirmacionPendiente) ...[
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppTheme.success.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppTheme.success.withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          const Icon(
+                            Icons.mark_email_unread_outlined,
+                            color: AppTheme.success,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Revisa tu correo',
+                            style: textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Te enviamos un enlace a ${_correo.text.trim()}. '
+                            'Abrelo para confirmar la cuenta y despues ingresa '
+                            'aqui con tu clave.',
+                            textAlign: TextAlign.center,
+                            style: textTheme.bodyMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
 
                   if (_registrando) ...[
                     TextField(
@@ -222,6 +315,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           )
                         : Text(_registrando ? 'Crear cuenta' : 'Ingresar'),
                   ),
+                  if (!_registrando)
+                    TextButton(
+                      onPressed: _cargando ? null : _recuperarClave,
+                      child: const Text('Olvide mi clave'),
+                    ),
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: _cargando
@@ -229,6 +327,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         : () => setState(() {
                             _registrando = !_registrando;
                             _error = null;
+                            _confirmacionPendiente = false;
                           }),
                     child: Text(
                       _registrando
