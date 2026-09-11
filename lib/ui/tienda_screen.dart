@@ -182,6 +182,12 @@ class _TiendaScreenState extends State<TiendaScreen> {
     // deja al cliente decidir, con la camara apagada.
     if (escalera.isEmpty) return;
 
+    // Sin detector (web, escritorio) tampoco: la oferta se queda en el precio
+    // normal, que es lo que corresponde cuando no hay senal que interpretar.
+    // Abrir la ventana igual dejaria al cliente esperando una evaluacion que
+    // nunca llega.
+    if (!widget.emotionChannel.disponible) return;
+
     _encenderCamara();
     _abrirVentana();
   }

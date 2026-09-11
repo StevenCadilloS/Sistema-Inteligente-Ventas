@@ -65,24 +65,27 @@ where not exists (select 1 from clientes c where c.correo = v.correo);
 --
 -- Precios en centavos: S/2500.00 = 250000.
 
+-- Sin imagen: cada producto muestra el icono de su categoria hasta que el
+-- administrador suba una foto al bucket `productos` (ver 0005). Sembrar
+-- nombres de archivo aqui solo servia para que la app pidiera 404s.
 insert into productos (id_categoria, id_marca, nombre, descripcion,
-                       precio_centavos, stock, imagen)
+                       precio_centavos, stock)
 select c.id_categoria, m.id_marca, v.nombre, v.descripcion,
-       v.precio_centavos, v.stock, v.imagen
+       v.precio_centavos, v.stock
   from (values
     ('Laptops',    'Lenovo',   'Laptop Lenovo IdeaPad',
-     'Laptop para uso academico y oficina',  250000, 10, 'laptop_lenovo.jpg'),
+     'Laptop para uso academico y oficina',  250000, 10),
     ('Laptops',    'HP',       'Laptop HP Pavilion',
-     'Laptop para trabajo y estudio',        280000,  8, 'laptop_hp.jpg'),
+     'Laptop para trabajo y estudio',        280000,  8),
     ('Celulares',  'Samsung',  'Samsung Galaxy A55',
-     'Smartphone Samsung Galaxy',            150000, 15, 'galaxy_a55.jpg'),
+     'Smartphone Samsung Galaxy',            150000, 15),
     ('Accesorios', 'Logitech', 'Mouse Logitech G203',
-     'Mouse gamer',                           12000, 30, 'mouse_g203.jpg'),
+     'Mouse gamer',                           12000, 30),
     ('Accesorios', 'Logitech', 'Teclado Logitech K380',
-     'Teclado inalambrico',                   18000, 20, 'teclado_k380.jpg'),
+     'Teclado inalambrico',                   18000, 20),
     ('Audifonos',  'Sony',     'Audifonos Sony WH-CH520',
-     'Audifonos inalambricos',                25000, 12, 'sony_ch520.jpg')
-  ) as v(categoria, marca, nombre, descripcion, precio_centavos, stock, imagen)
+     'Audifonos inalambricos',                25000, 12)
+  ) as v(categoria, marca, nombre, descripcion, precio_centavos, stock)
   join categorias c on c.nombre = v.categoria
   join marcas     m on m.nombre = v.marca
  where not exists (select 1 from productos p where p.nombre = v.nombre);
