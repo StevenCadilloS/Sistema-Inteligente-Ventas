@@ -316,7 +316,8 @@ class _TiendaScreenState extends State<TiendaScreen>
   /// Cierra el proceso de persuasion. Aceptar crea la venta con el precio
   /// realmente ofrecido (con descuento); rechazar no escribe nada, porque la
   /// ausencia de venta para ese idProcesoPersuasion *es* el rechazo — asi lo
-  /// mide el KPI 2 (ver queries.drift).
+  /// mide el KPI 2 (ver v_kpi2_ventas_sin_alternativa en
+  /// supabase/migrations/0002_funciones.sql).
   Future<void> _responderOferta(Oferta oferta, {required bool aceptada}) async {
     try {
       await widget.banditOptimizer.registrarRespuesta(

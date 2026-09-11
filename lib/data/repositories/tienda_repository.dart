@@ -94,6 +94,12 @@ class SinStockException implements Exception {
 /// La app no tiene a donde conectarse: falta configurar SUPABASE_URL y
 /// SUPABASE_ANON_KEY al compilar. Se distingue de un fallo de red para poder
 /// decirle al usuario que hacer en vez de un "error de conexion" generico.
+///
+/// Hoy no la lanza nadie: el caso se detecta antes de construir el
+/// repositorio, en `main()`, comprobando `SupabaseConfig.configurado`, y se
+/// resuelve mostrando [AppSinBackend] en vez de arrancar la tienda. Se
+/// conserva para quien implemente [TiendaRepository] contra otro backend que
+/// solo pueda descubrir la falta de credenciales al primer viaje de red.
 class BackendNoConfiguradoException implements Exception {
   const BackendNoConfiguradoException();
 

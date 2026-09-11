@@ -449,4 +449,102 @@ void main() {
       expect(rebajado.precioUnitarioCentavos, 5000, reason: 'el de lista no cambia');
     });
   });
+
+  group('tope del descuento acumulado', () {
+    /// La estrategia "Oferta relampago" (E0000004) suma 5 puntos al descuento
+    /// de la emocion. Sobre enojo (25%) eso da 30%, que es lo buscado. El
+    /// problema aparece al combinarlo con una promocion del administrador: la
+    /// base topa `ofertas.descuento_porcentaje` en 90 justamente para no
+    /// regalar el producto, pero ese tope no existe del lado de la app.
+    test('relampago sobre enojo suma 5 puntos al descuento de la emocion', () async {
+      final soloRelampago = FakeTiendaRepository(
+        clientes: const [codCliente],
+        productos: [p('P0000001', 'Audifonos Basicos', 'T00001', 5000)],
+        estrategias: const [
+          Estrategia(codEstrategia: 'E0000004', nombreEstrategia: 'Oferta relampago'),
+        ],
+      );
+      addTearDown(soloRelampago.cerrar);
+      final motor = AdaptationEngine(soloRelampago, BanditOptimizer(soloRelampago));
+
+      final oferta = await motor.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'enojo',
+        nivelDeInteres: 50,
+      );
+
+      expect(oferta.descuentoPorcentaje, 30, reason: '25 de enojo + 5 de relampago');
+    });
+
+    test('el descuento nunca pasa del 90%, el mismo tope que impone la base', () async {
+      final soloRelampago = FakeTiendaRepository(
+        clientes: const [codCliente],
+        productos: [p('P0000001', 'Audifonos Basicos', 'T00001', 5000)],
+        estrategias: const [
+          Estrategia(codEstrategia: 'E0000004', nombreEstrategia: 'Oferta relampago'),
+        ],
+      );
+      addTearDown(soloRelampago.cerrar);
+      final motor = AdaptationEngine(soloRelampago, BanditOptimizer(soloRelampago));
+
+      // El maximo que acepta la base para una promocion publicada.
+      await soloRelampago.publicarOferta('P0000001', descuento: 90);
+
+      final oferta = await motor.decidirOferta(
+        codCliente: codCliente,
+        emocion: 'enojo',
+        nivelDeInteres: 50,
+      );
+
+      expect(oferta.descuentoPorcentaje, lessThanOrEqualTo(90));
+      expect(
+        oferta.precioFinalCentavos,
+        greaterThan(0),
+        reason: 'un precio final de 0 o negativo ensucia todos los KPIs de monto',
+      );
+    });
+  });
+
+  group('estrategias que no tocan el precio', () {
+    /// E0000002 (envio gratis) y E0000003 (recomendacion premium) devuelven 0
+    /// como descuento adaptativo a proposito: persuaden sin rebajar. Pero la
+    /// promocion que publica el administrador es independiente de la
+    /// estrategia, y debe seguir aplicandose igual.
+    Future<Oferta> ofertaCon(String codEstrategia, {int? promocionAdmin}) async {
+      final r = FakeTiendaRepository(
+        clientes: const [codCliente],
+        productos: [p('P0000001', 'Audifonos Basicos', 'T00001', 5000)],
+        estrategias: [
+          Estrategia(codEstrategia: codEstrategia, nombreEstrategia: 'X'),
+        ],
+      );
+      addTearDown(r.cerrar);
+      if (promocionAdmin != null) {
+        await r.publicarOferta('P0000001', descuento: promocionAdmin);
+      }
+      return AdaptationEngine(r, BanditOptimizer(r)).decidirOferta(
+        codCliente: codCliente,
+        emocion: 'triste', // base 10%
+        nivelDeInteres: 50,
+      );
+    }
+
+    test('envio gratis no rebaja el precio pese a la emocion', () async {
+      final oferta = await ofertaCon('E0000002');
+      expect(oferta.descuentoPorcentaje, 0);
+      expect(oferta.texto, contains('envio gratis'));
+    });
+
+    test('la promocion del administrador se aplica aunque la estrategia no rebaje', () async {
+      final oferta = await ofertaCon('E0000002', promocionAdmin: 20);
+
+      expect(oferta.descuentoPorcentaje, 20, reason: 'la promocion del admin manda');
+      expect(oferta.descuentoDelAdministrador, isTrue);
+      expect(
+        oferta.precioFinalCentavos,
+        4000,
+        reason: 'el precio ofrecido debe coincidir con el que anuncia el feed',
+      );
+    });
+  });
 }
