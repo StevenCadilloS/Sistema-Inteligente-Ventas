@@ -31,6 +31,8 @@ void main() {
   ];
 
   group('clasificacion de la respuesta', () {
+    const clasificador = ClasificadorRespuesta();
+
     test('acepta directamente las etiquetas del detector binario', () {
       expect(
         clasificador.clasificar(['favorable', 'favorable']),
@@ -48,8 +50,6 @@ void main() {
         Respuesta.sinSenal,
       );
     });
-
-    const clasificador = ClasificadorRespuesta();
 
     test('happy y surprise son favorables', () {
       expect(
