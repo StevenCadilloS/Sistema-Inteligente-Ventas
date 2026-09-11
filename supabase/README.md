@@ -32,6 +32,7 @@ imagen.
    - `migrations/0002_funciones.sql`
    - `migrations/0003_semilla.sql`
    - `migrations/0004_autenticacion.sql`
+   - `migrations/0005_almacenamiento.sql`
 3. En **Settings → API**, copiar la *Project URL* y la *publishable key*
    (en proyectos antiguos se llama *anon key*).
 4. En la raiz del repositorio, copiar `env.example.json` a `env.json` y pegar
@@ -76,7 +77,33 @@ El **Table Editor** de Supabase es la vista de administracion.
 | `stock` | `7` |
 
 `id_producto` se deja vacio: la base asigna el siguiente. La imagen es
-opcional — acepta el nombre de un archivo de `assets/products/` o una URL.
+opcional: sin ella, la tarjeta muestra el icono de su categoria.
+
+### Poner la foto de un producto
+
+Las fotos no viven en la base —guardar binarios en PostgreSQL es caro y
+lento— sino en el bucket `productos` de **Storage**. La columna `imagen`
+guarda solo la referencia.
+
+1. **Storage → productos → Upload file**
+2. Asignarla al producto:
+
+```sql
+update productos set imagen = fn_url_imagen('laptop_lenovo.jpg')
+ where nombre = 'Laptop Lenovo IdeaPad';
+```
+
+`fn_url_imagen` arma la URL publica a partir del nombre del archivo, sin
+tener que recordar el formato ni el id del proyecto. Si se le pasa una URL
+completa la devuelve tal cual, asi que tambien se pueden usar fotos alojadas
+fuera.
+
+El bucket es de **lectura publica** porque el catalogo se ve sin iniciar
+sesion: sus fotos no son un secreto, y un bucket privado obligaria a firmar
+cada URL y renovarla al caducar para proteger algo que cualquiera ve abriendo
+la tienda. **Subir, reemplazar y borrar exigen ser administrador**: la clave
+publica va dentro del APK, y quien la extraiga no debe poder poner cualquier
+imagen en las tarjetas que ven los clientes.
 
 ### Publicar una oferta
 
@@ -234,7 +261,8 @@ supabase/
 │   ├── 0001_esquema.sql      tablas, RLS y permisos
 │   ├── 0002_funciones.sql    vistas, escrituras validadas y Realtime
 │   ├── 0003_semilla.sql      catalogo de demostracion
-│   └── 0004_autenticacion.sql  identidad del cliente y RLS personal
+│   ├── 0004_autenticacion.sql   identidad del cliente y RLS personal
+│   └── 0005_almacenamiento.sql  bucket de imagenes y sus politicas
 ├── tests/                    pruebas SQL + ejecutar.sh
 ├── docker-compose.yml        PostgreSQL local
 └── README.md
