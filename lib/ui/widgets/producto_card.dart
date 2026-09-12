@@ -55,6 +55,11 @@ class ProductoCard extends StatelessWidget {
     // producto y la camara empieza a leer su respuesta.
     final precio = soles(producto.precioCentavos);
 
+    // Sin stock, pero sigue en el feed: se apaga y se marca en vez de
+    // desaparecer, que es mas confuso cuando el catalogo se actualiza solo
+    // por Realtime. No se puede seleccionar mientras este asi.
+    final agotado = producto.stock <= 0;
+
     final bordeColor = seleccionado
         ? Colors.amber
         : destacado
@@ -90,7 +95,7 @@ class ProductoCard extends StatelessWidget {
           ),
         ),
         child: InkWell(
-          onTap: onTap,
+          onTap: agotado ? null : onTap,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -107,17 +112,46 @@ class ProductoCard extends StatelessWidget {
                   ),
                   child: Stack(
                     children: [
-                      Center(
-                        child: ImagenProducto(
-                          producto: producto,
-                          respaldo: Icon(icono, size: 40, color: color),
+                      Opacity(
+                        opacity: agotado ? 0.4 : 1,
+                        child: Center(
+                          child: ImagenProducto(
+                            producto: producto,
+                            respaldo: Icon(icono, size: 40, color: color),
+                          ),
                         ),
                       ),
+                      if (agotado)
+                        Positioned.fill(
+                          child: Center(
+                            child: Transform.rotate(
+                              angle: -0.35,
+                              child: Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 6,
+                                ),
+                                color: Colors.amber,
+                                alignment: Alignment.center,
+                                child: const Text(
+                                  'AGOTADO',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                       // Que el producto tenga ofertas se anuncia, pero no
                       // cual ni de cuanto: el escalon que le toque a este
                       // cliente se decide durante la negociacion, y adelantar
                       // el 30% aqui haria que nadie se quedara en el 10%.
-                      if (producto.tieneOfertas)
+                      if (producto.tieneOfertas && !agotado)
                         Positioned(
                           top: 8,
                           right: 8,
@@ -233,12 +267,14 @@ class ProductoCard extends StatelessWidget {
                     // Realtime: si otro cliente compra la ultima unidad, este
                     // numero baja aqui sin que nadie refresque nada.
                     Text(
-                      producto.stock <= 3
-                          ? 'Quedan ${producto.stock}'
-                          : '${producto.stock} disponibles',
+                      agotado
+                          ? 'Agotado'
+                          : producto.stock <= 3
+                              ? 'Quedan ${producto.stock}'
+                              : '${producto.stock} disponibles',
                       style: textTheme.bodyMedium?.copyWith(
                         fontSize: 11,
-                        color: producto.stock <= 3
+                        color: agotado || producto.stock <= 3
                             ? AppTheme.danger
                             : AppTheme.mutedText,
                       ),

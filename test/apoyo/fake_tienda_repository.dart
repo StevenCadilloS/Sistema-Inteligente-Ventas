@@ -57,7 +57,7 @@ class FakeTiendaRepository implements TiendaRepository {
 
   @override
   Future<List<Producto>> catalogo() async =>
-      _productos.where((p) => p.disponible).toList();
+      _productos.where((p) => p.activo).toList();
 
   @override
   Stream<List<Producto>> observarCatalogo() {

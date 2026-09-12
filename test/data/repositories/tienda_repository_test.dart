@@ -19,11 +19,18 @@ void main() {
   const idLenovo = 1;
   const idHp = 2;
 
-  Producto p(int id, String nombre, int precio, {int stock = 10}) => Producto(
+  Producto p(
+    int id,
+    String nombre,
+    int precio, {
+    int stock = 10,
+    bool activo = true,
+  }) => Producto(
     idProducto: id,
     nombre: nombre,
     precioCentavos: precio,
     stock: stock,
+    activo: activo,
     tieneOfertas: id == idLenovo,
   );
 
@@ -243,17 +250,22 @@ void main() {
   });
 
   group('catalogo', () {
-    test('solo trae lo disponible', () async {
+    test('incluye los agotados, pero no los inactivos', () async {
+      // Un producto sin stock se queda en el feed marcado como agotado: que
+      // desaparezca de golpe confunde mas de lo que ayuda. Uno desactivado
+      // por el administrador si se quita, porque ya no se vende ni se
+      // repondra.
       final conAgotado = FakeTiendaRepository(
         productos: [
           p(idLenovo, 'Disponible', 1000),
           p(idHp, 'Agotado', 1000, stock: 0),
+          p(3, 'Inactivo', 1000, activo: false),
         ],
       );
       addTearDown(conAgotado.cerrar);
 
       final catalogo = await conAgotado.catalogo();
-      expect(catalogo.map((e) => e.nombre), ['Disponible']);
+      expect(catalogo.map((e) => e.nombre), ['Disponible', 'Agotado']);
     });
   });
 

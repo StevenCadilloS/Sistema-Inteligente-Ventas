@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../modelos/modelos.dart';
@@ -37,11 +38,10 @@ class SupabaseTiendaRepository implements TiendaRepository {
 
   @override
   Future<List<Producto>> catalogo() async {
-    final filas = await _cliente
-        .from('v_catalogo')
-        .select()
-        .eq('activo', true)
-        .gt('stock', 0);
+    // Sin el filtro de stock: los agotados se quedan en el feed, marcados
+    // como tal, en vez de desaparecer. Que un producto se esfume de golpe
+    // confunde mas que verlo con la franja de "Agotado".
+    final filas = await _cliente.from('v_catalogo').select().eq('activo', true);
     return filas.map(Producto.desdeFila).toList();
   }
 
@@ -76,7 +76,15 @@ class SupabaseTiendaRepository implements TiendaRepository {
               table: 'ofertas_productos',
               callback: (_) => _programarRelectura(controlador),
             )
-            .subscribe();
+            .subscribe((status, error) {
+              // Sin esto, un fallo de suscripcion (canal caido, token
+              // vencido, limite del proyecto) queda mudo: el stream nunca
+              // vuelve a emitir y nada en los logs explica por que.
+              if (status == RealtimeSubscribeStatus.channelError ||
+                  status == RealtimeSubscribeStatus.timedOut) {
+                debugPrint('Realtime catalogo_publico: $status ($error)');
+              }
+            });
       },
       onCancel: () async {
         _reintento?.cancel();

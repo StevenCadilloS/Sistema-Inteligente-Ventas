@@ -148,6 +148,36 @@ void main() {
     });
   });
 
+  group('agotado', () {
+    testWidgets('sin stock muestra la franja y el texto', (tester) async {
+      await montar(tester, p(stock: 0));
+
+      expect(find.text('AGOTADO'), findsOneWidget);
+      expect(find.text('Agotado'), findsOneWidget);
+    });
+
+    testWidgets('con stock no muestra la franja', (tester) async {
+      await montar(tester, p(stock: 1));
+
+      expect(find.text('AGOTADO'), findsNothing);
+    });
+
+    testWidgets('sin stock no se puede pulsar', (tester) async {
+      var pulsado = false;
+      await montar(tester, p(stock: 0), onTap: () => pulsado = true);
+
+      await tester.tap(find.byType(ProductoCard));
+      expect(pulsado, isFalse);
+    });
+
+    testWidgets('sin stock no ofrece negociar aunque tenga ofertas', (tester) async {
+      // Nada que negociar si no hay unidades que vender.
+      await montar(tester, p(stock: 0, ofertas: true));
+
+      expect(find.text('Negociable'), findsNothing);
+    });
+  });
+
   group('imagen', () {
     testWidgets('sin imagen cae al icono de la categoria', (tester) async {
       await montar(tester, p(imagen: null));

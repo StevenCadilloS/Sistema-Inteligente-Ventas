@@ -68,7 +68,7 @@ class TiendaScreen extends StatefulWidget {
   State<TiendaScreen> createState() => _TiendaScreenState();
 }
 
-class _TiendaScreenState extends State<TiendaScreen> {
+class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver {
   List<Producto> _catalogo = const [];
   bool _cargando = true;
   String? _errorCatalogo;
@@ -99,8 +99,33 @@ class _TiendaScreenState extends State<TiendaScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _escucharCatalogo();
     _comprobarFicha();
+  }
+
+  /// Android/iOS suelen suspender el websocket de Realtime cuando la app pasa
+  /// a segundo plano. Al volver, el socket puede reconectarse solo, pero
+  /// cualquier evento ocurrido mientras estuvo desconectado se pierde — no
+  /// hay replay. Sin esto, el catalogo se queda congelado hasta cerrar sesion
+  /// y volver a entrar, que es lo que recrea la pantalla entera.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refrescarCatalogo();
+  }
+
+  /// Relectura directa del catalogo, al margen de Realtime. Sirve de red de
+  /// seguridad: si el stream se perdio un cambio, esto lo corrige sin
+  /// esperar al siguiente evento.
+  Future<void> _refrescarCatalogo() async {
+    try {
+      final productos = await widget.tienda.catalogo();
+      if (!mounted) return;
+      setState(() => _catalogo = productos);
+    } catch (_) {
+      // Si falla, el stream de Realtime sigue intentando por su cuenta; no
+      // hay que convertir esto en un error visible para el cliente.
+    }
   }
 
   /// Hay sesion, pero puede no haber ficha de cliente: pasa si la app se
@@ -130,6 +155,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
   @override
   void dispose() {
     _destruyendo = true;
+    WidgetsBinding.instance.removeObserver(this);
     _catalogoSubscription?.cancel();
     _terminarInteraccion(); // apaga la camara y cierra el popup
     super.dispose();
@@ -183,6 +209,13 @@ class _TiendaScreenState extends State<TiendaScreen> {
   /// nada que negociar y se ofrece a precio normal sin encender nada.
   Future<void> _seleccionarProducto(Producto producto) async {
     if (_negociando) return;
+
+    if (producto.stock <= 0) {
+      // Defensa por si el toque llego justo cuando Realtime todavia no habia
+      // pintado el agotado: la tarjeta ya deberia tener el onTap apagado.
+      _avisar('${producto.nombre} esta agotado.');
+      return;
+    }
 
     if (_sinFicha) {
       _avisar('Completa tu registro para poder comprar.');
