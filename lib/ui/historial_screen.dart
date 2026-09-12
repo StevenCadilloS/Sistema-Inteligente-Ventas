@@ -4,14 +4,11 @@ import '../data/modelos/modelos.dart';
 import '../data/repositories/tienda_repository.dart';
 import '../theme/app_theme.dart';
 
-/// Historial de interacciones del cliente activo.
+/// Las compras del cliente de la sesion.
 ///
-/// Antes hacia un join manual contra drift para resolver los nombres de gesto
-/// y estrategia; ahora esos joins los resuelve PostgREST en la misma consulta
-/// (ver SupabaseTiendaRepository.historial), asi que la pantalla solo pinta.
-///
-/// Se filtra por el cliente activo a proposito: la base es compartida y sin
-/// ese filtro cada usuario veria las interacciones de todos los demas.
+/// La pantalla solo pinta: los nombres de producto y oferta vienen resueltos
+/// desde el servidor (fn_historial), que ademas filtra por el cliente del
+/// token. No hay forma de pedir el historial de otra persona, ni por error.
 class HistorialScreen extends StatefulWidget {
   const HistorialScreen({
     super.key,
@@ -56,9 +53,13 @@ class _HistorialScreenState extends State<HistorialScreen> {
     }
   }
 
-  String _formatearFecha(DateTime fecha) =>
-      '${fecha.day}/${fecha.month}/${fecha.year} '
-      '${fecha.hour}:${fecha.minute.toString().padLeft(2, '0')}';
+  /// Todo con dos cifras: sin el relleno, las 9:05 se veian como "9:5" y el
+  /// 5 de marzo como "5/3".
+  String _formatearFecha(DateTime fecha) {
+    String dos(int n) => n.toString().padLeft(2, '0');
+    return '${dos(fecha.day)}/${dos(fecha.month)}/${fecha.year} '
+        '${dos(fecha.hour)}:${dos(fecha.minute)}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,7 +100,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
     if (_filas.isEmpty) {
       return Center(
         child: Text(
-          'No hay interacciones registradas',
+          'Aun no has comprado nada.',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
       );

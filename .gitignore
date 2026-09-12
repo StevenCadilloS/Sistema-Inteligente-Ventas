@@ -66,3 +66,4 @@ docs/graphify-out/.graphify_*.json
 # SQL generado por tools/catalogo/cargar_catalogo.py: es un artefacto, se
 # vuelve a generar desde el CSV cuando haga falta.
 /tools/catalogo/sql/
+coverage/
