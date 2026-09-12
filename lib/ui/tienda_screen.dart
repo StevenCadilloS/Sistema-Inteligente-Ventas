@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/modelos/modelos.dart';
-import '../data/remote/sesion_service.dart';
 import '../data/repositories/tienda_repository.dart';
 import '../decision/negociacion.dart';
 import '../services/emotion_channel.dart';
@@ -30,14 +29,22 @@ import 'widgets/titulo_feed.dart';
 class TiendaScreen extends StatefulWidget {
   const TiendaScreen({
     super.key,
-    required this.sesion,
+    required this.onCerrarSesion,
     required this.emotionChannel,
     required this.tienda,
     this.clasificador = const ClasificadorRespuesta(),
     this.ventanaObservacion = const Duration(seconds: 8),
   });
 
-  final SesionService sesion;
+  /// Que hacer al pulsar "cerrar sesion".
+  ///
+  /// Es un callback y no el SesionService entero porque ese servicio envuelve
+  /// el SDK de Supabase y no se puede construir sin un cliente vivo: exigirlo
+  /// aqui dejaba la pantalla imposible de montar en una prueba, que es justo
+  /// donde aparecieron los ultimos fallos (el boton de rechazar, la ventana
+  /// de observacion). La pantalla solo necesita saber a quien avisar.
+  final Future<void> Function() onCerrarSesion;
+
   final EmotionChannel emotionChannel;
   final TiendaRepository tienda;
 
@@ -112,11 +119,29 @@ class _TiendaScreenState extends State<TiendaScreen> {
     }
   }
 
+  /// Verdadero mientras la pantalla se esta destruyendo.
+  ///
+  /// `mounted` NO sirve para esto: sigue siendo true durante todo dispose(),
+  /// hasta que super.dispose() termina. Llamar setState ahi lanza
+  /// "_lifecycleState != _ElementLifecycle.defunct" — que es lo que pasaba al
+  /// salir de la tienda con una negociacion abierta.
+  bool _destruyendo = false;
+
   @override
   void dispose() {
+    _destruyendo = true;
     _catalogoSubscription?.cancel();
     _terminarInteraccion(); // apaga la camara y cierra el popup
     super.dispose();
+  }
+
+  /// setState solo si la pantalla sigue viva y no se esta destruyendo.
+  void _actualizar(VoidCallback cambio) {
+    if (_destruyendo || !mounted) {
+      cambio();
+      return;
+    }
+    setState(cambio);
   }
 
   bool get _negociando => _negociacion != null;
@@ -377,11 +402,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
     _apagarCamara();
     _overlay?.remove();
     _overlay = null;
-    if (mounted) {
-      setState(() => _negociacion = null);
-    } else {
-      _negociacion = null;
-    }
+    _actualizar(() => _negociacion = null);
   }
 
   void _apagarCamara() {
@@ -390,12 +411,10 @@ class _TiendaScreenState extends State<TiendaScreen> {
     _emociones?.cancel();
     _emociones = null;
     _lecturas.clear();
-    if (mounted) {
-      setState(() {
-        _emocionDetectada = null;
-        _confianza = 0;
-      });
-    }
+    _actualizar(() {
+      _emocionDetectada = null;
+      _confianza = 0;
+    });
   }
 
   // --------------- AYUDAS ---------------
@@ -417,7 +436,7 @@ class _TiendaScreenState extends State<TiendaScreen> {
 
   Future<void> _cerrarSesion() async {
     _terminarInteraccion();
-    await widget.sesion.cerrarSesion();
+    await widget.onCerrarSesion();
     if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/', (_) => false);
   }

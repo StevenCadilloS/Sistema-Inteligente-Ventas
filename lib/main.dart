@@ -75,7 +75,7 @@ class MyApp extends StatelessWidget {
       routes: {
         '/': (context) => LoginScreen(sesion: sesion, tienda: tienda),
         '/tienda': (context) => TiendaScreen(
-          sesion: sesion,
+          onCerrarSesion: sesion.cerrarSesion,
           emotionChannel: emotionChannel,
           tienda: tienda,
         ),
