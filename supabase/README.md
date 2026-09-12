@@ -33,7 +33,9 @@ imagen.
    - `migrations/0003_semilla.sql`
    - `migrations/0004_autenticacion.sql`
    - `migrations/0005_almacenamiento.sql`
-   - `migrations/0006_catalogo_ampliado.sql`
+   - `migrations/0006a_productos.sql`
+   - `migrations/0006b_escaleras.sql`
+   - `migrations/0006c_combos.sql`
    - `migrations/0007_indices.sql`
 3. En **Settings → API**, copiar la *Project URL* y la *publishable key*
    (en proyectos antiguos se llama *anon key*).
@@ -265,7 +267,9 @@ supabase/
 │   ├── 0003_semilla.sql      catalogo de demostracion
 │   ├── 0004_autenticacion.sql   identidad del cliente y RLS personal
 │   ├── 0005_almacenamiento.sql  bucket de imagenes y sus politicas
-│   ├── 0006_catalogo_ampliado.sql  20 productos en 7 categorias
+│   ├── 0006a_productos.sql      3 categorias, 4 marcas y 14 productos
+│   ├── 0006b_escaleras.sql      las escaleras de ofertas
+│   ├── 0006c_combos.sql         saca los combos de las escaleras sueltas
 │   └── 0007_indices.sql         indices de las consultas mas frecuentes
 ├── tests/                    pruebas SQL + ejecutar.sh
 ├── docker-compose.yml        PostgreSQL local

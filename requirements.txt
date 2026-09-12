@@ -36,7 +36,9 @@
 #                          supabase/migrations/0003_semilla.sql
 #                          supabase/migrations/0004_autenticacion.sql
 #                          supabase/migrations/0005_almacenamiento.sql
-#                          supabase/migrations/0006_catalogo_ampliado.sql
+#                          supabase/migrations/0006a_productos.sql
+#                          supabase/migrations/0006b_escaleras.sql
+#                          supabase/migrations/0006c_combos.sql
 #
 # ── Opcion B: PostgreSQL propio (autohospedado, sin cuentas) ──────────────
 # Podman 5.x o 6.x       https://podman.io      (o Docker 24+, equivalente)
