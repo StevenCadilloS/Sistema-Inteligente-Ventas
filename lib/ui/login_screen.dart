@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../data/remote/sesion_service.dart';
+import '../data/remote/autenticacion.dart';
 import '../data/repositories/tienda_repository.dart';
 import '../theme/app_theme.dart';
 
@@ -15,11 +14,16 @@ import '../theme/app_theme.dart';
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
-    required this.sesion,
+    required this.autenticacion,
     required this.tienda,
   });
 
-  final SesionService sesion;
+  /// La interfaz, no SesionService: ese envuelve el SDK de Supabase y no se
+  /// construye sin un cliente vivo, lo que dejaba esta pantalla imposible de
+  /// montar en una prueba. Y es donde vive el flujo mas delicado de la app:
+  /// crear la cuenta, crear la ficha de negocio, y no dejar al usuario a
+  /// medias entre las dos cosas.
+  final Autenticacion autenticacion;
   final TiendaRepository tienda;
 
   @override
@@ -75,16 +79,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       if (_registrando) {
-        final respuesta = await widget.sesion.registrarse(
+        final conSesion = await widget.autenticacion.registrarse(
           correo: correo,
           clave: clave,
         );
 
-        // Si el proyecto exige confirmar el correo, la sesion viene null. No
+        // Si el proyecto exige confirmar el correo, no hay sesion todavia. No
         // es un fallo: falta que el usuario abra su correo. La ficha de
-        // negocio no se puede crear todavia —fn_registrar_cliente exige
-        // sesion— asi que se crea al ingresar, con [_asegurarFicha].
-        if (respuesta.session == null) {
+        // negocio no se puede crear aun --fn_registrar_cliente exige sesion--
+        // asi que se crea al ingresar, con [_asegurarFicha].
+        if (!conSesion) {
           if (!mounted) return;
           setState(() {
             _cargando = false;
@@ -97,7 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         await _asegurarFicha();
       } else {
-        await widget.sesion.ingresar(correo: correo, clave: clave);
+        await widget.autenticacion.ingresar(correo: correo, clave: clave);
         // Quien confirmo su correo entra por aqui la primera vez, todavia sin
         // ficha: sin ella fn_cliente_actual() devuelve null y no podria ni
         // comprar ni ver ofertas.
@@ -106,11 +110,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/tienda');
-    } on AuthException catch (e) {
+    } on AutenticacionException catch (e) {
       if (!mounted) return;
       setState(() {
         _cargando = false;
-        _error = e.message;
+        _error = e.mensaje;
       });
     } catch (e) {
       if (!mounted) return;
@@ -152,7 +156,7 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await widget.sesion.recuperarClave(correo);
+      await widget.autenticacion.recuperarClave(correo);
       if (!mounted) return;
       setState(() {
         _cargando = false;

@@ -73,7 +73,7 @@ class MyApp extends StatelessWidget {
       theme: AppTheme.light,
       initialRoute: haySesion ? '/tienda' : '/',
       routes: {
-        '/': (context) => LoginScreen(sesion: sesion, tienda: tienda),
+        '/': (context) => LoginScreen(autenticacion: sesion, tienda: tienda),
         '/tienda': (context) => TiendaScreen(
           onCerrarSesion: sesion.cerrarSesion,
           emotionChannel: emotionChannel,

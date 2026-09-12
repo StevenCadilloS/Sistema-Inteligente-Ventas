@@ -1,12 +1,14 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'autenticacion.dart';
+
 /// Registro, ingreso y cierre de sesion contra Supabase Auth.
 ///
 /// La sesion la guarda y refresca el propio SDK en el almacenamiento seguro
 /// del dispositivo; aqui no se guarda ninguna credencial. Esa es la diferencia
 /// con la version anterior, que dejaba un id de cliente en SharedPreferences:
 /// aquello no era identidad, era una nota adhesiva en el telefono.
-class SesionService {
+class SesionService implements Autenticacion {
   SesionService(this._cliente);
 
   final SupabaseClient _cliente;
@@ -22,27 +24,48 @@ class SesionService {
   /// suscribe para llevar al usuario al login cuando su sesion caduca.
   Stream<AuthState> get cambios => _cliente.auth.onAuthStateChange;
 
-  /// Crea la cuenta. Segun la configuracion del proyecto, Supabase puede exigir
-  /// confirmar el correo antes de dejar entrar: en ese caso [Session] viene
-  /// null y no es un error, sino que falta ese paso.
-  Future<AuthResponse> registrarse({
+  /// Crea la cuenta. Devuelve true si ademas quedo con sesion abierta.
+  ///
+  /// Con "Confirm email" activado --el ajuste por defecto de Supabase-- signUp
+  /// no devuelve sesion: la cuenta existe pero sin confirmar. Devolver false
+  /// en vez de la AuthResponse entera evita que la pantalla tenga que conocer
+  /// las clases del SDK.
+  @override
+  Future<bool> registrarse({
     required String correo,
     required String clave,
-  }) {
-    return _cliente.auth.signUp(email: correo, password: clave);
+  }) async {
+    try {
+      final r = await _cliente.auth.signUp(email: correo, password: clave);
+      return r.session != null;
+    } on AuthException catch (e) {
+      throw AutenticacionException(e.message);
+    }
   }
 
-  Future<AuthResponse> ingresar({
+  @override
+  Future<void> ingresar({
     required String correo,
     required String clave,
-  }) {
-    return _cliente.auth.signInWithPassword(email: correo, password: clave);
+  }) async {
+    try {
+      await _cliente.auth.signInWithPassword(email: correo, password: clave);
+    } on AuthException catch (e) {
+      throw AutenticacionException(e.message);
+    }
   }
 
+  @override
   Future<void> cerrarSesion() => _cliente.auth.signOut();
 
   /// Envia el correo de recuperacion. No se distingue si la cuenta existe: eso
   /// diria a cualquiera que correos estan registrados en la tienda.
-  Future<void> recuperarClave(String correo) =>
-      _cliente.auth.resetPasswordForEmail(correo);
+  @override
+  Future<void> recuperarClave(String correo) async {
+    try {
+      await _cliente.auth.resetPasswordForEmail(correo);
+    } on AuthException catch (e) {
+      throw AutenticacionException(e.message);
+    }
+  }
 }

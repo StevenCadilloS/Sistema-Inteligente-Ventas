@@ -273,4 +273,58 @@ void main() {
       expect(c.clasificar(['triste']), Respuesta.sinSenal);
     });
   });
+
+  group('casos limite', () {
+    test('avanzar de mas no se sale del rango', () {
+      final n = Negociacion(producto: p(), escalera: escaleraCompleta());
+
+      // Veinte intentos sobre una escalera de tres: si `avanzar` no estuviera
+      // protegido, el acceso a _escalera[_posicion] reventaria con
+      // RangeError en el cuarto.
+      for (var i = 0; i < 20; i++) {
+        n.avanzar();
+      }
+
+      expect(n.escalonActual!.orden, 3);
+      expect(n.precioActualCentavos, 175000);
+    });
+
+    test('una escalera vacia no rompe nada', () {
+      final n = Negociacion(producto: p(), escalera: const []);
+
+      expect(n.escalonActual, isNull);
+      expect(n.totalEscalones, 0);
+      expect(n.descuentoCentavos, 0);
+      expect(n.mensaje, isNotEmpty);
+      for (var i = 0; i < 5; i++) {
+        expect(n.avanzar(), isFalse);
+      }
+    });
+
+    test('la escalera recibida no se puede modificar desde fuera', () {
+      final escalera = escaleraCompleta();
+      final n = Negociacion(producto: p(), escalera: escalera);
+
+      // Quien creo la negociacion no debe poder cambiarle la escalera por
+      // debajo: seria un precio distinto del que se mostro.
+      escalera.clear();
+
+      expect(n.totalEscalones, 3, reason: 'la lista se copia al construir');
+    });
+
+    test('un producto gratis no rompe el formato del precio', () {
+      final n = Negociacion(
+        producto: Producto(
+          idProducto: 9,
+          nombre: 'Muestra gratis',
+          precioCentavos: 0,
+          stock: 5,
+        ),
+        escalera: const [],
+      );
+
+      expect(n.precioActualCentavos, 0);
+      expect(n.mensaje, contains('S/0.00'));
+    });
+  });
 }
