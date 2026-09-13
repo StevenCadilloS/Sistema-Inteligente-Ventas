@@ -147,7 +147,31 @@ jobs:
       # compilado (AOT) y responde bastante mas rapido que la de depuracion.
       # R8 queda desactivado a proposito (ver android/app/build.gradle.kts):
       # eliminaba los ComponentRegistrar que ML Kit busca por reflexion.
-      - name: Compilar APK de release
+      # Dos compilaciones a proposito:
+      #
+      #   --split-per-abi  una APK por arquitectura. La universal llevaba las
+      #                    tres (arm64 28 MB + armeabi-v7a 22 MB + x86_64 32 MB):
+      #                    mas de la mitad del peso eran librerias que el
+      #                    telefono de cada uno no puede ejecutar. Como cada
+      #                    actualizacion descarga el paquete entero --Android no
+      #                    tiene actualizaciones parciales fuera de Play--, eso
+      #                    se paga en datos en cada version.
+      #
+      #   universal        respaldo para un equipo que no sea arm64. Practicamente
+      #                    ningun telefono actual lo necesita, pero si alguien lo
+      #                    tuviera, sin esto se quedaria sin poder instalar.
+      #
+      # `force-version-code-ignoring-abi` deja el mismo versionCode en todas.
+      # Por defecto Flutter le suma un desplazamiento por arquitectura (arm64
+      # queda en 2001, la universal en 1), y entonces Android rechaza instalar
+      # la universal sobre la de arm64 por considerarlo una vuelta atras.
+      - name: Compilar APK de release por arquitectura
+        run: |
+          flutter build apk --release --split-per-abi \
+            --dart-define-from-file=env.json \
+            -Pforce-version-code-ignoring-abi=true
+
+      - name: Compilar APK de release universal
         run: flutter build apk --release --dart-define-from-file=env.json
 
       # La de depuracion se publica para diagnosticar: deja leer los registros
@@ -163,23 +187,33 @@ jobs:
           RAMA: ${{ github.ref_name }}
         run: |
           mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            "dist/Sistema-Inteligente-Ventas-$SLUG-arm64.apk"
           cp build/app/outputs/flutter-apk/app-release.apk \
             "dist/Sistema-Inteligente-Ventas-$SLUG.apk"
           cp build/app/outputs/flutter-apk/app-debug.apk \
             "dist/Sistema-Inteligente-Ventas-$SLUG-debug.apk"
+
+          echo "Tamanos publicados:"
+          ls -lh dist/*.apk | awk '{print "  " $9 "  " $5}'
+
           cat > dist/notas-release.md <<NOTAS
           APK generada automaticamente desde la rama \`$RAMA\`.
 
           Cual descargar:
 
-          - \`Sistema-Inteligente-Ventas-$SLUG.apk\` (release): la normal.
-            Para instalar, usar y demostrar. Dart va compilado, responde mas rapido.
+          - \`Sistema-Inteligente-Ventas-$SLUG-arm64.apk\` — **esta es la normal**.
+            Pesa alrededor de la mitad que la universal porque trae solo las
+            librerias de arm64, que es lo que usa cualquier telefono actual. Es
+            la que ofrece el aviso de actualizacion dentro de la app.
+          - \`Sistema-Inteligente-Ventas-$SLUG.apk\` (universal): respaldo, por si
+            algun equipo no fuera arm64. Trae las tres arquitecturas.
           - \`Sistema-Inteligente-Ventas-$SLUG-debug.apk\`: solo para diagnosticar
             (registros con \`adb logcat\`). Los datos ya no se leen del celular: el
             catalogo, el stock y las ventas viven en la base compartida y se
             consultan desde el panel (ver supabase/README.md).
 
-          No instales las dos a la vez: la segunda reemplaza a la primera.
+          No instales dos a la vez: la segunda reemplaza a la primera.
           NOTAS
 
       - name: Guardar APK en la ejecución
@@ -207,6 +241,7 @@ jobs:
           fi
 
           gh release upload "$tag" \
+            "dist/Sistema-Inteligente-Ventas-$SLUG-arm64.apk" \
             "dist/Sistema-Inteligente-Ventas-$SLUG.apk" \
             "dist/Sistema-Inteligente-Ventas-$SLUG-debug.apk" \
             --clobber
@@ -233,7 +268,10 @@ jobs:
             echo "::warning::Sin el secreto SUPABASE_SERVICE_KEY, la app no podra avisar de esta version nueva."
             exit 0
           fi
-          apk_url="https://github.com/${{ github.repository }}/releases/download/${SLUG}-latest/Sistema-Inteligente-Ventas-${SLUG}.apk"
+          # Apunta a la de arm64, no a la universal: es la mitad de peso y la
+          # que sirve para cualquier telefono actual. Quien tenga un equipo
+          # distinto descarga la universal a mano desde la release.
+          apk_url="https://github.com/${{ github.repository }}/releases/download/${SLUG}-latest/Sistema-Inteligente-Ventas-${SLUG}-arm64.apk"
           curl -sf -X POST "$SUPABASE_URL/rest/v1/app_config" \
             -H "apikey: $SUPABASE_SERVICE_KEY" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
