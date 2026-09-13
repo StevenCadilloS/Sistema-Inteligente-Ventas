@@ -1,7 +1,19 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+// Datos de la clave de firma. El archivo NO esta en git (ver android/.gitignore):
+// en CI lo escribe el workflow a partir de los secretos del repositorio.
+val propiedadesFirma = Properties()
+val archivoFirma = rootProject.file("key.properties")
+val hayClavePropia = archivoFirma.exists()
+if (hayClavePropia) {
+    propiedadesFirma.load(FileInputStream(archivoFirma))
 }
 
 android {
@@ -29,11 +41,33 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            if (hayClavePropia) {
+                keyAlias = propiedadesFirma.getProperty("keyAlias")
+                keyPassword = propiedadesFirma.getProperty("keyPassword")
+                storeFile = file(propiedadesFirma.getProperty("storeFile"))
+                storePassword = propiedadesFirma.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Con clave propia, todas las APK comparten firma y una se instala
+            // encima de la anterior. Firmando con la de depuracion no: esa clave
+            // se genera sola en cada maquina que no la tenga, y cada runner de CI
+            // arranca limpio -- cada build salia con una firma distinta y Android
+            // rechazaba la actualizacion con "conflicto con un paquete", que es
+            // justo lo que rompia el aviso de actualizacion de la app.
+            //
+            // Sin key.properties (un clon recien hecho, sin los secretos) se
+            // vuelve a la de depuracion para que `flutter build apk` no falle.
+            signingConfig = if (hayClavePropia) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
 
             // ML Kit descubre sus ComponentRegistrar mediante reflexión.
             // Con R8 activo en AGP 9, esos constructores se eliminan y la APK

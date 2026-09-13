@@ -92,6 +92,31 @@ jobs:
             echo "::warning::Sin los secretos SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY, la APK no podra conectarse al catalogo."
           fi
 
+      # Sin esto, cada build se firmaba con una clave de depuracion recien
+      # generada por el runner, distinta cada vez: Android rechazaba instalar
+      # una APK sobre la anterior ("conflicto con un paquete") y el aviso de
+      # actualizacion de la app llevaba a una descarga que no se podia
+      # instalar. Con la clave fija de los secretos, todas comparten firma.
+      #
+      # Si los secretos no estan, se compila igual con la de depuracion: sirve
+      # para probar, pero no se podra actualizar encima.
+      - name: Preparar la clave de firma
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::Sin ANDROID_KEYSTORE_BASE64, la APK se firma con la clave de depuracion y no podra instalarse como actualizacion."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<PROPS
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=tienda
+          storeFile=upload-keystore.jks
+          PROPS
+
       # La de release es la que se instala para usar y demostrar: Dart va
       # compilado (AOT) y responde bastante mas rapido que la de depuracion.
       # R8 queda desactivado a proposito (ver android/app/build.gradle.kts):
