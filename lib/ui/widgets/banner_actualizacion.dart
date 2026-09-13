@@ -15,28 +15,80 @@ class BannerActualizacion extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
     return Material(
-      color: AppTheme.primary,
+      color: AppTheme.navy,
       child: SafeArea(
         bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            children: [
-              const Icon(Icons.system_update, color: Colors.white, size: 20),
-              const SizedBox(width: 10),
-              const Expanded(
-                child: Text(
-                  'Tenemos una actualizacion para ti',
-                  style: TextStyle(color: Colors.white),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [AppTheme.primary, AppTheme.navy],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.system_update_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                 ),
-              ),
-              TextButton(
-                onPressed: onActualizar,
-                style: TextButton.styleFrom(foregroundColor: Colors.white),
-                child: const Text('Actualizar'),
-              ),
-            ],
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Actualizacion disponible',
+                        style: textTheme.labelLarge?.copyWith(
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(
+                        'Hay una version nueva de la tienda',
+                        style: textTheme.bodyMedium?.copyWith(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: onActualizar,
+                  icon: const Icon(Icons.download_rounded, size: 16),
+                  label: const Text('Actualizar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppTheme.navy,
+                    elevation: 0,
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    textStyle: textTheme.labelLarge?.copyWith(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

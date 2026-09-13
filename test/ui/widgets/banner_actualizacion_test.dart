@@ -16,7 +16,8 @@ void main() {
       ),
     );
 
-    expect(find.text('Tenemos una actualizacion para ti'), findsOneWidget);
+    expect(find.text('Actualizacion disponible'), findsOneWidget);
+    expect(find.text('Hay una version nueva de la tienda'), findsOneWidget);
 
     await tester.tap(find.text('Actualizar'));
     expect(pulsado, isTrue);
