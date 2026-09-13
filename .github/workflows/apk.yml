@@ -75,13 +75,19 @@ jobs:
       # La clave publica solo concede lectura (ver las politicas RLS en
       # supabase/migrations/0001_esquema.sql), por eso puede viajar dentro
       # del APK. La service_role key NO va aqui nunca.
+      # BUILD_SHA y BUILD_RAMA se inyectan igual que las credenciales: quedan
+      # compilados dentro del APK (ver lib/data/remote/build_info.dart) para
+      # que la app pueda compararse contra app_config y saber si hay una
+      # version mas nueva publicada.
       - name: Preparar credenciales del backend
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_RAMA: ${{ steps.rama.outputs.slug }}
         run: |
-          printf '{"SUPABASE_URL":"%s","SUPABASE_PUBLISHABLE_KEY":"%s"}\n' \
-            "$SUPABASE_URL" "$SUPABASE_PUBLISHABLE_KEY" > env.json
+          printf '{"SUPABASE_URL":"%s","SUPABASE_PUBLISHABLE_KEY":"%s","BUILD_SHA":"%s","BUILD_RAMA":"%s"}\n' \
+            "$SUPABASE_URL" "$SUPABASE_PUBLISHABLE_KEY" "$BUILD_SHA" "$BUILD_RAMA" > env.json
           if [ -z "$SUPABASE_URL" ]; then
             echo "::warning::Sin los secretos SUPABASE_URL y SUPABASE_PUBLISHABLE_KEY, la APK no podra conectarse al catalogo."
           fi
@@ -157,3 +163,29 @@ jobs:
           gh release edit "$tag" \
             --title "APK automática de $RAMA" \
             --notes-file dist/notas-release.md
+
+      # Avisa a la app que hay una version nueva. escribe en app_config con la
+      # service_role key porque anon/authenticated solo tienen SELECT (ver
+      # supabase/migrations/0010_actualizaciones.sql) -- esta clave nunca sale
+      # de este job, no va al APK.
+      #
+      # Se salta en silencio si el secreto no esta configurado: el APK se
+      # compila igual, solo que la app no avisara de la version nueva.
+      - name: Avisar la version nueva a la app
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SLUG: ${{ steps.rama.outputs.slug }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          if [ -z "$SUPABASE_SERVICE_KEY" ]; then
+            echo "::warning::Sin el secreto SUPABASE_SERVICE_KEY, la app no podra avisar de esta version nueva."
+            exit 0
+          fi
+          apk_url="https://github.com/${{ github.repository }}/releases/download/${SLUG}-latest/Sistema-Inteligente-Ventas-${SLUG}.apk"
+          curl -sf -X POST "$SUPABASE_URL/rest/v1/app_config" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"rama\":\"$SLUG\",\"build_sha\":\"$BUILD_SHA\",\"apk_url\":\"$apk_url\"}"
