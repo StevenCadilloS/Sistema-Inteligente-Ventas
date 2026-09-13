@@ -119,12 +119,15 @@ frente a una pantalla suele clasificarse así.
 |---|---|
 | Backend: esquema, funciones validadas, RLS, Storage | ✅ 12 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
-| Motor de negociación (escalera de ofertas) | ✅ 46 pruebas Dart |
+| Motor de negociación (escalera de ofertas) | ✅ 137 pruebas Dart |
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
 | Catálogo de demostración | ✅ 20 productos en 7 categorías |
 | Imágenes de producto | ✅ 15 fotos en el bucket; faltan 4 productos sin foto propia |
+| Stock en tiempo real entre dispositivos | ✅ Realtime + relectura al volver de segundo plano |
+| Productos agotados | ✅ Se quedan en el feed con franja "AGOTADO", no se pueden seleccionar |
+| Aviso de versión nueva dentro de la app | ✅ Franja con botón *Actualizar* (ver arriba) |
 
 ---
 
@@ -213,6 +216,8 @@ Android); las dos últimas en **Dart**.
 │   │   ├── modelos/modelos.dart                  Producto, EscalonOferta, CompraHistorial
 │   │   ├── remote/
 │   │   │   ├── supabase_config.dart              URL y clave, inyectadas al compilar
+│   │   │   ├── build_info.dart                   commit y rama de este build
+│   │   │   ├── actualizacion_service.dart        compara el build contra app_config
 │   │   │   └── sesion_service.dart               registro, ingreso, recuperar clave
 │   │   └── repositories/
 │   │       ├── tienda_repository.dart            el puerto: lo que la app pide al backend
@@ -231,11 +236,11 @@ Android); las dos últimas en **Dart**.
 │   └── assets/emotion_model.tflite               modelo FER-2013
 │
 ├── supabase/
-│   ├── migrations/                               0001 a 0007 (0006 va en tres partes)
+│   ├── migrations/                               0001 a 0010 (0006 va en tres partes)
 │   ├── tests/                                    3 suites SQL + ejecutar.sh
 │   └── README.md                                 guía del backend y administración
 │
-└── test/                                         46 pruebas Dart
+└── test/                                         137 pruebas Dart
 ```
 
 ---
