@@ -20,17 +20,54 @@ actualiza su descarga permanente:
 | `arbol5-modelo-ofertas` | [APK más reciente](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/arbol5-modelo-ofertas-latest/Sistema-Inteligente-Ventas-arbol5-modelo-ofertas.apk) |
 | `steven1.1` | [APK más reciente](https://github.com/StevenCadilloS/Sistema-Inteligente-Ventas/releases/download/steven1-1-latest/Sistema-Inteligente-Ventas-steven1-1.apk) |
 
-Para que la APK se conecte al backend hacen falta dos secretos del repositorio
-(**Settings → Secrets and variables → Actions**):
+### Secretos del repositorio
 
-| Secreto | De dónde sale |
-|---|---|
-| `SUPABASE_URL` | Project Settings → API → *Project URL* |
-| `SUPABASE_PUBLISHABLE_KEY` | Project Settings → API → *publishable key* (o *anon public*) |
+Todos en **Settings → Secrets and variables → Actions**. Los dos primeros son
+imprescindibles; sin los otros tres la APK se compila igual, pero pierde
+funciones:
 
-Sin ellos la APK se genera igual, pero arranca mostrando la pantalla que
-explica que falta el backend. **Nunca** poner ahí la `service_role` key: esa
-ignora todas las políticas de seguridad.
+| Secreto | De dónde sale | Si falta |
+|---|---|---|
+| `SUPABASE_URL` | Project Settings → API → *Project URL* | La app arranca en la pantalla de "falta el backend" |
+| `SUPABASE_PUBLISHABLE_KEY` | Project Settings → API → *publishable key* (o *anon public*) | Igual que el anterior |
+| `SUPABASE_SERVICE_KEY` | Project Settings → API → *service_role* | No se avisa de versiones nuevas (ver abajo) |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w 0 android/app/upload-keystore.jks` | La APK no se puede instalar como actualización |
+| `ANDROID_KEYSTORE_PASSWORD` | La contraseña del keystore | Igual que el anterior |
+
+La `service_role` key ignora todas las políticas de seguridad, así que **solo**
+vive aquí: la usa el runner para escribir en `app_config`, nunca viaja dentro
+de la APK. Lo que sí va en la APK es la publishable key, que solo concede
+lectura.
+
+### Firma de la APK
+
+Las APK se firman con una clave fija que el runner reconstruye desde
+`ANDROID_KEYSTORE_BASE64`. No es un detalle administrativo: Android solo
+instala una APK encima de otra si ambas comparten firma. Antes se firmaba con
+la clave de depuración, que cada máquina genera sola —cada runner arrancaba
+limpio y producía una firma distinta—, así que cada actualización obligaba a
+desinstalar primero.
+
+El keystore **no está en git** (ver `android/.gitignore`). Quien clone el
+repositorio sin él compila con la clave de depuración: sirve para probar en
+local, no para distribuir. **La APK que se instala siempre sale de la release
+de GitHub**, no del build local de nadie, o cada quien tendría una firma
+distinta.
+
+> Guardar un respaldo del keystore fuera de git (Drive del equipo, gestor de
+> contraseñas). GitHub no deja volver a leer un secreto una vez guardado: si se
+> pierde la única copia, no se puede publicar ninguna actualización instalable
+> sobre las ya instaladas.
+
+### Aviso de actualización
+
+Al terminar cada build, el workflow escribe en la tabla `app_config` el commit
+con el que se compiló y la URL de descarga. La app compara ese valor contra el
+suyo —inyectado al compilar— al arrancar y al volver de segundo plano, y
+muestra una franja con botón **Actualizar** cuando no coinciden.
+
+Una APK compilada sin `BUILD_SHA` (un `flutter run` local) no avisa de nada: no
+tiene con qué compararse.
 
 ---
 
@@ -80,14 +117,14 @@ frente a una pantalla suele clasificarse así.
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | ✅ 9 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | ✅ 12 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
 | Motor de negociación (escalera de ofertas) | ✅ 46 pruebas Dart |
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
 | Catálogo de demostración | ✅ 20 productos en 7 categorías |
-| Imágenes de producto | ⏳ El bucket existe; faltan subir las fotos |
+| Imágenes de producto | ✅ 15 fotos en el bucket; faltan 4 productos sin foto propia |
 
 ---
 
@@ -227,7 +264,7 @@ cd Sistema-Inteligente-Ventas
 # 2. Dependencias de Flutter
 flutter pub get
 
-# 3. Backend: crear el proyecto en Supabase y aplicar las 9 migraciones
+# 3. Backend: crear el proyecto en Supabase y aplicar las 12 migraciones
 #    de supabase/migrations/ en orden (ver supabase/README.md)
 
 # 4. Credenciales: copiar env.example.json a env.json y poner ahí la URL y
