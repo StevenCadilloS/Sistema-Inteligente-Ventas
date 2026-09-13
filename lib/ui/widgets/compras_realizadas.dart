@@ -17,13 +17,48 @@ class ComprasRealizadas extends StatelessWidget {
 
   final List<CompraRealizada> compras;
 
+  /// Envuelve el contenido en la superficie de la hoja.
+  ///
+  /// El widget pinta su propio fondo en vez de confiar en el de
+  /// showModalBottomSheet: alli se abre con fondo transparente para que las
+  /// esquinas redondeadas no queden recortadas por un rectangulo detras, y
+  /// sin esto el contenido se veia flotando sobre la tienda.
+  Widget _hoja(BuildContext context, Widget contenido) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Flexible(child: contenido),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
 
     if (compras.isEmpty) {
-      return SafeArea(
-        child: Padding(
+      return _hoja(
+        context,
+        Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -47,8 +82,9 @@ class ComprasRealizadas extends StatelessWidget {
 
     final total = compras.fold<int>(0, (suma, c) => suma + c.pagadoCentavos);
 
-    return SafeArea(
-      child: Padding(
+    return _hoja(
+      context,
+      Padding(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
