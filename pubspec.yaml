@@ -37,7 +37,9 @@ dependencies:
   google_fonts: ^6.2.1
   shared_preferences: ^2.5.5           # sesion del cliente activo (en el equipo)
   supabase_flutter: ^2.17.2            # PostgREST + Realtime contra la base compartida
-  url_launcher: ^6.3.2                 # abre la descarga del APK nuevo en el navegador
+  url_launcher: ^6.3.2                 # respaldo si falla la descarga dentro de la app
+  path_provider: ^2.1.5                # donde dejar la APK descargada
+  open_filex: ^4.7.0                   # se la entrega al instalador del sistema
 
 dev_dependencies:
   flutter_test:

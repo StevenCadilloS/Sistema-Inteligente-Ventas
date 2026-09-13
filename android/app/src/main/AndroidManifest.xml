@@ -6,6 +6,14 @@
     <!-- Permite distinguir "no hay internet" de "el servidor no responde"
          y no reintentar en vano cuando el dispositivo esta sin cobertura. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- La app se distribuye por fuera de Play: el aviso de version nueva
+         descarga la APK y abre el instalador del sistema. Sin esto hay que
+         pasar por el navegador, que en algun equipo descargaba y se quedaba
+         ahi sin instalar nada.
+
+         No instala nada a escondidas: Android sigue pidiendo que el usuario
+         autorice a esta app a instalar, y confirme cada instalacion. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-feature android:name="android.hardware.camera" android:required="true"/>
     <application
         android:label="Tienda Adaptativa"

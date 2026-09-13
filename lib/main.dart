@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'data/remote/actualizacion_service.dart';
+import 'data/remote/descarga_apk.dart';
 import 'data/remote/sesion_service.dart';
 import 'data/remote/supabase_config.dart';
 import 'data/repositories/supabase_tienda_repository.dart';
@@ -72,6 +73,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final _actualizaciones = ActualizacionService(Supabase.instance.client);
   ActualizacionDisponible? _actualizacion;
 
+  bool _descargando = false;
+  double _avance = 0;
+  String? _errorDescarga;
+
   @override
   void initState() {
     super.initState();
@@ -100,8 +105,38 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     setState(() => _actualizacion = disponible);
   }
 
-  Future<void> _abrirDescarga(String apkUrl) async {
-    await launchUrl(Uri.parse(apkUrl), mode: LaunchMode.externalApplication);
+  /// Descarga la APK y se la pasa al instalador del sistema.
+  ///
+  /// Antes esto solo abria el navegador. En un equipo la descarga llegaba al
+  /// 100% y ahi se quedaba: el archivo no aparecia y el instalador no se
+  /// abria nunca. Hacerlo desde la app permite ver el avance y saber que
+  /// fallo; si aun asi falla, queda el navegador como salida.
+  Future<void> _descargarEInstalar(String apkUrl) async {
+    if (_descargando) return;
+
+    setState(() {
+      _descargando = true;
+      _avance = 0;
+      _errorDescarga = null;
+    });
+
+    try {
+      await DescargaApk.descargarEInstalar(
+        apkUrl,
+        onAvance: (a) {
+          if (mounted) setState(() => _avance = a);
+        },
+      );
+      if (mounted) setState(() => _descargando = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _descargando = false;
+        _errorDescarga = 'No se pudo descargar. Toca para reintentar.';
+      });
+      // Ultimo recurso: que lo intente el navegador.
+      await launchUrl(Uri.parse(apkUrl), mode: LaunchMode.externalApplication);
+    }
   }
 
   @override
@@ -136,7 +171,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         return Column(
           children: [
             BannerActualizacion(
-              onActualizar: () => _abrirDescarga(actualizacion.apkUrl),
+              onActualizar: () => _descargarEInstalar(actualizacion.apkUrl),
+              avance: _descargando ? _avance : null,
+              error: _errorDescarga,
             ),
             Expanded(child: child),
           ],
