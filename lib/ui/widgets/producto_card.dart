@@ -25,6 +25,61 @@ class ProductoCard extends StatelessWidget {
   final VoidCallback onTap;
 
 
+  /// Pasa [hijo] a escala de grises cuando [gris]; si no, lo deja igual.
+  ///
+  /// Los coeficientes son los de luminancia de Rec. 709: un gris plano
+  /// (promediar los tres canales) apaga los rojos y aviva los azules, y las
+  /// fotos de producto quedan sucias.
+  static Widget _talVezEnGris(bool gris, Widget hijo) {
+    if (!gris) return hijo;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        0.2126, 0.7152, 0.0722, 0, 0, //
+        0.2126, 0.7152, 0.0722, 0, 0, //
+        0.2126, 0.7152, 0.0722, 0, 0, //
+        0, 0, 0, 1, 0, //
+      ]),
+      child: hijo,
+    );
+  }
+
+  /// La franja de "AGOTADO", inclinada como un sello.
+  static Widget _franjaAgotado() {
+    return Transform.rotate(
+      angle: -0.16,
+      child: Container(
+        // Sin `alignment`: un Container que lo lleva se estira a todo el
+        // espacio disponible, y la franja tapaba la tarjeta entera. El texto
+        // ya se centra con su propio textAlign.
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFBBF24),
+          border: const Border.symmetric(
+            horizontal: BorderSide(color: Color(0xFFB45309), width: 1.5),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: const Text(
+          'AGOTADO',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Color(0xFF422006),
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 3,
+          ),
+        ),
+      ),
+    );
+  }
+
   (IconData, Color) get _visualCategoria {
     const iconos = [
       Icons.devices_other,
@@ -112,41 +167,26 @@ class ProductoCard extends StatelessWidget {
                   ),
                   child: Stack(
                     children: [
-                      Opacity(
-                        opacity: agotado ? 0.4 : 1,
-                        child: Center(
+                      // Gris y no solo mas tenue: quitarle el color es lo que
+                      // hace que se lea como "no disponible" de un vistazo,
+                      // sin tener que llegar al texto.
+                      _talVezEnGris(
+                        agotado,
+                        Center(
                           child: ImagenProducto(
                             producto: producto,
                             respaldo: Icon(icono, size: 40, color: color),
                           ),
                         ),
                       ),
-                      if (agotado)
+                      if (agotado) ...[
                         Positioned.fill(
-                          child: Center(
-                            child: Transform.rotate(
-                              angle: -0.35,
-                              child: Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 6,
-                                ),
-                                color: Colors.amber,
-                                alignment: Alignment.center,
-                                child: const Text(
-                                  'AGOTADO',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Colors.black,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1,
-                                  ),
-                                ),
-                              ),
-                            ),
+                          child: ColoredBox(
+                            color: Colors.white.withValues(alpha: 0.45),
                           ),
                         ),
+                        Positioned.fill(child: Center(child: _franjaAgotado())),
+                      ],
                       // Que el producto tenga ofertas se anuncia, pero no
                       // cual ni de cuanto: el escalon que le toque a este
                       // cliente se decide durante la negociacion, y adelantar
@@ -257,7 +297,12 @@ class ProductoCard extends StatelessWidget {
                         Text(
                           precio,
                           style: textTheme.titleMedium?.copyWith(
-                            color: AppTheme.success,
+                            // Apagado si no se puede comprar: un precio en
+                            // verde invita a una accion que la tarjeta ya no
+                            // permite.
+                            color: agotado
+                                ? AppTheme.mutedText
+                                : AppTheme.success,
                           ),
                         ),
                       ],

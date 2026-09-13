@@ -170,6 +170,26 @@ void main() {
       expect(pulsado, isFalse);
     });
 
+    testWidgets('sin stock la imagen se pinta en gris', (tester) async {
+      // Se compara contra el mismo producto con stock en vez de contar
+      // ColorFiltered en absoluto: Flutter usa varios por dentro y ese
+      // numero cambia entre versiones.
+      await montar(tester, p(stock: 10));
+      final conStock = find.byType(ColorFiltered).evaluate().length;
+
+      await montar(tester, p(stock: 0));
+      final sinStock = find.byType(ColorFiltered).evaluate().length;
+
+      expect(sinStock, greaterThan(conStock));
+    });
+
+    testWidgets('sin stock el precio deja de estar en verde', (tester) async {
+      await montar(tester, p(stock: 0));
+
+      final precio = tester.widget<Text>(find.text('S/2500.00'));
+      expect(precio.style?.color, AppTheme.mutedText);
+    });
+
     testWidgets('sin stock no ofrece negociar aunque tenga ofertas', (tester) async {
       // Nada que negociar si no hay unidades que vender.
       await montar(tester, p(stock: 0, ofertas: true));
