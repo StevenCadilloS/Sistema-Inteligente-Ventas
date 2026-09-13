@@ -109,7 +109,33 @@ jobs:
             echo "::warning::Sin ANDROID_KEYSTORE_BASE64, la APK se firma con la clave de depuracion y no podra instalarse como actualizacion."
             exit 0
           fi
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+
+          if [ -z "$ANDROID_KEYSTORE_PASSWORD" ]; then
+            echo "::error::Falta el secreto ANDROID_KEYSTORE_PASSWORD."
+            exit 1
+          fi
+
+          # `tr` quita saltos, espacios y retornos de carro. Copiar el base64
+          # desde Windows suele colar un \r, que no es parte del alfabeto
+          # base64: sin esto el paso moria con un error que no se ve porque
+          # los logs enmascaran el valor del secreto.
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" \
+            | tr -d '[:space:]' \
+            | base64 -d > android/app/upload-keystore.jks || {
+              echo "::error::ANDROID_KEYSTORE_BASE64 no es base64 valido. Regeneralo con: base64 -w 0 android/app/upload-keystore.jks"
+              exit 1
+            }
+
+          # Un keystore de estos pesa ~2,7 KB. Si quedo muy por debajo, el
+          # secreto se pego a medias -- mejor decirlo aqui que fallar luego en
+          # Gradle con "keystore was tampered with".
+          tam=$(wc -c < android/app/upload-keystore.jks)
+          echo "Keystore decodificado: $tam bytes"
+          if [ "$tam" -lt 1000 ]; then
+            echo "::error::El keystore quedo en $tam bytes: el secreto esta incompleto."
+            exit 1
+          fi
+
           cat > android/key.properties <<PROPS
           storePassword=$ANDROID_KEYSTORE_PASSWORD
           keyPassword=$ANDROID_KEYSTORE_PASSWORD
