@@ -94,16 +94,15 @@ void main() {
       await montar(tester, p(ofertas: false));
 
       expect(find.text('Negociable'), findsNothing);
+      expect(find.text('Oferta diaria usada'), findsNothing);
     });
 
-    testWidgets('no aparece si el cliente ya gasto su oferta del dia',
+    testWidgets('avisa si el cliente ya gasto su oferta del dia',
         (tester) async {
-      // 0013: con el cupo gastado la etiqueta prometeria un descuento que ya
-      // no existe. El servidor comprobaria el cupo al negociar, pero mejor
-      // no invitar al toque en vano.
       await montar(tester, p(ofertas: true), negociable: false);
 
       expect(find.text('Negociable'), findsNothing);
+      expect(find.text('Oferta diaria usada'), findsOneWidget);
     });
 
     testWidgets('no adelanta de cuanto es el descuento', (tester) async {
@@ -208,6 +207,7 @@ void main() {
       await montar(tester, p(stock: 0, ofertas: true));
 
       expect(find.text('Negociable'), findsNothing);
+      expect(find.text('Oferta diaria usada'), findsNothing);
     });
   });
 
