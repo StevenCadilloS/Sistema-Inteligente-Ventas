@@ -247,6 +247,71 @@ class SupabaseTiendaRepository implements TiendaRepository {
     }
   }
 
+  /// [{'id_producto':.., 'cantidad':.., 'id_oferta':.., 'acordado':..}, ...]
+  ///
+  /// La lista viaja como arreglo JSON y PostgREST la acomoda en el jsonb que
+  /// las funciones de 0011 esperan. El [LineaCarrito.acordadoCentavos] solo
+  /// sale en la pregunta de confirmacion: cotizar mira el catalogo sin
+  /// recordar promesas.
+  List<Map<String, dynamic>> _lineasJsonb(
+    List<LineaCarrito> lineas, {
+    bool conAcordado = true,
+  }) => lineas
+      .map(
+        (l) => {
+          'id_producto': l.producto.idProducto,
+          'cantidad': l.cantidad,
+          'id_oferta': l.idOferta,
+          if (conAcordado) 'precio_acordado_centavos': l.acordadoCentavos,
+        },
+      )
+      .toList();
+
+  @override
+  Future<List<CotizacionLinea>> cotizarCarrito({
+    required List<LineaCarrito> lineas,
+  }) async {
+    try {
+      final filas = await _cliente.rpc<List<dynamic>>(
+        'fn_cotizar_carrito',
+        params: {'p_lineas': _lineasJsonb(lineas, conAcordado: false)},
+      );
+      return filas.cast<Map<String, dynamic>>().map(CotizacionLinea.desdeFila).toList();
+    } on PostgrestException catch (e) {
+      if (e.hint == 'sin_sesion') throw const SinSesionException();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<int> confirmarCarrito({
+    required List<LineaCarrito> lineas,
+  }) async {
+    try {
+      // Un solo viaje: el servidor abre la venta, mete las lineas y baja el
+      // stock de todos los productos en una transaccion que es todo o nada.
+      return await _cliente.rpc<int>(
+        'fn_confirmar_carrito',
+        params: {'p_lineas': _lineasJsonb(lineas)},
+      );
+    } on PostgrestException catch (e) {
+      switch (e.hint) {
+        case 'sin_stock':
+          throw SinStockException(e.message);
+        case 'limite_diario':
+          throw LimiteOfertasException(e.message);
+        case 'precio_cambio':
+          throw PrecioCambioException(e.message);
+        case 'carrito_vacio':
+          throw StateError(e.message);
+        case 'sin_sesion':
+          throw const SinSesionException();
+        default:
+          rethrow;
+      }
+    }
+  }
+
   /// Cierra el canal de Realtime. La app lo llama al salir de la tienda; sin
   /// esto queda un websocket abierto consumiendo bateria en segundo plano.
   Future<void> cerrar() async {

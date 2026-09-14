@@ -57,6 +57,27 @@ abstract class TiendaRepository {
     int? idOferta,
   });
 
+  /// Pregunta al servidor cuanto vale el carrito EN ESTE MOMENTO.
+  ///
+  /// Devuelve una cotizacion por linea, en el pedido que enviaron. Solo lee:
+  /// sirve para mostrar el aviso de precios que cambiaron (la decision
+  /// tomada: se avisa y el cliente decide) antes de confirmar.
+  Future<List<CotizacionLinea>> cotizarCarrito({
+    required List<LineaCarrito> lineas,
+  });
+
+  /// Registra TODO el carrito como UNA venta: N lineas y el descuento de su
+  /// stock en la misma transaccion. Toda la confirmacion cuenta como una
+  /// sola compra para el limite diario de ofertas.
+  ///
+  /// El [LineaCarrito.acordadoCentavos] de cada linea no se le cree al
+  /// servidor... al reves: el servidor recalcula, y si lo acordado difiere,
+  /// rechaza TODO con [PrecioCambioException]. Si alguna linea no tiene
+  /// stock, la confirmacion muere entera con [SinStockException].
+  Future<int> confirmarCarrito({
+    required List<LineaCarrito> lineas,
+  });
+
   /// Crea la ficha de negocio del usuario ya autenticado y devuelve su id.
   ///
   /// El correo no se pasa: lo toma el servidor del token, que es el que
@@ -82,6 +103,18 @@ abstract class TiendaRepository {
 /// dos personas miren la ultima unidad a la vez.
 class SinStockException implements Exception {
   const SinStockException(this.mensaje);
+  final String mensaje;
+
+  @override
+  String toString() => mensaje;
+}
+
+/// Lo que la app congeló en pantalla ya no es lo que determina el catalogo
+/// (la oferta vencio, cambiaron un precio o alguien se llevo unidades). El
+/// servidor rechaza la confirmacion entera con el hint 'precio_cambio';
+/// la app vuelve a cotizar para mostrar el aviso.
+class PrecioCambioException implements Exception {
+  const PrecioCambioException(this.mensaje);
   final String mensaje;
 
   @override

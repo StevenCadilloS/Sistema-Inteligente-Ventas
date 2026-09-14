@@ -18,7 +18,7 @@ class ProductoCard extends StatelessWidget {
   final bool destacado;
   final bool seleccionado;
 
-  /// Ya comprado en esta sesion: no se vuelve a ofertar.
+  /// Ya esta en el carrito del cliente: no se vuelve a ofertar.
   final bool comprado;
 
   final EmotionStyle estilo;
@@ -247,7 +247,7 @@ class ProductoCard extends StatelessWidget {
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: const Text(
-                              'Comprado',
+                              'En tu carrito',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 11,

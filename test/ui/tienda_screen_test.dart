@@ -284,13 +284,12 @@ void main() {
     });
   });
 
-  group('comprar', () {
-    testWidgets('cierra la venta al precio que se mostraba', (tester) async {
+  group('agregar al carrito', () {
+    testWidgets('Lo quiero agrega al carrito y NO registra la venta',
+        (tester) async {
       await montar(tester);
       await tester.tap(find.text('Laptop Lenovo IdeaPad'));
       await tester.pumpAndSettle();
-
-      // Avanza dos escalones y compra al 20%.
       await tester.tap(find.text('No, gracias'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('No, gracias'));
@@ -298,22 +297,189 @@ void main() {
       await tester.tap(find.text('Lo quiero'));
       await tester.pumpAndSettle();
 
-      final historial = await repo.historial();
-      expect(historial.single.totalCentavos, 200000,
-          reason: 'se cobra el escalon que estaba en pantalla, no el de lista');
-      expect(historial.single.nombreOferta, 'Descuento 20%');
+      // El popup cerro...
+      expect(find.text('Lo quiero'), findsNothing);
+      // ...el badge cuenta la unidad del carrito...
+      expect(find.text('1'), findsOneWidget);
+      // ...y el servidor no registro NADA todavia.
+      expect(repo.ventas, isEmpty);
+      expect(find.textContaining('Agregaste Laptop Lenovo'), findsOneWidget);
     });
 
-    testWidgets('comprar a precio normal no usa oferta', (tester) async {
+    testWidgets('el + del carrito agrega una segunda unidad del mismo producto',
+        (tester) async {
+      await montar(tester);
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      // La segunda unidad ya no se negocia: el + de la linea la suma.
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Agregar una unidad'));
+      await tester.pumpAndSettle();
+
+      // El badge y la cantidad de la linea (la hoja sigue abierta) marcan 2.
+      expect(find.text('2'), findsNWidgets(2), reason: 'badge + linea');
+    });
+
+    testWidgets('un producto que ya esta en el carrito no renegocia',
+        (tester) async {
+      await montar(tester);
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+
+      // No abre un popup de negociacion nuevo: avisa y abre el carrito.
+      expect(find.text('Lo quiero'), findsNothing);
+      expect(find.text('Confirmar compra'), findsOneWidget);
+    });
+  });
+
+  group('confirmar la compra', () {
+    /// Del carrito abierto, el boton "Confirmar compra".
+    /// La confirmacion correcta cierra la hoja y deja el snackbar verde.
+    testWidgets('registra TODO el carrito como una sola venta',
+        (tester) async {
+      await montar(tester);
+      // Lenovo con 20%: dos rechazos y Lo quiero.
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('No, gracias'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('No, gracias'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      // HP sin oferta.
+      await tester.tap(find.text('Laptop HP Pavilion'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      // Confirmar.
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      expect(find.text('S/4800.00'), findsOneWidget,
+          reason: 'total: 200000 + 280000 = S/4800.00');
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+
+      // Una sola venta, con las dos lineas (dos filas de detalle, idVenta
+      // compartido): la compra del carrito cuenta UNA vez.
+      final historial = await repo.historial();
+      expect(repo.ventas.map((v) => v.idVenta).toSet(), hasLength(1));
+      expect(repo.ventas, hasLength(2));
+      expect(historial.where((h) => h.producto == 'Laptop Lenovo IdeaPad'),
+          hasLength(1));
+
+      final lenovo = repo.ventas
+          .firstWhere((v) => v.idProducto == idLenovo && v.totalCentavos == 200000);
+      expect(lenovo.nombreOferta, 'Descuento 20%');
+      // El carrito quedo vacio: el badge desaparecio.
+      expect(find.text('2'), findsNothing);
+    });
+
+    testWidgets('confirmar a precio normal no usa oferta', (tester) async {
       await montar(tester);
       await tester.tap(find.text('Laptop HP Pavilion'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Lo quiero'));
       await tester.pumpAndSettle();
 
-      final historial = await repo.historial();
-      expect(historial.single.totalCentavos, 280000);
-      expect(historial.single.tuvoOferta, isFalse);
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+
+      expect(repo.ventas.single.nombreOferta, isNull);
+      expect(repo.ventas.single.totalCentavos, 280000);
+    });
+
+    testWidgets('un cambio de precio avisa y deja decidir', (tester) async {
+      await montar(tester);
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      // El administrador toca el precio despues de que el cliente congeló el
+      // que veia: cotizar devuelve 260000 contra 250000 acordados.
+      repo.cambiarPrecio(idLenovo, 260000);
+
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      expect(find.text('S/2500.00'), findsWidgets,
+          reason: 'la hoja todavia muestra lo acordado');
+      expect(find.text('S/2600.00'), findsNothing,
+          reason: 'la cotizacion todavia no llego a la pantalla');
+
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+
+      // El aviso reemplaza el cobro silencioso, con las tres salidas.
+      expect(find.text('Los precios ya no son los mismos'), findsOneWidget);
+      expect(find.textContaining('sale a S/2600.00'), findsOneWidget);
+
+      // Decide cancelar: no hay venta, el carrito sigue tal cual.
+      await tester.tap(find.text('Cancelar'));
+      await tester.pumpAndSettle();
+      expect(repo.ventas, isEmpty);
+      expect(find.text('S/2600.00'), findsNothing,
+          reason: 'cancelar mantiene el carrito como estaba');
+    });
+
+    testWidgets('aceptar el precio nuevo confirma con el precio del catalogo',
+        (tester) async {
+      await montar(tester);
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      repo.cambiarPrecio(idLenovo, 260000);
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Continuar con los nuevos'));
+      await tester.pumpAndSettle();
+
+      expect(repo.ventas.single.totalCentavos, 260000,
+          reason: 'se cobra lo que el cliente vio en el aviso');
+    });
+
+    testWidgets('quitar del carrito confirma el resto', (tester) async {
+      await montar(tester);
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Laptop HP Pavilion'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      // Solo la Lenovo cambio de precio; la HP sigue como antes.
+      repo.cambiarPrecio(idLenovo, 260000);
+
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Quitar del carrito'));
+      await tester.pumpAndSettle();
+
+      // La venta se cerro con lo que quedo: solo la HP.
+      expect(repo.ventas, hasLength(1));
+      expect(repo.ventas.single.idProducto, idHp);
     });
   });
 

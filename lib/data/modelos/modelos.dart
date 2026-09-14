@@ -68,11 +68,11 @@ class Producto {
     tieneOfertas: fila['tiene_ofertas'] as bool? ?? false,
   );
 
-  Producto copyWith({int? stock}) => Producto(
+  Producto copyWith({int? precioCentavos, int? stock}) => Producto(
     idProducto: idProducto,
     nombre: nombre,
     descripcion: descripcion,
-    precioCentavos: precioCentavos,
+    precioCentavos: precioCentavos ?? this.precioCentavos,
     idCategoria: idCategoria,
     categoria: categoria,
     idMarca: idMarca,
@@ -169,6 +169,95 @@ class CompraHistorial {
         totalCentavos: _entero(fila['total_centavos']),
         nombreOferta: fila['nombre_oferta'] as String?,
       );
+}
+
+/// Una linea del carrito.
+///
+/// El cliente la armo negociando: el precio que vio en pantalla queda
+/// congelado en [acordadoCentavos] y viaja a fn_confirmar_carrito, que lo
+/// usa para REFUSAR si el catalogo ya dice otra cosa -- nunca para cobrar.
+class LineaCarrito {
+  const LineaCarrito({
+    required this.producto,
+    required this.cantidad,
+    required this.idOferta,
+    required this.acordadoCentavos,
+  });
+
+  final Producto producto;
+
+  /// Cuantas unidades de este producto hay en la linea.
+  final int cantidad;
+
+  /// La oferta que se nego por producto, o null si quedo a precio normal.
+  final int? idOferta;
+
+  /// Con cuanto centavos se acordo cada unidad.
+  final int acordadoCentavos;
+
+  int get totalCentavos => acordadoCentavos * cantidad;
+
+  /// La misma linea con [cantidad] unidades. La mutacion del carrito real la
+  /// hace la pantalla reemplazando la linea entera.
+  LineaCarrito conCantidad(int cantidad) => LineaCarrito(
+    producto: producto,
+    cantidad: cantidad,
+    idOferta: idOferta,
+    acordadoCentavos: acordadoCentavos,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is LineaCarrito &&
+      other.producto.idProducto == producto.idProducto &&
+      other.idOferta == idOferta;
+
+  @override
+  int get hashCode => Object.hash(producto.idProducto, idOferta);
+}
+
+/// Lo que el servidor cotiza por una linea del carrito EN ESTE MOMENTO.
+///
+/// Son los datos del aviso: si [precioUnitarioCentavos] ya no es el acordado,
+/// si [ofertaAplicada] cae a false con una oferta pedida, o si
+/// [stockSuficiente] se apaga, la pantalla lo muestra antes de confirmar.
+class CotizacionLinea {
+  const CotizacionLinea({
+    required this.idProducto,
+    required this.cantidad,
+    required this.idOferta,
+    required this.precioUnitarioCentavos,
+    required this.ofertaAplicada,
+    required this.stockSuficiente,
+  });
+
+  final int idProducto;
+  final int cantidad;
+
+  /// La que el servidor gasto para cotizar, o null si quedo a precio normal.
+  final int? idOferta;
+  final int precioUnitarioCentavos;
+  final bool ofertaAplicada;
+  final bool stockSuficiente;
+
+  factory CotizacionLinea.desdeFila(Map<String, dynamic> fila) =>
+      CotizacionLinea(
+        idProducto: _entero(fila['id_producto']),
+        cantidad: _entero(fila['cantidad']),
+        idOferta: fila['id_oferta'] == null
+            ? null
+            : _entero(fila['id_oferta']),
+        precioUnitarioCentavos: _entero(fila['precio_unitario_centavos']),
+        ofertaAplicada: fila['oferta_aplicada'] as bool? ?? false,
+        stockSuficiente: fila['stock_suficiente'] as bool? ?? false,
+      );
+
+  /// La cotizacion respeta la linea que el cliente ya tenia en pantalla:
+  /// misma oferta y mismo precio. Es lo que decide si hay que avisar.
+  bool respeta(LineaCarrito linea) =>
+      idProducto == linea.producto.idProducto &&
+      precioUnitarioCentavos == linea.acordadoCentavos &&
+      stockSuficiente;
 }
 
 /// Formatea centavos como soles: 225000 -> "S/2250.00".

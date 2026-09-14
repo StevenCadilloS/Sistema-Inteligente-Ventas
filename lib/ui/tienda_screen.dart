@@ -8,8 +8,8 @@ import '../decision/negociacion.dart';
 import '../services/emotion_channel.dart';
 import '../theme/app_theme.dart';
 import 'widgets/banner_esperando.dart';
+import 'widgets/carrito_hoja.dart';
 import 'widgets/chip_emocion.dart';
-import 'widgets/compras_realizadas.dart';
 import 'widgets/popup_oferta.dart';
 import 'widgets/producto_card.dart';
 import 'widgets/titulo_feed.dart';
@@ -89,8 +89,19 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   double _confianza = 0;
   OverlayEntry? _overlay;
 
-  /// Compras cerradas en esta sesion, con lo realmente pagado por cada una.
-  final List<CompraRealizada> _compras = [];
+  /// El carrito del cliente: intenciones, no ventas. Nada de esta lista ha
+  /// pasado por fn_confirmar_carrito; se cobra al confirmar, y solo si el
+  /// servidor encuentra el carrito tal como la pantalla lo congo.
+  final List<LineaCarrito> _carrito = [];
+
+  /// La confirmacion esta en vuelo: cotizar, avisar si algo cambio y
+  /// cobrar. Mientras dura, el carrito se congela.
+  bool _confirmando = false;
+
+  /// La hoja del carrito esta sobre la pantalla. Sirve para no apilar dos
+  /// hojas si el cliente toca el icono mientras la de abajo sigue, y para
+  /// saber si tocar pop cierra la hoja o una parte de la tienda.
+  bool _carritoAbierto = false;
 
   /// Hay sesion pero falta la ficha de cliente. Se puede mirar el catalogo,
   /// no comprar.
@@ -222,8 +233,13 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
       return;
     }
 
-    if (_yaComprado(producto)) {
-      _avisar('Ya compraste ${producto.nombre} en esta sesion.');
+    if (_enCarrito(producto)) {
+      // Si ya esta en el carrito, renegociar pondria dos precios distintos
+      // para el mismo producto y el ajuste pasa por las cantidades: la
+      // negociacion se queda de lado y se abre el carrito.
+      _avisar('${producto.nombre} ya esta en tu carrito; ajusta el numero '
+          'de unidades desde ahi.');
+      _abrirCarrito();
       return;
     }
 
@@ -352,7 +368,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
       // forma de distinguir "observando" de "colgado": el detector tarda ~1,3s
       // por lectura y no imprime nada. -1 significa que no hay camara.
       lecturas: _camaraEncendida ? _lecturas.length : -1,
-      onAceptar: () => _comprar(negociacion),
+      onAceptar: () => _agregarAlCarrito(negociacion),
       onRechazar: () => _rechazar(negociacion),
       onCerrar: _terminarInteraccion,
     );
@@ -382,55 +398,45 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
 
   // --------------- CIERRE ---------------
 
-  Future<void> _comprar(Negociacion negociacion) async {
-    final pagado = negociacion.precioActualCentavos;
+  /// El cliente dijo "Lo quiero": la negociacion termino y el precio que
+  /// estaba en pantalla queda congelado en la linea del carrito.
+  ///
+  /// NO registra la venta: eso pasa al confirmar el carrito, y solo si el
+  /// servidor determina el mismo precio que la pantalla congo. La camara se
+  /// apaga aqui: la persuasion ya tuvo su final, y seguir mirendo la cara
+  /// mientras el producto espera en el carrito no cambia nada.
+  void _agregarAlCarrito(Negociacion negociacion) {
     final producto = negociacion.producto;
+    final unidad = LineaCarrito(
+      producto: producto,
+      cantidad: 1,
+      idOferta: negociacion.idOfertaActual,
+      acordadoCentavos: negociacion.precioActualCentavos,
+    );
 
-    // La camara se apaga antes de la llamada: la decision ya esta tomada y
-    // seguir leyendo la cara mientras se registra la venta no sirve de nada.
-    _apagarCamara();
-
-    try {
-      await widget.tienda.registrarVenta(
-        idProducto: producto.idProducto,
-        idOferta: negociacion.idOfertaActual,
+    _actualizar(() {
+      // Dos lineas iguales no se acumulan: un producto tiene UN lugar en el
+      // carrito, y el ajuste de unidades es +/- de la linea. El precio
+      // congelado no se reescribe: lo visto en pantalla quedo en pantalla.
+      final en = _carrito.indexWhere(
+        (l) => l.producto.idProducto == producto.idProducto,
       );
-    } on SinStockException {
-      if (!mounted) return;
-      _terminarInteraccion();
-      _avisar('Alguien se llevo la ultima unidad de ${producto.nombre}.');
-      return;
-    } on LimiteOfertasException {
-      if (!mounted) return;
-      _terminarInteraccion();
-      _avisar(
-        'Ya usaste tus dos ofertas de hoy. Puedes comprarlo a precio normal.',
-      );
-      return;
-    } on SinSesionException {
-      // La sesion caduco mientras negociaba. Se vuelve al login en vez de
-      // dejarlo pulsando un boton que ya no puede funcionar.
-      if (!mounted) return;
-      _terminarInteraccion();
-      _volverAlLogin();
-      return;
-    } catch (e) {
-      if (!mounted) return;
-      _terminarInteraccion();
-      _avisar('No se pudo completar la compra: $e');
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _compras.add((producto: producto, pagadoCentavos: pagado));
+      if (en >= 0) {
+        final previa = _carrito[en];
+        _carrito[en] = previa.conCantidad(previa.cantidad + 1);
+      } else {
+        _carrito.add(unidad);
+      }
     });
+
     _terminarInteraccion();
-    _avisar('Compraste ${producto.nombre} por ${soles(pagado)}.');
+    _avisar(
+      'Agregaste ${producto.nombre} a tu carrito (${soles(unidad.acordadoCentavos)} c/u).',
+    );
   }
 
   /// Termina la interaccion: apaga la camara, cierra el popup y olvida la
-  /// negociacion. Se llama tanto al comprar como al abandonar.
+  /// negociacion. Se llama tanto al agregar como al abandonar.
   void _terminarInteraccion() {
     _apagarCamara();
     _overlay?.remove();
@@ -452,8 +458,12 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
 
   // --------------- AYUDAS ---------------
 
-  bool _yaComprado(Producto producto) =>
-      _compras.any((c) => c.producto.idProducto == producto.idProducto);
+  bool _enCarrito(Producto producto) =>
+      _carrito.any((l) => l.producto.idProducto == producto.idProducto);
+
+  /// Unidades totales en el carrito: es lo que cuenta el badge del AppBar.
+  int get _unidadesEnCarrito =>
+      _carrito.fold(0, (n, l) => n + l.cantidad);
 
   void _avisar(String mensaje) {
     if (!mounted) return;
@@ -475,11 +485,209 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   }
 
   void _abrirCarrito() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => ComprasRealizadas(compras: _compras),
+    // Sin esto, tocar el icono con la hoja ya abierta apila otra hoja igual
+    // encima.
+    if (_carritoAbierto) return;
+
+    _carritoAbierto = true;
+    // La Future de la hoja se resuelve cuando se cierra; whenComplete suelta
+    // la marca por corra la puerta con que toco salir: swipe, boton o pop.
+    unawaited(
+      showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isDismissible: !_confirmando,
+        enableDrag: !_confirmando,
+        builder: (contextHoja) {
+          // La hoja no se reconstruye sola cuando cambia el estado de la
+          // pantalla: StatefulBuilder la pinta entre setState externo e
+          // interno, con las mutaciones de ambas partes.
+          return StatefulBuilder(
+            builder: (contextHoja, setHoja) {
+              void refrescarHoja() {
+                if (mounted) setState(() {});
+                setHoja(() {});
+              }
+
+              return CarritoHoja(
+                lineas: List.of(_carrito),
+                confirmando: _confirmando,
+                onCantidad: (linea, nuevaCantidad) {
+                  if (nuevaCantidad < 1) {
+                    _carrito.remove(linea);
+                  } else {
+                    final i = _carrito.indexOf(linea);
+                    if (i >= 0) _carrito[i] = linea.conCantidad(nuevaCantidad);
+                  }
+                  refrescarHoja();
+                },
+                onEliminar: (linea) {
+                  _carrito.remove(linea);
+                  refrescarHoja();
+                },
+                onVaciar: () {
+                  _carrito.clear();
+                  refrescarHoja();
+                },
+                onConfirmar: () => unawaited(_confirmarCompra(refrescarHoja)),
+                onSeguirComprando: () => Navigator.pop(contextHoja),
+              );
+            },
+          );
+        },
+      ).whenComplete(() => _carritoAbierto = false),
     );
+  }
+
+  // --------------- CONFIRMAR LA COMPRA ---------------
+  //
+  // La cadena es: cotizar (que dice el catalogo HOY por cada linea) ->
+  // avisar si algo dejo de cuadrar con lo congelado en pantalla (la decision
+  // tomada: se avisa y el cliente decide) -> fn_confirmar_carrito con las
+  // lineas en su estado final. El servidor vuelve a verificar todo; si
+  // mientras tanto algo cambio de nuevo, el rechazo regresa aqui.
+
+  Future<void> _confirmarCompra(VoidCallback? refrescarHoja) async {
+    if (_confirmando || _carrito.isEmpty) return;
+
+    void termino() {
+      _actualizar(() => _confirmando = false);
+      refrescarHoja?.call();
+    }
+
+    try {
+      // Re-run del cotizar/avisar: mientras el usuario lee el aviso y
+      // contesta, el catalogo puede volver a moverse. Cada reincidencia
+      // vuelve a empezar; en corrida normal esto no gira dos veces.
+      while (true) {
+        final cambios = await _cotizarConAviso();
+        if (cambios == null) return; // el cliente cancelo
+
+        try {
+          final total = _carrito.fold<int>(0, (n, l) => n + l.totalCentavos);
+          final items = _carrito.fold<int>(0, (n, l) => n + l.cantidad);
+          await widget.tienda.confirmarCarrito(lineas: List.of(_carrito));
+
+          if (!mounted) return;
+          _carrito.clear();
+          termino();
+          if (_carritoAbierto && mounted) Navigator.pop(context);
+          _avisar(
+            'Compraste $items ${items == 1 ? 'producto' : 'productos'} '
+            'por ${soles(total)}',
+          );
+          return;
+        } on PrecioCambioException {
+          // El catalogo se movio entre el aviso y el cobro. La siguiente
+          // vuelta vuelve a cotizar y reconstruye el aviso con lo nuevo.
+          if (!mounted) return;
+          _avisar('El catalogo cambio otra vez; se reconstruye el aviso');
+        }
+      }
+    } on SinSesionException {
+      if (!mounted) return;
+      termino();
+      Navigator.pop(context);
+      _volverAlLogin();
+      return;
+    } on SinStockException catch (e) {
+      if (!mounted) return;
+      termino();
+      _avisar('No se pudo confirmar: $e');
+      return;
+    } on LimiteOfertasException catch (e) {
+      if (!mounted) return;
+      termino();
+      // Aviso ya conocido a la altura del confirmar: la cotizacion lo habria
+      // marcado... si un vecino gasto el cupo en el minimo intermedio.
+      _avisar('$e. Puedes confirmar a precio normal quitando las ofertas.');
+      return;
+    } catch (e) {
+      if (!mounted) return;
+      termino();
+      _avisar('No se pudo confirmar la compra: $e');
+      return;
+    }
+  }
+
+  /// Cotiza y, si el catalogo no cuadra con lo congelado en pantalla, muestra
+  /// el aviso y resuelve la respuesta del cliente.
+  ///
+  /// Devuelve null si la confirmacion se cancela; si toca continuar, el
+  /// estado de [_carrito] queda ya ajustado a lo cotizado.
+  Future<bool?> _cotizarConAviso() async {
+    try {
+      final cotizaciones = await widget.tienda.cotizarCarrito(
+        lineas: List.of(_carrito),
+      );
+
+      final cambiadas = <_CambioAviso>[];
+      for (var i = 0; i < _carrito.length; i++) {
+        final linea = _carrito[i];
+        // El servidor devuelve las cotizaciones en el orden del pedido. Si
+        // la entrega no cubre la linea, no hay contra que compararla.
+        if (i >= cotizaciones.length) break;
+        final cot = cotizaciones[i];
+        if (cot.respeta(linea)) continue;
+
+        final motivo = !cot.stockSuficiente
+            ? 'quedo sin stock suficiente'
+            : !cot.ofertaAplicada
+            ? 'la oferta ya no corre: sale a ${soles(cot.precioUnitarioCentavos)}'
+            : 'cambio de ${soles(linea.acordadoCentavos)} a '
+                '${soles(cot.precioUnitarioCentavos)}';
+        cambiadas.add(
+          _CambioAviso(
+            linea: linea,
+            cotizacion: cot,
+            texto: '${linea.producto.nombre} $motivo',
+          ),
+        );
+      }
+
+      if (cambiadas.isEmpty) return true;
+      if (!mounted) return null;
+
+      final respuesta = await showDialog<_QueHacer>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _DialogoCambios(cambios: cambiadas),
+      );
+      if (respuesta == null || !mounted) return null;
+
+      switch (respuesta) {
+        case _QueHacer.seguirConLosNuevos:
+          _aplicarCotizaciones(cotizaciones);
+          return true;
+        case _QueHacer.quitarLosCambiados:
+          for (final c in cambiadas) {
+            _carrito.remove(c.linea);
+          }
+          return _carrito.isNotEmpty ? true : null;
+      }
+    } on SinSesionException {
+      rethrow;
+    } catch (e) {
+      if (!mounted) return null;
+      _avisar('No se pudo cotizar el carrito: $e');
+      return null;
+    }
+  }
+
+  /// Escribe en el carrito lo que el servidor determino por linea. Se usa
+  /// solo cuando el cliente acepto los nuevos precios: a partir de aqui las
+  /// lineas coinciden con lo que se cobra.
+  void _aplicarCotizaciones(List<CotizacionLinea> cotizaciones) {
+    for (var i = 0; i < _carrito.length && i < cotizaciones.length; i++) {
+      final linea = _carrito[i];
+      final cot = cotizaciones[i];
+      _carrito[i] = LineaCarrito(
+        producto: linea.producto,
+        cantidad: linea.cantidad,
+        idOferta: cot.ofertaAplicada ? cot.idOferta : null,
+        acordadoCentavos: cot.precioUnitarioCentavos,
+      );
+    }
   }
 
   @override
@@ -508,7 +716,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
                 tooltip: 'Mi carrito',
                 onPressed: _abrirCarrito,
               ),
-              if (_compras.isNotEmpty)
+              if (_unidadesEnCarrito > 0)
                 Positioned(
                   top: 6,
                   right: 6,
@@ -519,7 +727,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
                       shape: BoxShape.circle,
                     ),
                     child: Text(
-                      '${_compras.length}',
+                      '$_unidadesEnCarrito',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -628,7 +836,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
                         seleccionado:
                             _negociacion?.producto.idProducto ==
                             producto.idProducto,
-                        comprado: _yaComprado(producto),
+                        comprado: _enCarrito(producto),
                         estilo: estilo,
                         onTap: () => _seleccionarProducto(producto),
                       );
@@ -640,6 +848,80 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
           },
         ),
       ),
+    );
+  }
+}
+
+// --------------- EL AVISO DE PRECIOS QUE CAMBIARON ---------------
+
+/// Que hacer con las lineas que ya no salian como la pantalla las congelo.
+enum _QueHacer { seguirConLosNuevos, quitarLosCambiados }
+
+/// Una linea cuyo precio o stock ya no coincide con lo que la pantalla congeló
+/// durante la negociacion. [texto] es la frase que se le muestra al cliente.
+class _CambioAviso {
+  const _CambioAviso({
+    required this.linea,
+    required this.cotizacion,
+    required this.texto,
+  });
+
+  final LineaCarrito linea;
+  final CotizacionLinea cotizacion;
+  final String texto;
+}
+
+/// El dialogo de la decision tomada: avisar y dejar que el cliente decida.
+///
+/// Con que UN centavo no cuadre sale este dialogo: seguir aceptando los
+/// precios nuevos (el carrito queda exactamente como se cobrara), quitar las
+/// lineas cambiadas y confirmar el resto, o no confirmar nada.
+class _DialogoCambios extends StatelessWidget {
+  const _DialogoCambios({required this.cambios});
+
+  final List<_CambioAviso> cambios;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return AlertDialog(
+      title: const Text('Los precios ya no son los mismos'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'El catalogo cambio mientras decidias. Ahora mismo:',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 8),
+          for (final cambio in cambios) ...[
+            Text(
+              cambio.texto,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        OutlinedButton(
+          onPressed: () => Navigator.pop(context, _QueHacer.quitarLosCambiados),
+          child: const Text('Quitar del carrito'),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.pop(context, _QueHacer.seguirConLosNuevos),
+          child: const Text('Continuar con los nuevos'),
+        ),
+      ],
     );
   }
 }

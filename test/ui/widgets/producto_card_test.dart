@@ -108,14 +108,14 @@ void main() {
           destacado: true);
 
       expect(find.text('Seleccionado'), findsOneWidget);
-      expect(find.text('Comprado'), findsNothing);
+      expect(find.text('En tu carrito'), findsNothing);
       expect(find.text('Para ti'), findsNothing);
     });
 
     testWidgets('comprado gana a destacado', (tester) async {
       await montar(tester, p(), comprado: true, destacado: true);
 
-      expect(find.text('Comprado'), findsOneWidget);
+      expect(find.text('En tu carrito'), findsOneWidget);
       expect(find.text('Para ti'), findsNothing);
     });
 
@@ -123,7 +123,7 @@ void main() {
       await montar(tester, p());
 
       expect(find.text('Seleccionado'), findsNothing);
-      expect(find.text('Comprado'), findsNothing);
+      expect(find.text('En tu carrito'), findsNothing);
       expect(find.text('Para ti'), findsNothing);
     });
   });

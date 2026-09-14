@@ -37,6 +37,10 @@ imagen.
    - `migrations/0006b_escaleras.sql`
    - `migrations/0006c_combos.sql`
    - `migrations/0007_indices.sql`
+   - `migrations/0008_imagenes_semilla.sql`
+   - `migrations/0009_url_externa.sql`
+   - `migrations/0010_actualizaciones.sql`
+   - `migrations/0011_carrito.sql`
 3. En **Settings → API**, copiar la *Project URL* y la *publishable key*
    (en proyectos antiguos se llama *anon key*).
 4. En la raiz del repositorio, copiar `env.example.json` a `env.json` y pegar
@@ -212,6 +216,11 @@ Un cliente puede usar ofertas solo en sus **dos primeras compras del dia**.
 Se cuentan las compras, no las que llevaron oferta: a la tercera ya no hay
 oferta aunque las dos primeras fueran a precio normal.
 
+> Con el carrito (0011), "una compra" es **toda la confirmacion**: confirmar
+> un carrito de tres productos crea UNA venta y consume UNA compra del
+> limite. Cualquier cantidad de productos con oferta cabe dentro de las dos
+> primeras confirmaciones del dia.
+
 ```sql
 select fn_compras_del_dia();    -- cuantas lleva hoy quien llama
 select fn_puede_usar_oferta();  -- le queda derecho a oferta?
@@ -270,7 +279,11 @@ supabase/
 │   ├── 0006a_productos.sql      3 categorias, 4 marcas y 14 productos
 │   ├── 0006b_escaleras.sql      las escaleras de ofertas
 │   ├── 0006c_combos.sql         saca los combos de las escaleras sueltas
-│   └── 0007_indices.sql         indices de las consultas mas frecuentes
+│   ├── 0007_indices.sql         indices de las consultas mas frecuentes
+│   ├── 0008_imagenes_semilla.sql  fotos del catalogo en el bucket
+│   ├── 0009_url_externa.sql       fn_url_imagen soporta URLs externas
+│   ├── 0010_actualizaciones.sql   app_config: aviso de version nueva
+│   └── 0011_carrito.sql    una confirmacion = una venta con N lineas
 ├── tests/                    pruebas SQL + ejecutar.sh
 ├── docker-compose.yml        PostgreSQL local
 └── README.md

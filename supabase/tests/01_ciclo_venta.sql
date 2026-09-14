@@ -111,6 +111,18 @@ begin
     '225000',
     'el detalle guarda el precio con descuento ya aplicado'
   );
+  -- 0011: la oferta vive en la linea, ya no en la cabecera.
+  perform test_igual(
+    (select id_oferta::text from detalle_venta where id_venta = v_venta),
+    v_oferta::text,
+    'la linea guarda con que oferta se vendio'
+  );
+  perform test_igual(
+    (select count(*)::text from information_schema.columns
+      where table_name = 'venta' and column_name = 'id_oferta'),
+    '0',
+    'la cabecera de la venta ya no lleva la oferta'
+  );
 end
 $$;
 
@@ -183,12 +195,14 @@ do $$
 declare
   v_cliente  bigint;
   v_producto bigint;
+  v_stock_antes integer;
 begin
   insert into clientes (nombre, paterno) values ('Sin', 'Stock')
     returning id_cliente into v_cliente;
   perform fn_simular_sesion(v_cliente);
 
-  select id_producto into v_producto from productos where nombre = 'Samsung Galaxy A55';
+  select id_producto, stock into v_producto, v_stock_antes
+    from productos where nombre = 'Samsung Galaxy A55';
   update productos set stock = 0 where id_producto = v_producto;
 
   perform test_falla(
@@ -196,6 +210,11 @@ begin
     'sin_stock',
     'no se puede vender un producto agotado'
   );
+
+  -- Se restaura: los bloques de abajo vuelven a comprar este producto, y una
+  -- prueba que ensucia el estado de las demas falla de formas que no tienen
+  -- que ver con lo que mide (la misma ley de 02_catalogo_y_ofertas).
+  update productos set stock = v_stock_antes where id_producto = v_producto;
 end
 $$;
 
@@ -218,8 +237,230 @@ begin
     'producto_inactivo',
     'no se puede vender un producto dado de baja'
   );
+
+  -- Se reactiva: el Mouse lo usa el bloque del carrito mas abajo.
+  update productos set activo = true where id_producto = v_producto;
 end
 $$;
+
+-- --------------- EL CARRITO: COTIZAR ---------------
+--
+-- fn_cotizar_carrito solo mira. Con ofertas vigentes cotiza a precio de
+-- oferta; con una oferta muerta, a precio de lista y con la bandera baja.
+
+do $$
+declare
+  v_cliente  bigint;
+  v_lenovo   bigint;
+  v_hp       bigint;
+  v_oferta   bigint;
+  v_otra     bigint;
+  v_cotizado record;
+begin
+  insert into clientes (nombre, paterno) values ('Cotiza', 'Carrito')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
+
+  select id_producto into v_lenovo from productos where nombre = 'Laptop Lenovo IdeaPad';
+  select id_producto into v_hp     from productos where nombre = 'Laptop HP Pavilion';
+  select id_oferta   into v_oferta from ofertas   where nombre = 'Descuento 10%';
+  select id_oferta   into v_otra   from ofertas   where nombre = 'Descuento 30%';
+
+  -- Dos lineas: una con oferta 10% vigente, otra sin oferta.
+  select * into v_cotizado
+    from fn_cotizar_carrito(
+      format('[{"id_producto":%s, "cantidad":1, "id_oferta":%s},
+               {"id_producto":%s, "cantidad":2}]', v_lenovo, v_oferta, v_hp)::jsonb);
+
+  perform test_igual(v_cotizado.precio_unitario_centavos::text, '225000',
+    'cotiza la Lenovo con su 10% vigente: 225000');
+  perform test_cierto(v_cotizado.oferta_aplicada,
+    'la cotizacion avisa que aplico la oferta');
+  perform test_cierto(v_cotizado.stock_suficiente,
+    'la cotizacion avisa que hay stock');
+
+  -- La segunda linea de la misma cotizacion: HP sin oferta.
+  select * into v_cotizado
+    from fn_cotizar_carrito(format('[{"id_producto":%s, "cantidad":2}]', v_hp)::jsonb)
+    limit 1;
+  perform test_igual(v_cotizado.precio_unitario_centavos::text, '280000',
+    'cotiza la HP a precio de lista');
+  perform test_cierto(not v_cotizado.oferta_aplicada,
+    'sin oferta pedida, no se marca oferta aplicada');
+
+  -- Una oferta que no cuelga de la Lenovo (el Combo Gamer no esta asociado a
+  -- ningun producto desde 0006c): se cotiza a precio de lista y con bandera
+  -- en falso. Es un aviso, no un error de la cotizacion.
+  select id_oferta   into v_otra   from ofertas   where nombre = 'Combo Gamer';
+  select * into v_cotizado
+    from fn_cotizar_carrito(
+      format('[{"id_producto":%s, "cantidad":1, "id_oferta":%s}]', v_lenovo, v_otra)::jsonb)
+    limit 1;
+  perform test_igual(v_cotizado.precio_unitario_centavos::text, '250000',
+    'una oferta fuera de la escalera se cotiza a precio de lista');
+  perform test_cierto(not v_cotizado.oferta_aplicada,
+    'y la bandera deja claro que no se aplico');
+
+  perform test_falla(
+    $q$ select fn_cotizar_carrito('[]') $q$,
+    'carrito_vacio',
+    'cotizar un carrito vacio no tiene sentido'
+  );
+  perform test_falla(
+    $q$ select fn_cotizar_carrito('[{"id_producto":999999}]') $q$,
+    'producto_inexistente',
+    'no se cotiza un producto que no existe'
+  );
+end
+$$;
+
+-- --------------- EL CARRITO: UNA CONFIRMACION ES UNA COMPRA ---------------
+--
+-- Decision con el administrador: confirmar con N productos es UNA compra.
+-- El limite diario se mira una sola vez, asi que todas las lineas de la
+-- primera confirmacion del dia pueden llevar su oferta.
+
+do $$
+declare
+  v_cliente  bigint;
+  v_lenovo   bigint;
+  v_samsung  bigint;
+  v_mouse    bigint;
+  v_o10      bigint;
+  v_o20      bigint;
+  v_venta    bigint;
+  v_stock_antes integer;
+begin
+  insert into clientes (nombre, paterno) values ('Confirma', 'Carrito')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
+
+  select id_producto into v_lenovo  from productos where nombre = 'Laptop Lenovo IdeaPad';
+  select id_producto into v_samsung from productos where nombre = 'Samsung Galaxy A55';
+  select id_producto into v_mouse   from productos where nombre = 'Mouse Logitech G203';
+  select id_oferta   into v_o10     from ofertas   where nombre = 'Descuento 10%';
+  select id_oferta   into v_o20     from ofertas   where nombre = 'Descuento 20%';
+
+  select stock into v_stock_antes from productos where id_producto = v_samsung;
+
+  -- Tres lineas con ofertas distintas en la MISMA confirmacion: Lenovo 10%,
+  -- Samsung 20%, Mouse sin oferta. Precios: 250000*0.9=225000,
+  -- 150000*0.8=120000, mouse 12000 a lista. Subtotal de lista
+  -- 250000+150000+24000=424000; descuento 25000+30000=55000.
+  v_venta := fn_confirmar_carrito(
+    format('[{"id_producto":%s, "cantidad":1, "id_oferta":%s, "precio_acordado_centavos":225000},
+             {"id_producto":%s, "cantidad":1, "id_oferta":%s, "precio_acordado_centavos":120000},
+             {"id_producto":%s, "cantidad":2, "precio_acordado_centavos":12000}]',
+           v_lenovo, v_o10, v_samsung, v_o20, v_mouse)::jsonb);
+
+  perform test_igual(
+    (select total_centavos::text from venta where id_venta = v_venta),
+    '369000',
+    'cobrar 225000 + 120000 + 24000 por la confirmacion del carrito'
+  );
+  perform test_igual(
+    (select descuento_centavos::text from venta where id_venta = v_venta),
+    '55000',
+    'el descuento de la venta es la suma de las rebajas de las lineas'
+  );
+  perform test_igual(
+    (select count(*)::text from detalle_venta where id_venta = v_venta),
+    '3',
+    'la venta del carrito lleva sus tres lineas'
+  );
+  perform test_igual(
+    (select id_oferta::text from detalle_venta
+      where id_venta = v_venta and id_producto = v_samsung),
+    v_o20::text,
+    'cada linea de la venta recuerda su oferta'
+  );
+  perform test_igual(
+    (select stock::text from productos where id_producto = v_samsung),
+    (v_stock_antes - 1)::text,
+    'el carrito descuenta el stock de cada producto'
+  );
+
+  -- La regla que el carrito cambia: 3 productos con oferta = 1 sola compra.
+  perform test_igual(fn_compras_del_dia()::text, '1',
+    'toda la confirmacion del carrito cuenta como una compra');
+  perform test_cierto(fn_puede_usar_oferta(),
+    'tras la primera confirmacion todavia hay derecho a oferta');
+
+  -- Segunda confirmacion con oferta: pasa, es su compra #2.
+  perform fn_confirmar_carrito(
+    format('[{"id_producto":%s, "cantidad":1, "id_oferta":%s}]', v_lenovo, v_o20)::jsonb);
+  perform test_cierto(not fn_puede_usar_oferta(),
+    'a la tercera confirmacion se acabo el cupo');
+
+  -- Y el carrito completo con oferta se rechaza entero.
+  perform test_falla(
+    format('select fn_confirmar_carrito(
+      ''[{"id_producto":%s, "cantidad":1, "id_oferta":%s},
+         {"id_producto":%s, "cantidad":1}]'')', v_lenovo, v_o10, v_mouse),
+    'limite_diario',
+    'no se confirma parcialmente un carrito cuando se acabo el cupo'
+  );
+
+  -- A precio normal si sigue: el limite es de ofertas, no de compras.
+  perform fn_confirmar_carrito(
+    format('[{"id_producto":%s, "cantidad":1}]', v_mouse)::jsonb);
+  perform test_igual(fn_compras_del_dia()::text, '3',
+    'sin oferta, el carrito se confirma igual');
+end
+$$;
+
+-- --------------- EL CARRITO: TODO O NADA ---------------
+--
+-- Si una linea no tiene stock, la confirmacion muere completa: no quedan
+-- medias ventas ni stocks a medias. La linea ya validada (y su stock ya
+-- restado) se deshace igual: la excepcion de test_falla tiene un savepoint
+-- disimulado que deshace todo lo que la funcion hubiera tocado.
+
+do $$
+declare
+  v_cliente  bigint;
+  v_lenovo   bigint;
+  v_hp       bigint;
+  v_ventas_antes   integer;
+  v_stock_antes    integer;
+begin
+  insert into clientes (nombre, paterno) values ('Todo', 'O Nada')
+    returning id_cliente into v_cliente;
+  perform fn_simular_sesion(v_cliente);
+
+  select id_producto into v_lenovo from productos where nombre = 'Laptop Lenovo IdeaPad';
+  select id_producto into v_hp     from productos where nombre = 'Laptop HP Pavilion';
+
+  update productos set stock = 0 where id_producto = v_hp;
+
+  select count(*) into v_ventas_antes from venta;
+  select stock   into v_stock_antes  from productos where id_producto = v_lenovo;
+
+  perform test_falla(
+    format('select fn_confirmar_carrito(
+              ''[{"id_producto":%s, "cantidad":1},
+                 {"id_producto":%s, "cantidad":1}]'')', v_lenovo, v_hp),
+    'sin_stock',
+    'una linea sin stock muere la confirmacion entera'
+  );
+
+  perform test_igual(
+    (select count(*)::text from venta), v_ventas_antes::text,
+    'del carrito rechazado no quedo ninguna venta'
+  );
+  perform test_igual(
+    (select stock::text from productos where id_producto = v_lenovo),
+    v_stock_antes::text,
+    'y el stock de la linea ya validada tambien quedo como estaba'
+  );
+end
+$$;
+
+select test_falla(
+  $q$ select fn_confirmar_carrito('[]') $q$,
+  'carrito_vacio',
+  'no se confirma un carrito vacio'
+);
 
 select test_ok('01_ciclo_venta');
 

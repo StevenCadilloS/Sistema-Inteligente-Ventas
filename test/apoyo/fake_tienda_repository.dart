@@ -24,6 +24,10 @@ class FakeTiendaRepository implements TiendaRepository {
   /// id de producto -> su escalera de ofertas, en orden.
   final Map<int, List<EscalonOferta>> _escaleras;
 
+  /// Ventas, fila por linea de detalle. Las lineas de una confirmacion del
+  /// carrito comparten idVenta: es la misma forma que deja
+  /// fn_confirmar_carrito en la base, y de ahi sale que el historial devuelve
+  /// una fila por linea y el limite diario cuente ventas distintas.
   final List<VentaFake> ventas = [];
   final Map<int, String> clientes = {};
 
@@ -42,6 +46,13 @@ class FakeTiendaRepository implements TiendaRepository {
 
   Producto producto(int id) =>
       _productos.firstWhere((p) => p.idProducto == id);
+
+  /// El administrador toca un precio desde el panel, mientras el cliente
+  /// revisa su carrito.
+  void cambiarPrecio(int idProducto, int centavos) {
+    final i = _productos.indexWhere((p) => p.idProducto == idProducto);
+    _productos[i] = _productos[i].copyWith(precioCentavos: centavos);
+  }
 
   /// Simula el token: a partir de aqui, el repositorio responde como si
   /// llamara este cliente. Equivale a fn_simular_sesion en las pruebas SQL.
@@ -92,6 +103,8 @@ class FakeTiendaRepository implements TiendaRepository {
   @override
   Future<int?> clienteActual() async => _sesion;
 
+  /// Ventas (cabeceras) de hoy del cliente: tantas como idVenta distintos,
+  /// que es como cuenta fn_compras_del_dia.
   int _comprasDeHoy(int idCliente) {
     final hoy = ahora();
     return ventas
@@ -102,22 +115,29 @@ class FakeTiendaRepository implements TiendaRepository {
               v.fecha.month == hoy.month &&
               v.fecha.day == hoy.day,
         )
+        .map((v) => v.idVenta)
+        .toSet()
         .length;
   }
 
   @override
   Future<List<CompraHistorial>> historial({int limite = 50}) async {
     final idCliente = _exigirSesion();
-    return ventas
-        .where((v) => v.idCliente == idCliente)
-        .take(limite)
+    final mias = ventas.where((v) => v.idCliente == idCliente).take(limite);
+    // El total que muestra el historial es el de la VENTA, no el de la linea:
+    // fn_historial junta venta con detalle_venta, y el total va por fila.
+    final totales = <int, int>{};
+    for (final v in mias) {
+      totales[v.idVenta] = (totales[v.idVenta] ?? 0) + v.totalCentavos;
+    }
+    return mias
         .map(
           (v) => CompraHistorial(
             idVenta: v.idVenta,
             fecha: v.fecha,
             producto: producto(v.idProducto).nombre,
             cantidad: v.cantidad,
-            totalCentavos: v.totalCentavos,
+            totalCentavos: totales[v.idVenta]!,
             nombreOferta: v.nombreOferta,
           ),
         )
@@ -142,6 +162,28 @@ class FakeTiendaRepository implements TiendaRepository {
     clientes[id] = nombre;
     _sesion = id;
     return id;
+  }
+
+  VentaFake _escribirLineas({
+    required int idCliente,
+    required List<Map<String, Object?>> lineas,
+  }) {
+    final idVenta = _siguienteVenta++;
+    final fecha = ahora();
+    for (final l in lineas) {
+      ventas.add(
+        VentaFake(
+          idVenta: idVenta,
+          idCliente: idCliente,
+          idProducto: l['id_producto']! as int,
+          cantidad: l['cantidad']! as int,
+          totalCentavos: l['pagado']! as int,
+          fecha: fecha,
+          nombreOferta: l['oferta'] as String?,
+        ),
+      );
+    }
+    return ventas.last;
   }
 
   @override
@@ -181,19 +223,134 @@ class FakeTiendaRepository implements TiendaRepository {
       nombreOferta = escalon.first.nombreOferta;
     }
 
-    _productos[indice] = p.copyWith(stock: p.stock - cantidad);
+    _productos[_productos.indexOf(p)] = p.copyWith(stock: p.stock - cantidad);
 
-    final venta = VentaFake(
-      idVenta: _siguienteVenta++,
+    final venta = _escribirLineas(
       idCliente: idCliente,
+      lineas: [
+        {
+          'id_producto': idProducto,
+          'cantidad': cantidad,
+          'pagado': unitario * cantidad,
+          'oferta': nombreOferta,
+        },
+      ],
+    );
+    return venta.idVenta;
+  }
+
+  // --------------- EL CARRITO (0011) ---------------
+  //
+  // Mismo contrato que fn_cotizar_carrito y fn_confirmar_carrito: cotizar
+  // mira y avisa con banderas (no explota por stock); confirmar es todo o
+  // nada y graba UNA venta con N lineas. Si este doble fuera mas permisivo
+  // que el servidor, las pruebas pasarian y la app fallaria contra Supabase.
+
+  @override
+  Future<List<CotizacionLinea>> cotizarCarrito({
+    required List<LineaCarrito> lineas,
+  }) async {
+    _exigirSesion();
+    if (lineas.isEmpty) {
+      throw StateError('El carrito esta vacio');
+    }
+    return [
+      for (final l in lineas) _cotizarLinea(l.producto.idProducto, l.cantidad, l.idOferta),
+    ];
+  }
+
+  CotizacionLinea _cotizarLinea(int idProducto, int cantidad, int? idOferta) {
+    final p = producto(idProducto);
+    var precio = p.precioCentavos;
+    var aplicada = false;
+    if (idOferta != null && _comprasDeHoy(_sesion!) < 2) {
+      final escalon = (_escaleras[idProducto] ?? const <EscalonOferta>[])
+          .where((e) => e.idOferta == idOferta);
+      if (escalon.isNotEmpty) {
+        precio = escalon.first.precioFinalCentavos;
+        aplicada = true;
+      }
+    }
+    return CotizacionLinea(
       idProducto: idProducto,
       cantidad: cantidad,
-      totalCentavos: unitario * cantidad,
-      fecha: ahora(),
-      nombreOferta: nombreOferta,
+      idOferta: aplicada ? idOferta : null,
+      precioUnitarioCentavos: precio,
+      ofertaAplicada: aplicada,
+      stockSuficiente: p.stock >= cantidad,
     );
-    ventas.add(venta);
-    return venta.idVenta;
+  }
+
+  @override
+  Future<int> confirmarCarrito({
+    required List<LineaCarrito> lineas,
+  }) async {
+    final idCliente = _exigirSesion();
+    if (lineas.isEmpty) {
+      throw StateError('El carrito esta vacio');
+    }
+
+    // Toda la confirmacion es UNA compra: el limite se mira una vez para el
+    // carrito completo, no linea por linea.
+    if (lineas.any((l) => l.idOferta != null)) {
+      if (!await puedeUsarOferta()) {
+        throw LimiteOfertasException(
+          'El cliente $idCliente ya uso sus dos ofertas de hoy',
+        );
+      }
+    }
+
+    // Primero se valida TODO el carrito. Los stocks solo se descuentan
+    // despues, cuando ya nada puede fallar: si se descontaran mientras se
+    // valida, un carrito de dos lineas del mismo producto pasaria ambas
+    // validaciones contra el stock original y se llevaria doble.
+    final validadas = <(int, int, EscalonOferta?, int)>[];
+    for (final l in lineas) {
+      final p = producto(l.producto.idProducto);
+      if (!p.activo) {
+        throw StateError('El producto ${p.nombre} no esta activo');
+      }
+      if (p.stock < l.cantidad) {
+        throw SinStockException('Sin stock suficiente de ${p.nombre}');
+      }
+      var unitario = p.precioCentavos;
+      EscalonOferta? escalon;
+      if (l.idOferta != null) {
+        final escalones = (_escaleras[p.idProducto] ?? const <EscalonOferta>[])
+            .where((e) => e.idOferta == l.idOferta);
+        if (escalones.isEmpty) {
+          throw StateError(
+            'La oferta ${l.idOferta} no esta vigente para ${p.nombre}',
+          );
+        }
+        escalon = escalones.first;
+        unitario = escalon.precioFinalCentavos;
+      }
+      // El precio acordado no se le cree a nadie: si lo congelado en
+      // pantalla difiere de lo que determina el catalogo, muere completo.
+      if (l.acordadoCentavos != unitario) {
+        throw PrecioCambioException(
+          'El precio de ${p.nombre} cambio: acordaste '
+          '${soles(l.acordadoCentavos)} y hoy vale ${soles(unitario)}',
+        );
+      }
+      validadas.add((p.idProducto, l.cantidad, escalon, unitario));
+    }
+
+    final lineasVenta = <Map<String, Object?>>[];
+    for (final (id, cant, escalon, unitario) in validadas) {
+      final indice = _productos.indexWhere((p) => p.idProducto == id);
+      _productos[indice] = _productos[indice].copyWith(stock: _productos[indice].stock - cant);
+      lineasVenta.add({
+        'id_producto': id,
+        'cantidad': cant,
+        'pagado': unitario * cant,
+        'oferta': escalon?.nombreOferta,
+      });
+    }
+
+    _escribirLineas(idCliente: idCliente, lineas: lineasVenta);
+    return ventas.last.idVenta;
   }
 
   // --------------- AYUDAS PARA LAS PRUEBAS ---------------
@@ -221,6 +378,9 @@ class FakeTiendaRepository implements TiendaRepository {
   }
 }
 
+/// Una fila de detalle de venta del doble. Las filas de una misma venta
+/// comparten [idVenta]; [totalCentavos] es lo pagado por la LINEA, y el total
+/// de la venta es la suma de sus filas (el historial lo junta asi).
 class VentaFake {
   VentaFake({
     required this.idVenta,

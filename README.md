@@ -117,9 +117,9 @@ frente a una pantalla suele clasificarse así.
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | ✅ 12 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | ✅ 13 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
-| Motor de negociación (escalera de ofertas) | ✅ 137 pruebas Dart |
+| Motor de negociación (escalera de ofertas) | ✅ 142 pruebas Dart |
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
@@ -236,11 +236,11 @@ Android); las dos últimas en **Dart**.
 │   └── assets/emotion_model.tflite               modelo FER-2013
 │
 ├── supabase/
-│   ├── migrations/                               0001 a 0010 (0006 va en tres partes)
+│   ├── migrations/                               0001 a 0011 (0006 va en tres partes)
 │   ├── tests/                                    3 suites SQL + ejecutar.sh
 │   └── README.md                                 guía del backend y administración
 │
-└── test/                                         137 pruebas Dart
+└── test/                                         142 pruebas Dart
 ```
 
 ---

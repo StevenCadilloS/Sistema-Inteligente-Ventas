@@ -146,6 +146,19 @@ select test_falla(
   'anon NO puede pedir la escalera de ofertas'
 );
 
+-- El carrito (0011) entra por el mismo tamano de puerta: solo con sesion.
+select test_falla(
+  $q$ select fn_cotizar_carrito('[]') $q$,
+  null,
+  'anon NO puede cotizar el carrito'
+);
+
+select test_falla(
+  $q$ select fn_confirmar_carrito('[]') $q$,
+  null,
+  'anon NO puede confirmar el carrito'
+);
+
 -- La sesion simulada es de las pruebas: si la app pudiera llamarla, cualquiera
 -- se haria pasar por cualquier cliente.
 select test_falla(
@@ -223,6 +236,27 @@ begin
   perform test_cierto(
     v_params not ilike '%cliente%',
     'fn_registrar_venta no recibe el cliente: sale del token'
+  );
+end
+$$;
+
+-- El carrito hereda la misma ley: ni el cliente ni el total viajan como
+-- parametro. Lo que si viaja es el precio ACORDADO (lo que la pantalla mostro)
+-- y su destino es unicamente el rechazo cuando la base determina otro: las
+-- pruebas de 01_ciclo_venta demuestran que 'precio_cambio' mata la
+-- confirmacion en vez de cobrar lo que la app pida.
+do $$
+declare
+  v_params text;
+begin
+  select pg_get_function_arguments(p.oid) into v_params
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'fn_confirmar_carrito';
+
+  perform test_cierto(
+    v_params not ilike '%cliente%' and v_params not ilike '%total%',
+    'fn_confirmar_carrito no recibe el cliente ni el total: los pone el servidor'
   );
 end
 $$;
