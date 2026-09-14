@@ -23,13 +23,12 @@ class ProductoCard extends StatelessWidget {
   final bool comprado;
 
   /// Al cliente de la sesion le queda la oferta del dia. Con el cupo gastado
-  /// la etiqueta desaparece: prometer "Negociable" y luego ofrecer solo el
-  /// precio de lista se siente como trampa.
+  /// la etiqueta cambia para avisar claramente que ya no puede usar otra
+  /// oferta durante el dia.
   final bool negociable;
 
   final EmotionStyle estilo;
   final VoidCallback onTap;
-
 
   /// Pasa [hijo] a escala de grises cuando [gris]; si no, lo deja igual.
   ///
@@ -193,13 +192,11 @@ class ProductoCard extends StatelessWidget {
                         ),
                         Positioned.fill(child: Center(child: _franjaAgotado())),
                       ],
-                      // Que el producto tenga ofertas se anuncia, pero no
-                      // cual ni de cuanto: el escalon que le toque a este
-                      // cliente se decide durante la negociacion, y adelantar
-                      // el 30% aqui haria que nadie se quedara en el 10%.
-                      // Y solo si le queda cupo: sin el, la etiqueta
-                      // prometeria un descuento que ya no existe.
-                      if (producto.tieneOfertas && negociable && !agotado)
+                      // El catalogo comunica el estado de la oferta diaria.
+                      // Mientras haya cupo conserva "Negociable"; cuando el
+                      // cliente ya uso su compra con oferta, lo dice de forma
+                      // explicita en vez de simplemente ocultar la etiqueta.
+                      if (producto.tieneOfertas && !agotado)
                         Positioned(
                           top: 8,
                           right: 8,
@@ -209,11 +206,13 @@ class ProductoCard extends StatelessWidget {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: AppTheme.danger,
+                              color: negociable
+                                  ? AppTheme.danger
+                                  : AppTheme.mutedText,
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
-                              'Negociable',
+                              negociable ? 'Negociable' : 'Oferta diaria usada',
                               style: textTheme.bodyMedium?.copyWith(
                                 color: Colors.white,
                                 fontSize: 11,
