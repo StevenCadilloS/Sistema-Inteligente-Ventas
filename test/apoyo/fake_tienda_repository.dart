@@ -6,9 +6,10 @@ import 'package:tienda_adaptativa/data/repositories/tienda_repository.dart';
 /// Doble en memoria de [TiendaRepository].
 ///
 /// Replica lo que hacen las funciones del servidor, incluidas las reglas que
-/// importan: el limite de dos ofertas por dia, el descuento de stock y el
-/// calculo del precio de cada escalon. Si este doble fuera mas permisivo que
-/// el servidor, las pruebas pasarian y la app fallaria contra la base real.
+/// importan: el limite de UNA oferta por dia que solo consumen las compras
+/// con oferta (0013), el descuento de stock y el calculo del precio de cada
+/// escalon. Si este doble fuera mas permisivo que el servidor, las pruebas
+/// pasarian y la app fallaria contra la base real.
 ///
 /// Lo que NO replica es la seguridad: aqui no hay RLS ni permisos. Eso se
 /// prueba en SQL (supabase/tests/04_seguridad.sql), que es donde vive.
@@ -97,20 +98,22 @@ class FakeTiendaRepository implements TiendaRepository {
   @override
   Future<bool> puedeUsarOferta() async {
     final id = _sesion;
-    return id != null && _comprasDeHoy(id) < 2;
+    return id != null && _comprasDeHoy(id) < 1;
   }
 
   @override
   Future<int?> clienteActual() async => _sesion;
 
-  /// Ventas (cabeceras) de hoy del cliente: tantas como idVenta distintos,
-  /// que es como cuenta fn_compras_del_dia.
+  /// Ventas con oferta de hoy del cliente: tantas como idVenta con al menos
+  /// una linea con oferta, que es como cuenta fn_compras_del_dia desde 0013.
+  /// Las compras a precio normal no consumen el cupo.
   int _comprasDeHoy(int idCliente) {
     final hoy = ahora();
     return ventas
         .where(
           (v) =>
               v.idCliente == idCliente &&
+              v.nombreOferta != null &&
               v.fecha.year == hoy.year &&
               v.fecha.month == hoy.month &&
               v.fecha.day == hoy.day,
@@ -238,7 +241,7 @@ class FakeTiendaRepository implements TiendaRepository {
       // la pregunta y la compra el cliente pudo comprar desde otro sitio.
       if (!await puedeUsarOferta()) {
         throw LimiteOfertasException(
-          'El cliente $idCliente ya uso sus dos ofertas de hoy',
+          'El cliente $idCliente ya uso su oferta de hoy',
         );
       }
       final escalera = _escaleras[idProducto] ?? const <EscalonOferta>[];
@@ -322,7 +325,7 @@ class FakeTiendaRepository implements TiendaRepository {
     if (lineas.any((l) => l.idOferta != null)) {
       if (!await puedeUsarOferta()) {
         throw LimiteOfertasException(
-          'El cliente $idCliente ya uso sus dos ofertas de hoy',
+          'El cliente $idCliente ya uso su oferta de hoy',
         );
       }
     }
@@ -382,21 +385,20 @@ class FakeTiendaRepository implements TiendaRepository {
 
   // --------------- AYUDAS PARA LAS PRUEBAS ---------------
 
-  /// Deja a [idCliente] sin derecho a ofertas, simulando que ya compro dos
-  /// veces hoy.
+  /// Deja a [idCliente] sin derecho a oferta, simulando que ya uso la de hoy
+  /// (0013: la venta lleva nombreOferta; sin ella no consumiria el cupo).
   void agotarCupoDe(int idCliente) {
-    for (var i = 0; i < 2; i++) {
-      ventas.add(
-        VentaFake(
-          idVenta: _siguienteVenta++,
-          idCliente: idCliente,
-          idProducto: _productos.first.idProducto,
-          cantidad: 1,
-          totalCentavos: 0,
-          fecha: ahora(),
-        ),
-      );
-    }
+    ventas.add(
+      VentaFake(
+        idVenta: _siguienteVenta++,
+        idCliente: idCliente,
+        idProducto: _productos.first.idProducto,
+        cantidad: 1,
+        totalCentavos: 0,
+        fecha: ahora(),
+        nombreOferta: 'Oferta de prueba',
+      ),
+    );
   }
 
   Future<void> cerrar() async {

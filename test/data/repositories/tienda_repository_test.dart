@@ -111,22 +111,27 @@ void main() {
     });
   });
 
-  group('limite de dos ofertas por dia', () {
+  group('limite de una oferta por dia', () {
     test('un cliente nuevo puede usar ofertas', () async {
       await entrarComo('Ana');
       expect(await repo.puedeUsarOferta(), isTrue);
     });
 
-    test('cuentan las compras, no las que llevaron oferta', () async {
+    test('las compras a precio normal no consumen el cupo', () async {
       await entrarComo('Ana');
 
-      // Dos compras a precio normal: ninguna uso oferta, pero el cupo se
-      // consume igual. Es la regla del README, y conviene que sorprenda aqui
-      // y no en produccion.
+      // 0013: pagar de lista no gasta la oportunidad. Varias compras a
+      // precio normal y el cupo sigue intacto.
+      await repo.registrarVenta(idProducto: idHp);
+      await repo.registrarVenta(idProducto: idHp);
       await repo.registrarVenta(idProducto: idHp);
       expect(await repo.puedeUsarOferta(), isTrue);
+    });
 
-      await repo.registrarVenta(idProducto: idHp);
+    test('la primera compra con oferta agota el cupo', () async {
+      await entrarComo('Ana');
+
+      await repo.registrarVenta(idProducto: idLenovo, idOferta: 1);
       expect(await repo.puedeUsarOferta(), isFalse);
     });
 

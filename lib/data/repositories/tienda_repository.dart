@@ -31,12 +31,13 @@ abstract class TiendaRepository {
   ///
   /// Viene vacia por cualquiera de estas razones, y a la app le da igual cual:
   /// el producto no tiene ofertas configuradas, ninguna esta vigente hoy, o el
-  /// cliente ya gasto sus dos ofertas del dia. En los tres casos la respuesta
+  /// cliente ya gasto su oferta del dia. En los tres casos la respuesta
   /// es la misma: se queda en el precio normal.
   Future<List<EscalonOferta>> ofertasDe(int idProducto);
 
-  /// Si al cliente de la sesion le queda derecho a usar ofertas hoy. Lo decide
-  /// el servidor contando sus compras del dia, no la app.
+  /// Si al cliente de la sesion le queda derecho a usar su oferta del dia
+  /// (0013: una sola, y solo la consumen las compras con oferta). Lo decide
+  /// el servidor contando sus compras con oferta de hoy, no la app.
   ///
   /// Sirve para no encender la camara cuando no hay nada que negociar; la
   /// comprobacion de verdad la vuelve a hacer el servidor al vender.
@@ -128,8 +129,8 @@ class PrecioCambioException implements Exception {
   String toString() => mensaje;
 }
 
-/// El cliente ya uso ofertas en sus dos primeras compras del dia (README,
-/// regla 7). Puede seguir comprando, pero a precio normal.
+/// El cliente ya uso su oferta del dia (README, regla 7; 0013). Puede seguir
+/// comprando, pero a precio normal.
 ///
 /// La app pregunta antes con [TiendaRepository.puedeUsarOferta], asi que
 /// llegar aqui significa que el limite se alcanzo mientras el cliente

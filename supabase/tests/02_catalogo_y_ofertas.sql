@@ -138,9 +138,9 @@ $$;
 
 -- --------------- LIMITE DE DOS OFERTAS POR DIA ---------------
 --
--- README regla 7. Se cuentan las COMPRAS del dia, no las que llevaron oferta:
--- a la tercera compra ya no hay oferta aunque las dos primeras fueran a
--- precio normal.
+-- README regla 7 (0013). Solo cuentan las compras que USARON oferta y el
+-- limite es UNO: la primera compra con oferta agota el cupo del dia, y las
+-- compras a precio normal no lo consumen.
 
 do $$
 declare
@@ -159,17 +159,20 @@ begin
   perform test_cierto(fn_puede_usar_oferta(),
     'un cliente sin compras hoy puede usar oferta');
 
-  -- Primera compra: a precio normal, pero cuenta para el limite.
+  -- Primera compra: a precio normal, NO consume el cupo.
   perform fn_registrar_venta(v_hp, 1, null);
+  perform test_igual(fn_compras_del_dia()::text, '0',
+    'las compras a precio normal no cuentan para el limite de ofertas');
   perform test_cierto(fn_puede_usar_oferta(),
-    'tras una compra todavia puede usar oferta');
+    'tras comprar a precio normal conserva su oportunidad');
 
-  -- Segunda compra: con oferta.
+  -- Segunda compra: con oferta. Es la primera que cuenta, y la ultima que
+  -- puede hacer con descuento hoy.
   perform fn_registrar_venta(v_lenovo, 1, v_oferta);
-  perform test_igual(fn_compras_del_dia()::text, '2',
-    'lleva dos compras hoy');
+  perform test_igual(fn_compras_del_dia()::text, '1',
+    'la compra con oferta cuenta una vez');
   perform test_cierto(not fn_puede_usar_oferta(),
-    'a la tercera compra ya no puede usar oferta');
+    'tras usar la oferta, ya no hay mas hoy');
 
   -- La escalera se le vacia: no hay a donde avanzar.
   perform test_igual(
@@ -182,13 +185,13 @@ begin
   perform test_falla(
     format('select fn_registrar_venta(%s, 1, %s)', v_lenovo, v_oferta),
     'limite_diario',
-    'el servidor rechaza la tercera oferta del dia'
+    'el servidor rechaza la segunda oferta del dia'
   );
 
   -- A precio normal si puede seguir comprando: el limite es de ofertas, no
   -- de compras.
   perform fn_registrar_venta(v_hp, 1, null);
-  perform test_igual(fn_compras_del_dia()::text, '3',
+  perform test_igual(fn_compras_del_dia()::text, '1',
     'puede seguir comprando a precio normal');
 end
 $$;
@@ -199,23 +202,25 @@ do $$
 declare
   v_cliente bigint;
   v_hp      bigint;
+  v_oferta  bigint;
   v_venta   bigint;
 begin
   insert into clientes (nombre, paterno) values ('Compras', 'Ayer')
     returning id_cliente into v_cliente;
   perform fn_simular_sesion(v_cliente);
-  select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
+  select id_producto into v_hp      from productos where nombre = 'Laptop HP Pavilion';
+  select id_oferta   into v_oferta  from ofertas   where nombre = 'Descuento 10%';
 
-  v_venta := fn_registrar_venta(v_hp, 1, null);
-  v_venta := fn_registrar_venta(v_hp, 1, null);
-  perform test_cierto(not fn_puede_usar_oferta(), 'hoy ya gasto sus dos');
+  -- La oferta de ayer no se arrastra a hoy: el cupo se renueva.
+  v_venta := fn_registrar_venta(v_hp, 1, v_oferta);
+  perform test_cierto(not fn_puede_usar_oferta(), 'hoy ya gasto su oferta');
 
-  -- Se mueven ambas compras a ayer.
+  -- Se mueve la compra a ayer.
   update venta set fecha_hora = fecha_hora - interval '1 day'
    where id_cliente = v_cliente;
 
   perform test_igual(fn_compras_del_dia()::text, '0',
-    'las compras de ayer no cuentan para el limite de hoy');
+    'las ofertas de ayer no cuentan para el limite de hoy');
   perform test_cierto(fn_puede_usar_oferta(),
     'el limite se renueva cada dia');
 end

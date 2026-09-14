@@ -210,19 +210,19 @@ El correo tampoco lo manda el formulario: `fn_registrar_cliente` lo lee de
 
 ---
 
-## 5. La regla de las dos ofertas por dia
+## 5. La regla de la oferta unica por dia
 
-Un cliente puede usar ofertas solo en sus **dos primeras compras del dia**.
-Se cuentan las compras, no las que llevaron oferta: a la tercera ya no hay
-oferta aunque las dos primeras fueran a precio normal.
+Un cliente tiene **una sola oportunidad de oferta por dia** (0013). Cuentan
+solo las compras que USARON oferta: las de precio normal no consumen nada.
+Con la primera compra con oferta se agota el cupo; de ahi en adelante puede
+seguir comprando, pero a precio de lista, hasta que el dia renueve el limite.
 
-> Con el carrito (0011), "una compra" es **toda la confirmacion**: confirmar
-> un carrito de tres productos crea UNA venta y consume UNA compra del
-> limite. Cualquier cantidad de productos con oferta cabe dentro de las dos
-> primeras confirmaciones del dia.
+> Con el carrito (0011), "una compra con oferta" es **toda la confirmacion**:
+> confirmar un carrito de tres productos con oferta crea UNA venta y consume
+> UNA (la unica) oportunidad del dia. El precio normal nunca consume cupo.
 
 ```sql
-select fn_compras_del_dia();    -- cuantas lleva hoy quien llama
+select fn_compras_del_dia();    -- cuantas ofertas uso hoy quien llama
 select fn_puede_usar_oferta();  -- le queda derecho a oferta?
 ```
 
@@ -261,7 +261,7 @@ datos.
 | Archivo | Que comprueba |
 |---|---|
 | `01_ciclo_venta.sql` | Registro de cliente, compra con y sin oferta, precio congelado, stock, errores esperados |
-| `02_catalogo_y_ofertas.sql` | Orden de la escalera, vigencia, el limite de dos ofertas por dia, coherencia de las ofertas |
+| `02_catalogo_y_ofertas.sql` | Orden de la escalera, vigencia, el limite de una oferta por dia, coherencia de las ofertas |
 | `04_seguridad.sql` | Que la clave publica no pueda tocar precios, stock, ofertas ni ventas, y que un cliente no vea lo de otro |
 
 ---

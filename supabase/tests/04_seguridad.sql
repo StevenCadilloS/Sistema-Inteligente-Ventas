@@ -227,7 +227,7 @@ begin
   perform test_igual(fn_compras_del_dia()::text, '0',
     'las compras de Ana no cuentan para el cupo de Carlos');
   perform test_cierto(fn_puede_usar_oferta(),
-    'Carlos conserva sus dos ofertas del dia');
+    'Carlos conserva su oferta del dia');
 
   perform fn_simular_sesion(null);
 end

@@ -412,32 +412,27 @@ begin
     'el detalle recuerda con que oferta se vendio cada linea'
   );
 
-  -- La regla que el carrito cambia: 3 productos con oferta = 1 sola compra.
+  -- La regla que el carrito cambia (0013): tres productos con oferta en la
+  -- misma confirmacion consumen UNA sola oportunidad, porque es una venta.
   perform test_igual(fn_compras_del_dia()::text, '1',
-    'toda la confirmacion del carrito cuenta como una compra');
-  perform test_cierto(fn_puede_usar_oferta(),
-    'tras la primera confirmacion todavia hay derecho a oferta');
-
-  -- Segunda confirmacion con oferta: pasa, es su compra #2.
-  perform fn_confirmar_carrito(
-    format('[{"id_producto":%s, "cantidad":1, "id_oferta":%s}]', v_lenovo, v_o20)::jsonb);
+    'toda la confirmacion del carrito cuenta como una oferta usada');
   perform test_cierto(not fn_puede_usar_oferta(),
-    'a la tercera confirmacion se acabo el cupo');
+    'con la primera compra con oferta se acabo el cupo del dia');
 
-  -- Y el carrito completo con oferta se rechaza entero.
+  -- Y el carrito con oferta se rechaza entero: no queda cupo.
   perform test_falla(
     format('select fn_confirmar_carrito(
       ''[{"id_producto":%s, "cantidad":1, "id_oferta":%s},
          {"id_producto":%s, "cantidad":1}]'')', v_lenovo, v_o10, v_mouse),
     'limite_diario',
-    'no se confirma parcialmente un carrito cuando se acabo el cupo'
+    'no hay segunda oferta el mismo dia, ni parcial ni completa'
   );
 
   -- A precio normal si sigue: el limite es de ofertas, no de compras.
   perform fn_confirmar_carrito(
     format('[{"id_producto":%s, "cantidad":1}]', v_mouse)::jsonb);
-  perform test_igual(fn_compras_del_dia()::text, '3',
-    'sin oferta, el carrito se confirma igual');
+  perform test_igual(fn_compras_del_dia()::text, '1',
+    'sin oferta, el carrito se confirma igual y no consume cupo');
 end
 $$;
 
