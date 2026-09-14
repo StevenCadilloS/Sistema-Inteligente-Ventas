@@ -26,6 +26,11 @@ class PopupOferta extends StatelessWidget {
 
   bool get _sinCamara => lecturas < 0;
   final VoidCallback onAceptar;
+
+  /// Se conserva por compatibilidad con quien construye el popup. El rechazo
+  /// manual ya no avanza la escalera: esa decision pertenece exclusivamente a
+  /// la lectura facial. El boton "No, gracias" abandona la interaccion usando
+  /// [onCerrar].
   final VoidCallback onRechazar;
   final VoidCallback onCerrar;
 
@@ -117,7 +122,7 @@ class PopupOferta extends StatelessWidget {
                         // Sin el total de la escalera: si el cliente supiera
                         // que hay tres, esperaria al 30% y no aceptaria el
                         // 10%. Que descubra los siguientes escalones solo si
-                        // rechaza.
+                        // su respuesta facial resulta desfavorable.
                         ? 'Oferta ${escalon.orden}'
                         : 'Precio normal',
                     style: textTheme.bodyMedium?.copyWith(
@@ -225,7 +230,10 @@ class PopupOferta extends StatelessWidget {
                       const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: onRechazar,
+                          // El cliente puede abandonar, pero ese toque no se
+                          // interpreta como emocion: solo la camara decide si
+                          // corresponde ofrecer el siguiente escalon.
+                          onPressed: onCerrar,
                           icon: const Icon(Icons.close, size: 18),
                           label: const Text('No, gracias'),
                           style: OutlinedButton.styleFrom(
