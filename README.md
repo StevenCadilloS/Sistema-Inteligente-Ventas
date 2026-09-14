@@ -82,7 +82,9 @@ Cómo funciona:
 2. Al **seleccionar un producto** empieza la interacción y se enciende la cámara
 3. Se muestra el **precio normal** y se observa su respuesta durante unos segundos
 4. Respuesta **favorable** → se mantiene el precio. **Desfavorable** → se avanza al siguiente escalón
-5. La interacción termina al comprar, al abandonar o al agotarse la escalera. La cámara **se apaga**
+5. La interacción termina al **agregar al carrito**, al abandonar o al agotarse la escalera. La cámara **se apaga**
+6. El precio acordado queda **congelado en la línea del carrito**: lo que se vio en pantalla es lo que se cobra
+7. Confirmar el carrito es **una sola venta con N líneas**, y es ahí donde se consume la oportunidad de oferta del día
 
 ### Ejemplo de escalera
 
@@ -123,6 +125,7 @@ frente a una pantalla suele clasificarse así.
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
+| Carrito y detalle de venta | ✅ Una confirmacion = una venta con N lineas, precio congelado por linea |
 | Catálogo de demostración | ✅ 50 productos en 8 categorías, con escaleras de oferta mixtas |
 | Imágenes de producto | ✅ 16 fotos en el bucket; los otros 34 caen al icono de su categoría |
 | Stock en tiempo real entre dispositivos | ✅ Realtime + relectura al volver de segundo plano |
@@ -145,8 +148,8 @@ del producto 3", con el token que dice quién pregunta.
 
 **El APK solo puede leer.** Su clave va dentro del paquete y cualquiera la
 extrae, así que las escrituras pasan por funciones que validan las reglas.
-`fn_registrar_venta` no recibe ni el precio (lo recalcula) ni el id del cliente
-(lo saca del token).
+`fn_confirmar_carrito` no recibe ni el total (lo recalcula desde el catálogo) ni el
+id del cliente (lo saca del token).
 
 ---
 
@@ -159,7 +162,9 @@ extrae, así que las escrituras pasan por funciones que validan las reglas.
 5. **Un cliente tiene una sola oportunidad de oferta al día** — solo cuentan las compras que *usaron* oferta; pagar precio de lista no consume el cupo
 6. **No todos los productos tienen ofertas**: sin escalera, el precio no se mueve
 7. **Las ofertas respetan su orden, vigencia y estado activo**
-8. **La interacción termina** al comprar, al abandonar o al agotarse la escalera
+8. **La interacción termina** al agregar al carrito, al abandonar o al agotarse la escalera
+9. **El precio negociado se congela** al agregar al carrito; renegociar un producto que ya está dentro no se permite
+10. **Una confirmación de carrito es una venta**, aunque lleve varios productos
 
 ---
 
@@ -195,8 +200,8 @@ Android); las dos últimas en **Dart**.
 │                   v                      │     │    ofertas       │
 │         EmotionProcessor                 │     │                  │
 │    (26 frames para estabilizar)          │     │  fn_ofertas_de   │
-│                   │                      │     │  fn_registrar_   │
-│          EventChannel                    │     │    venta         │
+│                   │                      │     │  fn_confirmar_   │
+│          EventChannel                    │     │    carrito       │
 │                   │                      │     │  fn_historial    │
 │                   v                      │     │                  │
 │   ClasificadorRespuesta ──> Negociacion  │<───>│  RLS en las 11   │
@@ -326,7 +331,8 @@ La cámara se pide al iniciar la primera interacción, no al abrir la app.
 4. Pulsar **"No, gracias"** → avanza al siguiente escalón, igual que una cara desfavorable
 5. Seleccionar la **Laptop HP Pavilion** → no tiene ofertas, el precio no se mueve pase lo que pase
 
-Para ver el límite diario: comprar una vez **con oferta** y seleccionar otro producto.
+Para ver el límite diario: agregar al carrito con oferta, **confirmar la compra** y
+seleccionar otro producto.
 La escalera viene vacía y todo se queda a precio normal hasta mañana. Comprar a precio
 de lista no gasta el cupo: se puede repetir sin perder la oportunidad.
 

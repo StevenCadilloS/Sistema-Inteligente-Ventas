@@ -38,6 +38,7 @@ Responsable de detectar el rostro y clasificar la expresión facial.
 - Corrección de orientación del frame según `rotationDegrees`
 - Recorte seguro de la región facial con un pequeño margen
 - Preprocesamiento de la cara a `48 x 48` píxeles en escala de grises
+- Ecualización de histograma sobre el recorte (`ecualizar()`): reparte los niveles de gris para que el contraste no dependa de la luz de la sala
 - Normalización de píxeles a valores entre `0` y `1`
 - Carga y ejecución del modelo TensorFlow Lite `emotion_model.tflite`
 - Clasificación basada en FER-2013

@@ -203,10 +203,12 @@ esta al alcance de cualquiera que abra el APK. `supabase/tests/04_seguridad.sql`
 comprueba justo eso, y falla si la tienda queda abierta.
 
 Ni el precio ni la identidad se los cree el servidor a la app:
-`fn_registrar_venta` no recibe ningun total — lo **recalcula** desde el
-catalogo — y tampoco recibe el id del cliente: lo saca del token. Mientras lo
-recibia como parametro, cualquiera con la clave publica podia registrar
-compras a nombre de otra persona.
+`fn_confirmar_carrito` —la funcion con la que la app cierra una compra desde
+0011— no recibe ningun total: lo **recalcula** desde el catalogo. Tampoco
+recibe el id del cliente, que saca del token. Mientras lo recibia como
+parametro, cualquiera con la clave publica podia registrar compras a nombre de
+otra persona. `fn_registrar_venta` sigue existiendo para la venta de un solo
+producto y se comporta igual.
 
 ### Las contrasenas
 
@@ -256,6 +258,8 @@ select * from v_ofertas_vigentes;                        -- ofertas activas hoy
 select * from v_secuencia_ofertas where id_producto = 1; -- la escalera de un producto
 select * from fn_ofertas_de(1);                          -- escalera para quien llama
 select * from fn_historial(20);                          -- sus ultimas compras
+select * from fn_venta_detalle(5);                       -- las lineas de una venta suya
+select fn_puede_usar_oferta();                           -- le queda oferta hoy?
 ```
 
 ---
