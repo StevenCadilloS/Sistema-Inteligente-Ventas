@@ -33,6 +33,7 @@ void main() {
     bool destacado = false,
     bool seleccionado = false,
     bool comprado = false,
+    bool negociable = true,
     VoidCallback? onTap,
   }) async {
     await tester.pumpWidget(
@@ -46,6 +47,7 @@ void main() {
               destacado: destacado,
               seleccionado: seleccionado,
               comprado: comprado,
+              negociable: negociable,
               estilo: EmotionStyle.of('neutral'),
               onTap: onTap ?? () {},
             ),
@@ -81,14 +83,25 @@ void main() {
   });
 
   group('el aviso de negociable', () {
-    testWidgets('aparece si el producto tiene ofertas', (tester) async {
-      await montar(tester, p(ofertas: true));
+    testWidgets('aparece si el producto tiene ofertas y hay cupo',
+        (tester) async {
+      await montar(tester, p(ofertas: true), negociable: true);
 
       expect(find.text('Negociable'), findsOneWidget);
     });
 
     testWidgets('no aparece sin ofertas', (tester) async {
       await montar(tester, p(ofertas: false));
+
+      expect(find.text('Negociable'), findsNothing);
+    });
+
+    testWidgets('no aparece si el cliente ya gasto su oferta del dia',
+        (tester) async {
+      // 0013: con el cupo gastado la etiqueta prometeria un descuento que ya
+      // no existe. El servidor comprobaria el cupo al negociar, pero mejor
+      // no invitar al toque en vano.
+      await montar(tester, p(ofertas: true), negociable: false);
 
       expect(find.text('Negociable'), findsNothing);
     });

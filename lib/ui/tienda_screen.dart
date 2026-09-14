@@ -107,12 +107,19 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   /// no comprar.
   bool _sinFicha = false;
 
+  /// Al cliente le queda la oferta del dia (0013: una sola, y solo la
+  /// consumen las compras con oferta). Arranca optimista: si la consulta
+  /// falla, la etiqueta "Negociable" se queda — lo conservador, porque el
+  /// servidor vuelve a comprobar el cupo al comprar.
+  bool _cupoOferta = true;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _escucharCatalogo();
     _comprobarFicha();
+    _comprobarCupo();
   }
 
   /// Android/iOS suelen suspender el websocket de Realtime cuando la app pasa
@@ -120,9 +127,16 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   /// cualquier evento ocurrido mientras estuvo desconectado se pierde — no
   /// hay replay. Sin esto, el catalogo se queda congelado hasta cerrar sesion
   /// y volver a entrar, que es lo que recrea la pantalla entera.
+  ///
+  /// Al volver tambien se re-consulta el cupo: la oferta se renueva a
+  /// medianoche y quien dejo la app abierta de un dia para otro no deberia
+  /// seguir viendo el feed sin etiquetas.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refrescarCatalogo();
+    if (state == AppLifecycleState.resumed) {
+      _refrescarCatalogo();
+      _comprobarCupo();
+    }
   }
 
   /// Relectura directa del catalogo, al margen de Realtime. Sirve de red de
@@ -152,6 +166,20 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
     } catch (_) {
       // Un fallo de red aqui no debe bloquear la tienda: el catalogo se lee
       // igual, y al comprar el servidor volveria a decir que falta sesion.
+    }
+  }
+
+  /// Si el cupo de oferta del cliente esta disponible. Solo decide la
+  /// etiqueta "Negociable" del feed; el derecho real lo comprueba el
+  /// servidor al negociar y al vender.
+  Future<void> _comprobarCupo() async {
+    try {
+      final puede = await widget.tienda.puedeUsarOferta();
+      if (!mounted) return;
+      setState(() => _cupoOferta = puede);
+    } catch (_) {
+      // Sin respuesta se deja el valor anterior: ocultar la etiqueta por un
+      // error de red seria ocultar algo que si existe.
     }
   }
 
@@ -566,10 +594,14 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
         try {
           final total = _carrito.fold<int>(0, (n, l) => n + l.totalCentavos);
           final items = _carrito.fold<int>(0, (n, l) => n + l.cantidad);
+          final usoOferta = _carrito.any((l) => l.idOferta != null);
           await widget.tienda.confirmarCarrito(lineas: List.of(_carrito));
 
           if (!mounted) return;
           _carrito.clear();
+          // 0013: la primera compra con oferta agota el cupo del dia. La
+          // etiqueta sale del feed al instante, sin esperar a re-consultar.
+          if (usoOferta) setState(() => _cupoOferta = false);
           termino();
           if (_carritoAbierto && mounted) Navigator.pop(context);
           _avisar(
@@ -600,6 +632,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
       termino();
       // Aviso ya conocido a la altura del confirmar: la cotizacion lo habria
       // marcado... si un vecino gasto el cupo en el minimo intermedio.
+      setState(() => _cupoOferta = false);
       _avisar('$e. Puedes confirmar a precio normal quitando las ofertas.');
       return;
     } catch (e) {
@@ -837,6 +870,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
                             _negociacion?.producto.idProducto ==
                             producto.idProducto,
                         comprado: _enCarrito(producto),
+                        negociable: _cupoOferta,
                         estilo: estilo,
                         onTap: () => _seleccionarProducto(producto),
                       );

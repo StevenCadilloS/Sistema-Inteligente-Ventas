@@ -148,6 +148,59 @@ void main() {
     });
   });
 
+  group('la etiqueta Negociable segun el cupo', () {
+    testWidgets('con cupo, solo los productos con ofertas la llevan',
+        (tester) async {
+      await montar(tester);
+
+      expect(find.text('Negociable'), findsOneWidget,
+          reason: 'solo la Lenovo tiene ofertas; la HP no');
+    });
+
+    testWidgets('comprar con oferta la quita del feed al instante',
+        (tester) async {
+      await montar(tester);
+      expect(find.text('Negociable'), findsOneWidget);
+
+      // Compra con oferta: rechazar el precio de lista lleva a la Oferta 1
+      // (10%), y ahi si se compra con descuento.
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('No, gracias'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+
+      // 0013: la oferta se gasto. La etiqueta ya no promete lo que no hay,
+      // ni siquiera en los productos que siguen teniendo escaleras.
+      expect(find.text('Negociable'), findsNothing);
+    });
+
+    testWidgets('comprar a precio normal la conserva', (tester) async {
+      await montar(tester);
+      expect(find.text('Negociable'), findsOneWidget);
+
+      // La HP no tiene ofertas: la compra no consume el cupo (0013).
+      await tester.tap(find.text('Laptop HP Pavilion'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lo quiero'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Mi carrito'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Confirmar compra'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Negociable'), findsOneWidget,
+          reason: 'el precio normal no consume la oferta del dia');
+    });
+  });
+
   group('seleccionar un producto', () {
     testWidgets('abre el popup en el precio normal', (tester) async {
       await montar(tester);

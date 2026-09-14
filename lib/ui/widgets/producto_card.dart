@@ -10,6 +10,7 @@ class ProductoCard extends StatelessWidget {
     required this.destacado,
     required this.seleccionado,
     required this.comprado,
+    required this.negociable,
     required this.estilo,
     required this.onTap,
   });
@@ -20,6 +21,11 @@ class ProductoCard extends StatelessWidget {
 
   /// Ya esta en el carrito del cliente: no se vuelve a ofertar.
   final bool comprado;
+
+  /// Al cliente de la sesion le queda la oferta del dia. Con el cupo gastado
+  /// la etiqueta desaparece: prometer "Negociable" y luego ofrecer solo el
+  /// precio de lista se siente como trampa.
+  final bool negociable;
 
   final EmotionStyle estilo;
   final VoidCallback onTap;
@@ -191,7 +197,9 @@ class ProductoCard extends StatelessWidget {
                       // cual ni de cuanto: el escalon que le toque a este
                       // cliente se decide durante la negociacion, y adelantar
                       // el 30% aqui haria que nadie se quedara en el 10%.
-                      if (producto.tieneOfertas && !agotado)
+                      // Y solo si le queda cupo: sin el, la etiqueta
+                      // prometeria un descuento que ya no existe.
+                      if (producto.tieneOfertas && negociable && !agotado)
                         Positioned(
                           top: 8,
                           right: 8,
