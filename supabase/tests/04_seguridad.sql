@@ -141,6 +141,12 @@ select test_falla(
 );
 
 select test_falla(
+  $q$ select fn_venta_detalle(1) $q$,
+  null,
+  'anon NO puede ejecutar fn_venta_detalle'
+);
+
+select test_falla(
   $q$ select fn_ofertas_de(1) $q$,
   null,
   'anon NO puede pedir la escalera de ofertas'
@@ -179,6 +185,7 @@ declare
   v_ana    bigint;
   v_carlos bigint;
   v_hp     bigint;
+  v_venta  bigint;
 begin
   select id_producto into v_hp from productos where nombre = 'Laptop HP Pavilion';
 
@@ -195,11 +202,25 @@ begin
     'Ana ve su compra'
   );
 
+  -- El detalle de la venta propia se lee.
+  select id_venta into v_venta from fn_historial(50) limit 1;
+  perform test_igual(
+    (select count(*)::text from fn_venta_detalle(v_venta)), '1',
+    'Ana ve el detalle de su compra'
+  );
+
   -- Carlos no ve nada: el historial va por la sesion, no por un parametro.
   perform fn_simular_sesion(v_carlos);
   perform test_igual(
     (select count(*)::text from fn_historial(50)), '0',
     'Carlos NO ve las compras de Ana'
+  );
+
+  -- Y el detalle de la venta de Ana se le aparece VACIO, no como un error:
+  -- un error que diga "esa venta es de otro" confirmaria que el id existe.
+  perform test_igual(
+    (select count(*)::text from fn_venta_detalle(v_venta)), '0',
+    'Carlos NO ve el detalle de la venta de Ana'
   );
 
   -- Y el limite de Ana no consume el de Carlos.

@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tienda_adaptativa/data/modelos/modelos.dart';
 import 'package:tienda_adaptativa/data/repositories/tienda_repository.dart';
+import 'package:tienda_adaptativa/ui/detalle_venta_screen.dart';
 import 'package:tienda_adaptativa/ui/historial_screen.dart';
 
 import '../apoyo/fake_tienda_repository.dart';
 
-/// La pantalla mas simple de la app: pide el historial y lo pinta. Aun asi
-/// tiene tres caminos que el cliente puede ver --cargando, vacio, con error--
-/// y ninguno estaba cubierto.
+/// La lista de "Mis compras" pinta una tarjeta por VENTA y al tocarla abre el
+/// detalle. Antes pintaba una fila por linea de detalle: una compra con dos
+/// productos se veia como dos tarjetas con el mismo total, que parecia un
+/// doble cobro.
 
 /// Repositorio que falla al pedir el historial, para probar ese camino.
 class _RepoQueFalla extends FakeTiendaRepository {
@@ -17,7 +19,7 @@ class _RepoQueFalla extends FakeTiendaRepository {
   final Object fallo;
 
   @override
-  Future<List<CompraHistorial>> historial({int limite = 50}) async {
+  Future<List<VentaResumen>> historial({int limite = 50}) async {
     throw fallo;
   }
 }
@@ -33,7 +35,18 @@ void main() {
   );
 
   Future<void> montar(WidgetTester tester, TiendaRepository r) async {
-    await tester.pumpWidget(MaterialApp(home: HistorialScreen(tienda: r)));
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {
+          '/': (context) => HistorialScreen(tienda: r),
+          '/historial/detalle': (context) {
+            final venta =
+                ModalRoute.of(context)!.settings.arguments! as VentaResumen;
+            return DetalleVentaScreen(tienda: r, venta: venta);
+          },
+        },
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -70,26 +83,41 @@ void main() {
   });
 
   group('con compras', () {
-    testWidgets('pinta una fila por compra', (tester) async {
+    testWidgets('pinta una tarjeta por venta', (tester) async {
       await repo.registrarVenta(idProducto: 1, idOferta: 1);
       await repo.registrarVenta(idProducto: 2);
 
       await montar(tester, repo);
 
-      expect(find.text('Laptop Lenovo IdeaPad'), findsOneWidget);
-      expect(find.text('Mouse Logitech G203'), findsOneWidget);
+      expect(find.text('Compra #1'), findsOneWidget);
+      expect(find.text('Compra #2'), findsOneWidget);
     });
 
-    testWidgets('distingue la compra con oferta de la normal', (tester) async {
-      await repo.registrarVenta(idProducto: 1, idOferta: 1);
-      await repo.registrarVenta(idProducto: 2);
+    testWidgets('el carrito entero es UNA tarjeta', (tester) async {
+      // Dos lineas en la misma confirmacion: en la base es una sola venta,
+      // y en la lista tiene que verse como una sola compra.
+      await repo.confirmarCarrito(lineas: [
+        LineaCarrito(
+          producto: p(1, 'Laptop Lenovo IdeaPad', 250000),
+          cantidad: 1,
+          idOferta: 1,
+          acordadoCentavos: 200000,
+        ),
+        LineaCarrito(
+          producto: p(2, 'Mouse Logitech G203', 12000),
+          cantidad: 2,
+          idOferta: null,
+          acordadoCentavos: 12000,
+        ),
+      ]);
 
       await montar(tester, repo);
 
-      // La que uso oferta dice cual: es lo que explica por que dos compras
-      // del mismo producto pueden costar distinto.
-      expect(find.text('Descuento 20%'), findsOneWidget);
-      expect(find.text('Precio normal'), findsOneWidget);
+      expect(find.text('Compra #1'), findsOneWidget);
+      expect(find.textContaining('Compra #'), findsOneWidget);
+      expect(find.text('3 unidades'), findsOneWidget);
+      // 200000 (laptop con oferta) + 12000*2 (mouses) = 224000 centavos.
+      expect(find.text('S/2240.00'), findsOneWidget);
     });
 
     testWidgets('muestra el total que se pago, no el de lista', (tester) async {
@@ -100,6 +128,23 @@ void main() {
       expect(find.text('S/2000.00'), findsOneWidget,
           reason: 'se pago el escalon del 20%, no los S/2500 de lista');
       expect(find.text('S/2500.00'), findsNothing);
+    });
+  });
+
+  group('al tocar una tarjeta', () {
+    testWidgets('abre el detalle de esa venta', (tester) async {
+      await repo.registrarVenta(idProducto: 1, idOferta: 1);
+
+      await montar(tester, repo);
+
+      await tester.tap(find.text('Compra #1'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DetalleVentaScreen), findsOneWidget);
+      expect(find.text('Laptop Lenovo IdeaPad'), findsOneWidget);
+      expect(find.text('Descuento 20%'), findsOneWidget);
+      // Una vez en la linea y otra en el total de la venta.
+      expect(find.text('S/2000.00'), findsNWidgets(2));
     });
   });
 

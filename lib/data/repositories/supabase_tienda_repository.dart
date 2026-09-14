@@ -173,7 +173,7 @@ class SupabaseTiendaRepository implements TiendaRepository {
       await _cliente.rpc<int?>('fn_cliente_actual');
 
   @override
-  Future<List<CompraHistorial>> historial({int limite = 50}) async {
+  Future<List<VentaResumen>> historial({int limite = 50}) async {
     // `venta` no es de lectura publica, y el historial no recibe a quien
     // consultar: devuelve las compras de quien trae el token. Asi nadie puede
     // pedir el historial de otra persona.
@@ -183,8 +183,39 @@ class SupabaseTiendaRepository implements TiendaRepository {
     );
     return filas
         .cast<Map<String, dynamic>>()
-        .map(CompraHistorial.desdeFila)
+        .map(VentaResumen.desdeFila)
         .toList();
+  }
+
+  @override
+  Future<VentaDetalle?> detalleVenta(int idVenta) async {
+    // La venta ajena viene vacia del servidor (fn_venta_detalle la trata como
+    // inexistente), no como un error: el cliente de la venta sale del token.
+    final filas = await _cliente.rpc<List<dynamic>>(
+      'fn_venta_detalle',
+      params: {'p_id_venta': idVenta},
+    );
+    if (filas.isEmpty) return null;
+
+    final filasMap = filas.cast<Map<String, dynamic>>();
+    final lineas = filasMap.map(LineaVenta.desdeFila).toList();
+
+    // La fecha de la venta viaja en cada fila del detalle: con ella el
+    // resumen es el mismo que pinta la lista, sin un segundo viaje para
+    // re-leer la cabecera.
+    return VentaDetalle(
+      resumen: VentaResumen(
+        idVenta: idVenta,
+        fecha: DateTime.parse(filasMap.first['fecha_hora'] as String).toLocal(),
+        lineas: lineas.length,
+        unidades: lineas.fold(0, (s, l) => s + l.cantidad),
+        totalCentavos: lineas.fold(
+          0,
+          (s, l) => s + l.precioTotalCentavos,
+        ),
+      ),
+      lineas: lineas,
+    );
   }
 
   // --------------- ESCRITURAS ---------------

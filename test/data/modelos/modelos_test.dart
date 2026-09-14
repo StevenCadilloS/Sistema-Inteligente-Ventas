@@ -132,47 +132,72 @@ void main() {
     });
   });
 
-  group('CompraHistorial.desdeFila', () {
-    test('lee una compra con oferta', () {
-      final c = CompraHistorial.desdeFila({
+  group('VentaResumen.desdeFila', () {
+    test('lee una venta con sus lineas y unidades', () {
+      final c = VentaResumen.desdeFila({
         'id_venta': 7,
         'fecha_hora': '2026-09-11T15:30:00Z',
-        'producto': 'Laptop',
-        'cantidad': 1,
-        'nombre_oferta': 'Descuento 20%',
-        'total_centavos': 200000,
+        'lineas': 2,
+        'unidades': 3,
+        'total_centavos': 212000,
       });
 
       expect(c.idVenta, 7);
-      expect(c.producto, 'Laptop');
-      expect(c.tuvoOferta, isTrue);
-      expect(c.totalCentavos, 200000);
+      expect(c.lineas, 2);
+      expect(c.unidades, 3);
+      expect(c.totalCentavos, 212000);
+      expect(c.resumenUnidades, '3 unidades');
     });
 
-    test('sin oferta, tuvoOferta es falso', () {
-      final c = CompraHistorial.desdeFila({
+    test('una sola unidad se lee en singular', () {
+      final c = VentaResumen.desdeFila({
         'id_venta': 8,
         'fecha_hora': '2026-09-11T15:30:00Z',
-        'producto': 'Mouse',
-        'cantidad': 1,
-        'nombre_oferta': null,
+        'lineas': 1,
+        'unidades': 1,
         'total_centavos': 12000,
       });
 
-      expect(c.tuvoOferta, isFalse);
+      expect(c.resumenUnidades, '1 unidad');
     });
 
     test('la fecha se convierte a hora local', () {
-      final c = CompraHistorial.desdeFila({
+      final c = VentaResumen.desdeFila({
         'id_venta': 9,
         'fecha_hora': '2026-09-11T15:30:00Z',
-        'producto': 'Mouse',
-        'cantidad': 1,
+        'lineas': 1,
+        'unidades': 1,
         'total_centavos': 12000,
       });
 
       // El servidor guarda en UTC; la pantalla muestra la hora del cliente.
       expect(c.fecha.isUtc, isFalse);
+    });
+  });
+
+  group('LineaVenta.desdeFila', () {
+    test('lee una linea con oferta', () {
+      final l = LineaVenta.desdeFila({
+        'producto': 'Laptop',
+        'cantidad': 1,
+        'precio_total_centavos': 200000,
+        'nombre_oferta': 'Descuento 20%',
+      });
+
+      expect(l.producto, 'Laptop');
+      expect(l.tuvoOferta, isTrue);
+      expect(l.precioTotalCentavos, 200000);
+    });
+
+    test('sin oferta, tuvoOferta es falso', () {
+      final l = LineaVenta.desdeFila({
+        'producto': 'Mouse',
+        'cantidad': 2,
+        'precio_total_centavos': 24000,
+        'nombre_oferta': null,
+      });
+
+      expect(l.tuvoOferta, isFalse);
     });
   });
 }

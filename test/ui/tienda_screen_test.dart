@@ -376,8 +376,8 @@ void main() {
       final historial = await repo.historial();
       expect(repo.ventas.map((v) => v.idVenta).toSet(), hasLength(1));
       expect(repo.ventas, hasLength(2));
-      expect(historial.where((h) => h.producto == 'Laptop Lenovo IdeaPad'),
-          hasLength(1));
+      expect(historial, hasLength(1));
+      expect(historial.single.unidades, 2);
 
       final lenovo = repo.ventas
           .firstWhere((v) => v.idProducto == idLenovo && v.totalCentavos == 200000);

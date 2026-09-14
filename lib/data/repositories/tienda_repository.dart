@@ -94,8 +94,15 @@ abstract class TiendaRepository {
   /// completo su ficha.
   Future<int?> clienteActual();
 
-  /// Ultimas compras del cliente de la sesion.
-  Future<List<CompraHistorial>> historial({int limite = 50});
+  /// Compras del cliente de la sesion, una fila por venta.
+  Future<List<VentaResumen>> historial({int limite = 50});
+
+  /// Las lineas de la venta [idVenta], si es del cliente de la sesion.
+  ///
+  /// La venta ajena no es un error: el servidor la trata como inexistente y
+  /// la funcion devuelve null, para que la pantalla lo presente como "no
+  /// encontrada" y no como un intento de acceso.
+  Future<VentaDetalle?> detalleVenta(int idVenta);
 }
 
 /// El producto se agoto entre que se mostro la oferta y que el cliente la

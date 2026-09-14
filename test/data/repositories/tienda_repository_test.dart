@@ -211,7 +211,11 @@ void main() {
 
       final historial = await repo.historial();
       expect(historial.single.totalCentavos, 250000);
-      expect(historial.single.tuvoOferta, isFalse);
+      expect(historial.single.unidades, 1);
+      expect((await repo.detalleVenta(historial.single.idVenta))!
+          .lineas
+          .single
+          .nombreOferta, isNull);
     });
 
     test('con oferta se cobra el precio del escalon', () async {
@@ -223,7 +227,13 @@ void main() {
 
       final historial = await repo.historial();
       expect(historial.single.totalCentavos, 200000);
-      expect(historial.single.nombreOferta, 'Descuento 20%');
+      expect(
+        (await repo.detalleVenta(historial.single.idVenta))!
+            .lineas
+            .single
+            .nombreOferta,
+        'Descuento 20%',
+      );
     });
 
     test('la venta descuenta stock', () async {

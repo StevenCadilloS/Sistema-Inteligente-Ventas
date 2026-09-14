@@ -121,27 +121,54 @@ class FakeTiendaRepository implements TiendaRepository {
   }
 
   @override
-  Future<List<CompraHistorial>> historial({int limite = 50}) async {
+  Future<List<VentaResumen>> historial({int limite = 50}) async {
     final idCliente = _exigirSesion();
-    final mias = ventas.where((v) => v.idCliente == idCliente).take(limite);
-    // El total que muestra el historial es el de la VENTA, no el de la linea:
-    // fn_historial junta venta con detalle_venta, y el total va por fila.
-    final totales = <int, int>{};
-    for (final v in mias) {
-      totales[v.idVenta] = (totales[v.idVenta] ?? 0) + v.totalCentavos;
+    // Una fila por VENTA: las lineas de una confirmacion comparten idVenta.
+    final porVenta = <int, List<VentaFake>>{};
+    for (final v in ventas.where((v) => v.idCliente == idCliente)) {
+      porVenta.putIfAbsent(v.idVenta, () => []).add(v);
     }
-    return mias
-        .map(
-          (v) => CompraHistorial(
-            idVenta: v.idVenta,
-            fecha: v.fecha,
-            producto: producto(v.idProducto).nombre,
-            cantidad: v.cantidad,
-            totalCentavos: totales[v.idVenta]!,
-            nombreOferta: v.nombreOferta,
-          ),
-        )
+    final ordenadas = porVenta.entries.toList()
+      ..sort((a, b) => b.value.first.fecha.compareTo(a.value.first.fecha));
+    return ordenadas.take(limite).map((entrada) {
+      final filas = entrada.value;
+      return VentaResumen(
+        idVenta: entrada.key,
+        fecha: filas.first.fecha,
+        lineas: filas.length,
+        unidades: filas.fold(0, (s, v) => s + v.cantidad),
+        totalCentavos: filas.fold(0, (s, v) => s + v.totalCentavos),
+      );
+    }).toList();
+  }
+
+  @override
+  Future<VentaDetalle?> detalleVenta(int idVenta) async {
+    final idCliente = _exigirSesion();
+    final filas = ventas
+        .where((v) => v.idVenta == idVenta && v.idCliente == idCliente)
         .toList();
+    if (filas.isEmpty) return null;
+
+    return VentaDetalle(
+      resumen: VentaResumen(
+        idVenta: idVenta,
+        fecha: filas.first.fecha,
+        lineas: filas.length,
+        unidades: filas.fold(0, (s, v) => s + v.cantidad),
+        totalCentavos: filas.fold(0, (s, v) => s + v.totalCentavos),
+      ),
+      lineas: filas
+          .map(
+            (v) => LineaVenta(
+              producto: producto(v.idProducto).nombre,
+              cantidad: v.cantidad,
+              precioTotalCentavos: v.totalCentavos,
+              nombreOferta: v.nombreOferta,
+            ),
+          )
+          .toList(),
+    );
   }
 
   // --------------- ESCRITURAS ---------------

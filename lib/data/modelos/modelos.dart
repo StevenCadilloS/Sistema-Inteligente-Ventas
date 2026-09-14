@@ -138,37 +138,79 @@ class EscalonOferta {
   );
 }
 
-/// Una fila del historial de compras.
-class CompraHistorial {
-  const CompraHistorial({
+/// Una venta del historial, una fila por compra (no por linea).
+///
+/// Antes el historial devolvia una fila por linea de detalle unida a la
+/// cabecera, y una compra con dos productos aparecia como dos tarjetas con el
+/// mismo total: parecia un doble cobro. Ahora la lista pinta ventas y el
+/// detalle vive en su propia pantalla.
+class VentaResumen {
+  const VentaResumen({
     required this.idVenta,
     required this.fecha,
-    required this.producto,
-    required this.cantidad,
+    required this.lineas,
+    required this.unidades,
     required this.totalCentavos,
-    this.nombreOferta,
   });
 
   final int idVenta;
   final DateTime fecha;
-  final String producto;
-  final int cantidad;
+
+  /// Cuantos productos distintos trae la compra.
+  final int lineas;
+
+  /// Cuantas unidades en total: dos mouses y una laptop son 3.
+  final int unidades;
+
   final int totalCentavos;
 
-  /// Nulo cuando la compra fue a precio normal, sin oferta.
+  /// Lo que la tarjeta de la lista muestra como resumen: "2 productos".
+  String get resumenUnidades =>
+      unidades == 1 ? '1 unidad' : '$unidades unidades';
+
+  factory VentaResumen.desdeFila(Map<String, dynamic> fila) => VentaResumen(
+    idVenta: _entero(fila['id_venta']),
+    fecha: DateTime.parse(fila['fecha_hora'] as String).toLocal(),
+    lineas: _entero(fila['lineas']),
+    unidades: _entero(fila['unidades']),
+    totalCentavos: _entero(fila['total_centavos']),
+  );
+}
+
+/// Una linea del detalle de una venta ya confirmada.
+class LineaVenta {
+  const LineaVenta({
+    required this.producto,
+    required this.cantidad,
+    required this.precioTotalCentavos,
+    this.nombreOferta,
+  });
+
+  final String producto;
+  final int cantidad;
+
+  /// Lo que se pago por la linea completa, congelado al momento de la compra.
+  final int precioTotalCentavos;
+
+  /// Nulo cuando la linea quedo a precio normal.
   final String? nombreOferta;
 
   bool get tuvoOferta => nombreOferta != null;
 
-  factory CompraHistorial.desdeFila(Map<String, dynamic> fila) =>
-      CompraHistorial(
-        idVenta: _entero(fila['id_venta']),
-        fecha: DateTime.parse(fila['fecha_hora'] as String).toLocal(),
-        producto: fila['producto'] as String,
-        cantidad: _entero(fila['cantidad']),
-        totalCentavos: _entero(fila['total_centavos']),
-        nombreOferta: fila['nombre_oferta'] as String?,
-      );
+  factory LineaVenta.desdeFila(Map<String, dynamic> fila) => LineaVenta(
+    producto: fila['producto'] as String,
+    cantidad: _entero(fila['cantidad']),
+    precioTotalCentavos: _entero(fila['precio_total_centavos']),
+    nombreOferta: fila['nombre_oferta'] as String?,
+  );
+}
+
+/// El detalle completo de una venta: su resumen y las lineas que la componen.
+class VentaDetalle {
+  const VentaDetalle({required this.resumen, required this.lineas});
+
+  final VentaResumen resumen;
+  final List<LineaVenta> lineas;
 }
 
 /// Una linea del carrito.

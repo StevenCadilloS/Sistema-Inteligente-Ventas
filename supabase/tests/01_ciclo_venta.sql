@@ -380,6 +380,38 @@ begin
     'el carrito descuenta el stock de cada producto'
   );
 
+  -- El historial (0012) agrupa por venta: tres lineas, una sola fila. Antes
+  -- devolvia una fila por linea y la misma compra aparecia tres veces con el
+  -- mismo total, que parecia un triple cobro.
+  perform test_igual(
+    (select count(*)::text from fn_historial(50)),
+    '1',
+    'el historial devuelve una fila por venta, no por linea'
+  );
+  perform test_igual(
+    (select unidades::text from fn_historial(50) where id_venta = v_venta),
+    '4',
+    'el historial suma las unidades de todas las lineas'
+  );
+  perform test_igual(
+    (select count(*)::text from fn_venta_detalle(v_venta)),
+    '3',
+    'el detalle devuelve una fila por linea'
+  );
+  perform test_igual(
+    (select sum(precio_total_centavos)::text from fn_venta_detalle(v_venta)),
+    '369000',
+    'las lineas del detalle suman el total de la venta'
+  );
+  perform test_cierto(
+    exists (
+      select 1 from fn_venta_detalle(v_venta)
+       where nombre_oferta = 'Descuento 20%'
+         and precio_total_centavos = 120000
+    ),
+    'el detalle recuerda con que oferta se vendio cada linea'
+  );
+
   -- La regla que el carrito cambia: 3 productos con oferta = 1 sola compra.
   perform test_igual(fn_compras_del_dia()::text, '1',
     'toda la confirmacion del carrito cuenta como una compra');

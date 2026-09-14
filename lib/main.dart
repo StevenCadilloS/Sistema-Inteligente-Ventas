@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'data/modelos/modelos.dart';
 import 'data/remote/actualizacion_service.dart';
 import 'data/remote/descarga_apk.dart';
 import 'data/remote/sesion_service.dart';
@@ -12,6 +13,7 @@ import 'data/repositories/tienda_repository.dart';
 import 'services/emotion_channel.dart';
 import 'theme/app_theme.dart';
 import 'ui/configuracion_faltante_screen.dart';
+import 'ui/detalle_venta_screen.dart';
 import 'ui/historial_screen.dart';
 import 'ui/login_screen.dart';
 import 'ui/tienda_screen.dart';
@@ -159,6 +161,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           tienda: widget.tienda,
         ),
         '/historial': (context) => HistorialScreen(tienda: widget.tienda),
+        '/historial/detalle': (context) {
+          // La venta viaja como argumento de navegacion: la lista ya la tiene
+          // en memoria y el detalle pinta la cabecera al instante.
+          final venta =
+              ModalRoute.of(context)?.settings.arguments as VentaResumen?;
+          if (venta == null) {
+            return const Scaffold(
+              body: Center(child: Text('Compra no encontrada.')),
+            );
+          }
+          return DetalleVentaScreen(tienda: widget.tienda, venta: venta);
+        },
       },
       // Envuelve cada ruta, no reemplaza ninguna: el banner se ve igual en
       // el login, la tienda o el historial, sin duplicar el chequeo en cada
