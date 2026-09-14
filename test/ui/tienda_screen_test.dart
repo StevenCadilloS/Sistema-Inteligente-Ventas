@@ -185,7 +185,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('S/2250.00'), findsWidgets,
           reason: 'rechazar debe ofrecer el siguiente escalon');
-      expect(find.text('Oferta 1 de 3'), findsOneWidget);
+      expect(find.text('Oferta 1'), findsOneWidget);
 
       // Segundo: 20%.
       await tester.tap(find.text('No, gracias'));
@@ -196,7 +196,7 @@ void main() {
       await tester.tap(find.text('No, gracias'));
       await tester.pumpAndSettle();
       expect(find.text('S/1750.00'), findsWidgets);
-      expect(find.text('Oferta 3 de 3'), findsOneWidget);
+      expect(find.text('Oferta 3'), findsOneWidget);
     });
 
     testWidgets('al agotar la escalera se cierra la interaccion', (tester) async {

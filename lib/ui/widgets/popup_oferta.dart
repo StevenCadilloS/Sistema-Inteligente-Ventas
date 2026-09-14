@@ -114,7 +114,11 @@ class PopupOferta extends StatelessWidget {
                   const SizedBox(height: 12),
                   Text(
                     hayRebaja
-                        ? 'Oferta ${escalon.orden} de ${negociacion.totalEscalones}'
+                        // Sin el total de la escalera: si el cliente supiera
+                        // que hay tres, esperaria al 30% y no aceptaria el
+                        // 10%. Que descubra los siguientes escalones solo si
+                        // rechaza.
+                        ? 'Oferta ${escalon.orden}'
                         : 'Precio normal',
                     style: textTheme.bodyMedium?.copyWith(
                       color: AppTheme.mutedText,
