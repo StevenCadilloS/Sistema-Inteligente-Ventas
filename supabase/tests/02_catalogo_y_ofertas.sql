@@ -136,7 +136,7 @@ begin
 end
 $$;
 
--- --------------- LIMITE DE DOS OFERTAS POR DIA ---------------
+-- --------------- LIMITE DE UNA OFERTA POR DIA ---------------
 --
 -- README regla 7 (0013). Solo cuentan las compras que USARON oferta y el
 -- limite es UNO: la primera compra con oferta agota el cupo del dia, y las
@@ -200,19 +200,20 @@ $$;
 
 do $$
 declare
-  v_cliente bigint;
-  v_hp      bigint;
-  v_oferta  bigint;
-  v_venta   bigint;
+  v_cliente  bigint;
+  v_lenovo   bigint;
+  v_oferta   bigint;
+  v_venta    bigint;
 begin
   insert into clientes (nombre, paterno) values ('Compras', 'Ayer')
     returning id_cliente into v_cliente;
   perform fn_simular_sesion(v_cliente);
-  select id_producto into v_hp      from productos where nombre = 'Laptop HP Pavilion';
+  -- La Lenovo lleva la escalera; la HP no tiene ofertas a proposito (0003).
+  select id_producto into v_lenovo  from productos where nombre = 'Laptop Lenovo IdeaPad';
   select id_oferta   into v_oferta  from ofertas   where nombre = 'Descuento 10%';
 
   -- La oferta de ayer no se arrastra a hoy: el cupo se renueva.
-  v_venta := fn_registrar_venta(v_hp, 1, v_oferta);
+  v_venta := fn_registrar_venta(v_lenovo, 1, v_oferta);
   perform test_cierto(not fn_puede_usar_oferta(), 'hoy ya gasto su oferta');
 
   -- Se mueve la compra a ayer.
