@@ -1,6 +1,14 @@
 # Esquema de Base de Datos — Evaluación Verificada y Diseño Corregido
 Sistema Cierre de Ventas — UNI FIIS · para implementación en Android Studio
 
+> ⚠️ **Documento histórico — no refleja el código actual.**
+> Auditoría del diseño original de la base (hallazgos G1–G9, correcciones C1–C11). Sus
+> conclusiones **sí** se aplicaron, pero sobre PostgreSQL y no sobre Room/Android Studio como
+> dice su encabezado. El esquema vigente está en `supabase/migrations/`.
+>
+> El estado vigente está en **[INFORME_TECNICO.md](INFORME_TECNICO.md)** y **[ARQUITECTURA.md](ARQUITECTURA.md)**.
+
+
 > **Método:** se escanearon los 13 archivos de `docs/` con graphify (grafo en `graphify-out/`), pero como `TABLAS.docx` y el `.docx` del Módulo Batch guardan su contenido en **imágenes incrustadas** que el conversor no lee, se extrajeron y revisaron manualmente las 21 imágenes de `TABLAS.docx` y las 28 del Módulo Batch. Cada hallazgo de abajo está verificado contra la fuente, y los más importantes están **comprobados aritméticamente** con la Longitud de Registro declarada en el diseño físico.
 
 ---

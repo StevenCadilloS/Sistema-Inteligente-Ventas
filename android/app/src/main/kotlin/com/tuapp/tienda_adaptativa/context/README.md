@@ -82,7 +82,37 @@ app/src/main/assets/emotion_model.tflite
 
 Trabaja con una entrada facial de `48 x 48` en escala de grises y genera 7 clases FER-2013.
 
-El detector adapta esas clases a las emociones definidas por el pipeline del proyecto.
+### El orden de las clases importa (y no es el canónico)
+
+Keras arma las etiquetas con `flow_from_directory`, es decir en **orden alfabético** —
+`angry, disgust, fear, happy, neutral, sad, surprise`— y **no** el orden canónico de
+FER-2013, que pone `sad, surprise, neutral` al final. El código original asumía el
+canónico, y por eso una cara en reposo se mostraba como "triste 97%".
+
+Comprobado en dispositivo con el vector de probabilidades: una cara relajada da el índice
+4 en el 56% de los frames, y poner cara triste lo hunde al 18% en vez de subirlo. Si el 4
+fuera `sad` pasaría lo contrario.
+
+El pipeline del proyecto usa cinco emociones de negocio, así que dos clases se pliegan:
+
+| Índice | Clase del modelo | Emoción del proyecto |
+|---|---|---|
+| 0 | angry | `enojo` |
+| 1 | disgust | `enojo` (sin regla propia) |
+| 2 | fear | `neutral` (sin regla propia) |
+| 3 | happy | `feliz` |
+| 4 | neutral | `neutral` |
+| 5 | sad | `triste` |
+| 6 | surprise | `sorpresa` |
+
+### Dos decisiones de detección
+
+- **`PERFORMANCE_MODE_FAST`, no `ACCURATE`:** con un solo rostro cercano la precisión es
+  equivalente y `ACCURATE` bajaba los fps.
+- **`setMinFaceSize(0.10f)`:** es la fracción mínima del ancho del frame que debe ocupar
+  la cara. Con `0.35` hubo 376 frames sin una sola detección, y con `0.15`, 0 de 257 a un
+  brazo de distancia: la app solo servía pegada a la cara. `0.10` es el valor por defecto
+  de ML Kit y cubre la distancia normal de uso de un celular.
 
 ## Alcance
 

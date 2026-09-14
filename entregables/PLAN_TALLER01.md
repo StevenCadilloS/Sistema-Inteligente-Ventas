@@ -1,6 +1,14 @@
 # Taller 01 — Aplicación Adaptativa "Cierre de Ventas"
 Plan de implementación
 
+> ⚠️ **Documento histórico — no refleja el código actual.**
+> Plan de implementación original, escrito cuando el proyecto iba a ser Android nativo con
+> Jetpack Compose, Room, Hilt y WorkManager. Nada de eso se implemento: el equipo paso a
+> Flutter con backend PostgreSQL.
+>
+> El estado vigente está en **[INFORME_TECNICO.md](INFORME_TECNICO.md)** y **[ARQUITECTURA.md](ARQUITECTURA.md)**.
+
+
 ## Contexto
 
 El curso *Desarrollo Adaptativo e Integrado del Software* pide (`docs/Taller 01.pdf`) una **app móvil que adapte su comportamiento automáticamente según el contexto**, con una regla eliminatoria: *"No se considerará adaptativo si el comportamiento requiere intervención manual del usuario."* Se evalúa sobre 20: funcionalidad adaptativa (8), implementación técnica (6), presentación (6).

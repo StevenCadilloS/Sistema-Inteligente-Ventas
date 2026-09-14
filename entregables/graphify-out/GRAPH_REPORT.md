@@ -1,5 +1,12 @@
 # Graph Report - docs  (2026-09-05)
 
+> ⚠️ **Documento histórico — no refleja el código actual.**
+> Grafo de conocimiento generado con graphify el 2026-09-05 sobre los documentos de
+> `docs/`. Refleja el contenido de esa fecha, anterior al cambio de arquitectura.
+>
+> El estado vigente está en **[INFORME_TECNICO.md](../INFORME_TECNICO.md)** y **[ARQUITECTURA.md](../ARQUITECTURA.md)**.
+
+
 ## Corpus Check
 - 39 files · ~0 words
 - Verdict: corpus is large enough that graph structure adds value.

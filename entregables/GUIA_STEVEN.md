@@ -1,5 +1,12 @@
 # Guía de integración — Steven
 
+> ⚠️ **Documento histórico — no refleja el código actual.**
+> Guía de integración de la etapa anterior. Las clases que menciona (`ClienteRepository`,
+> `AdaptationEngine`, `BanditOptimizer`) ya no existen en `lib/`.
+>
+> El estado vigente está en **[INFORME_TECNICO.md](INFORME_TECNICO.md)** y **[ARQUITECTURA.md](ARQUITECTURA.md)**.
+
+
 Puente Kotlin↔Flutter + pantallas. Todo lo que aquí se llama (`ClienteRepository`, `AdaptationEngine`, `BanditOptimizer`) ya existe, está probado (35 tests) y no necesita cambios — solo hay que invocarlo desde la UI.
 
 > Antes de empezar: `flutter pub get && dart run build_runner build && flutter test` — confirma que partes de una base en verde.

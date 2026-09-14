@@ -102,9 +102,9 @@ no el código.
 
 | Grupo | Emociones | Efecto |
 |---|---|---|
-| **Favorable** | `happy`, `surprise` | Mantiene el precio actual |
-| **Desfavorable** | `neutral`, `sad`, `angry` | Avanza un escalón |
-| **Sin señal** | `no_face`, o pocas lecturas | No hace nada |
+| **Favorable** | `feliz`, `sorpresa` | Mantiene el precio actual |
+| **Desfavorable** | `neutral`, `triste`, `enojo` | Avanza un escalón |
+| **Sin señal** | `no_face`, o menos de 2 lecturas | No hace nada |
 
 Se cuentan votos en una ventana de observación, no una sola lectura. `neutral`
 cuenta como desfavorable por decisión de producto — conviene saber que eso hace
@@ -117,14 +117,14 @@ frente a una pantalla suele clasificarse así.
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | ✅ 13 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | ✅ 14 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
-| Motor de negociación (escalera de ofertas) | ✅ 142 pruebas Dart |
+| Motor de negociación (escalera de ofertas) | ✅ 158 pruebas Dart |
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
-| Catálogo de demostración | ✅ 20 productos en 7 categorías |
-| Imágenes de producto | ✅ 15 fotos en el bucket; faltan 4 productos sin foto propia |
+| Catálogo de demostración | ✅ 50 productos en 8 categorías, con escaleras de oferta mixtas |
+| Imágenes de producto | ✅ 16 fotos en el bucket; los otros 34 caen al icono de su categoría |
 | Stock en tiempo real entre dispositivos | ✅ Realtime + relectura al volver de segundo plano |
 | Productos agotados | ✅ Se quedan en el feed con franja "AGOTADO", no se pueden seleccionar |
 | Aviso de versión nueva dentro de la app | ✅ Franja con botón *Actualizar* (ver arriba) |
@@ -156,7 +156,7 @@ extrae, así que las escrituras pasan por funciones que validan las reglas.
 2. **Se apaga automáticamente** al terminar
 3. **El precio normal se muestra primero**; la primera oferta se juega cuando el cliente no responde bien
 4. **Las ofertas se muestran solas**, sin botón
-5. **Un cliente puede usar ofertas solo en sus dos primeras compras del día** — se cuentan las compras, no las que llevaron oferta
+5. **Un cliente tiene una sola oportunidad de oferta al día** — solo cuentan las compras que *usaron* oferta; pagar precio de lista no consume el cupo
 6. **No todos los productos tienen ofertas**: sin escalera, el precio no se mueve
 7. **Las ofertas respetan su orden, vigencia y estado activo**
 8. **La interacción termina** al comprar, al abandonar o al agotarse la escalera
@@ -199,7 +199,7 @@ Android); las dos últimas en **Dart**.
 │          EventChannel                    │     │    venta         │
 │                   │                      │     │  fn_historial    │
 │                   v                      │     │                  │
-│   ClasificadorRespuesta ──> Negociacion  │<───>│  RLS en las 10   │
+│   ClasificadorRespuesta ──> Negociacion  │<───>│  RLS en las 11   │
 │         (votos)         (puntero sobre   │     │  tablas          │
 │                          la escalera)    │     │                  │
 └──────────────────────────────────────────┘     └──────────────────┘
@@ -218,6 +218,8 @@ Android); las dos últimas en **Dart**.
 │   │   │   ├── supabase_config.dart              URL y clave, inyectadas al compilar
 │   │   │   ├── build_info.dart                   commit y rama de este build
 │   │   │   ├── actualizacion_service.dart        compara el build contra app_config
+│   │   │   ├── descarga_apk.dart                 baja e instala la actualización
+│   │   │   ├── autenticacion.dart                errores de Auth en castellano
 │   │   │   └── sesion_service.dart               registro, ingreso, recuperar clave
 │   │   └── repositories/
 │   │       ├── tienda_repository.dart            el puerto: lo que la app pide al backend
@@ -225,7 +227,8 @@ Android); las dos últimas en **Dart**.
 │   ├── decision/
 │   │   └── negociacion.dart                      ClasificadorRespuesta y Negociacion
 │   ├── services/emotion_channel.dart             puente con el módulo nativo
-│   └── ui/                                       login, tienda, historial y widgets
+│   ├── theme/app_theme.dart                      tipografía y color
+│   └── ui/                                       login, tienda, carrito, historial, detalle
 │
 ├── android/app/src/main/
 │   ├── kotlin/com/tuapp/tienda_adaptativa/
@@ -236,11 +239,14 @@ Android); las dos últimas en **Dart**.
 │   └── assets/emotion_model.tflite               modelo FER-2013
 │
 ├── supabase/
-│   ├── migrations/                               0001 a 0011 (0006 va en tres partes)
+│   ├── migrations/                               0001 a 0014 (0006 va en tres partes)
 │   ├── tests/                                    3 suites SQL + ejecutar.sh
 │   └── README.md                                 guía del backend y administración
 │
-└── test/                                         142 pruebas Dart
+├── entregables/                                  documentación del taller (ver abajo)
+├── docs/                                         material de origen del curso (PDF, docx)
+│
+└── test/                                         158 pruebas Dart
 ```
 
 ---
@@ -269,7 +275,7 @@ cd Sistema-Inteligente-Ventas
 # 2. Dependencias de Flutter
 flutter pub get
 
-# 3. Backend: crear el proyecto en Supabase y aplicar las 12 migraciones
+# 3. Backend: crear el proyecto en Supabase y aplicar las 14 migraciones
 #    de supabase/migrations/ en orden (ver supabase/README.md)
 
 # 4. Credenciales: copiar env.example.json a env.json y poner ahí la URL y
@@ -291,8 +297,13 @@ flutter run -d chrome --dart-define-from-file=env.json    # en navegador
 ### Pruebas del backend
 
 ```bash
-bash supabase/tests/ejecutar.sh    # necesita podman, docker o psql
+# Contra cualquier PostgreSQL vacío: aplica las migraciones y corre las suites.
+PGURL=postgresql://usuario:clave@host:5432/basedatos bash supabase/tests/ejecutar.sh
 ```
+
+Es lo mismo que hace CI en cada push ([backend-sql.yml](.github/workflows/backend-sql.yml)),
+contra un PostgreSQL 16 real. Cada suite vive en una transacción que termina en `ROLLBACK`,
+así que no deja datos.
 
 ---
 
@@ -315,11 +326,28 @@ La cámara se pide al iniciar la primera interacción, no al abrir la app.
 4. Pulsar **"No, gracias"** → avanza al siguiente escalón, igual que una cara desfavorable
 5. Seleccionar la **Laptop HP Pavilion** → no tiene ofertas, el precio no se mueve pase lo que pase
 
-Para ver el límite diario: comprar dos veces y seleccionar un tercer producto.
-La escalera viene vacía y todo se queda a precio normal.
+Para ver el límite diario: comprar una vez **con oferta** y seleccionar otro producto.
+La escalera viene vacía y todo se queda a precio normal hasta mañana. Comprar a precio
+de lista no gasta el cupo: se puede repetir sin perder la oportunidad.
 
 Para ver el tiempo real: cambiar un precio o un stock desde el panel de
 Supabase y mirar cómo se actualiza en el celular sin refrescar.
+
+---
+
+## Documentación
+
+La documentación del taller vive en **[entregables/](entregables/)**:
+
+| Documento | Qué es |
+|---|---|
+| [INFORME_TECNICO.md](entregables/INFORME_TECNICO.md) | **El documento técnico del taller**: pipeline, arquitectura y verificación |
+| [ARQUITECTURA.md](entregables/ARQUITECTURA.md) | Componentes, diagramas de flujo y decisiones |
+| [REQUISITOS.md](entregables/REQUISITOS.md) | Objetivos, alcances, requisitos y limitaciones |
+| [GUIA_ESTUDIO.md](entregables/GUIA_ESTUDIO.md) · [RETOS_EN_VIVO.md](entregables/RETOS_EN_VIVO.md) | Preparación de la sustentación |
+
+En [docs/](docs/) queda el material de origen del curso (los PDF del taller y los
+documentos del diseño de base de datos).
 
 ---
 

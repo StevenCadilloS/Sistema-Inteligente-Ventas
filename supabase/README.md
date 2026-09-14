@@ -26,7 +26,7 @@ imagen.
 ## 1. Puesta en marcha (proyecto en la nube)
 
 1. Crear un proyecto en <https://supabase.com> (el plan gratuito alcanza de
-   sobra: el catalogo son 20 filas).
+   sobra: el catalogo son 50 filas).
 2. Abrir **SQL Editor** y ejecutar, en orden, el contenido de:
    - `migrations/0001_esquema.sql`
    - `migrations/0002_funciones.sql`
@@ -41,6 +41,9 @@ imagen.
    - `migrations/0009_url_externa.sql`
    - `migrations/0010_actualizaciones.sql`
    - `migrations/0011_carrito.sql`
+   - `migrations/0012_historial_por_venta.sql`
+   - `migrations/0013_limite_oferta_unica.sql`
+   - `migrations/0014_catalogo_expansion.sql`
 3. En **Settings → API**, copiar la *Project URL* y la *publishable key*
    (en proyectos antiguos se llama *anon key*).
 4. En la raiz del repositorio, copiar `env.example.json` a `env.json` y pegar
@@ -59,12 +62,20 @@ imagen.
 ## 2. Puesta en marcha sin cuenta en la nube
 
 El esquema no usa nada exclusivo de Supabase: son tablas, funciones y
-politicas de PostgreSQL.
+politicas de PostgreSQL. Sirve cualquier PostgreSQL 16 vacio.
 
 ```bash
-podman compose -f supabase/docker-compose.yml up -d   # o docker compose
-bash supabase/tests/ejecutar.sh
+PGURL=postgresql://usuario:clave@host:5432/basedatos bash supabase/tests/ejecutar.sh
 ```
+
+El script aplica las migraciones en orden y corre las suites. Es exactamente
+lo que hace CI en cada push (`.github/workflows/backend-sql.yml`), contra un
+PostgreSQL 16 real.
+
+Para levantar Supabase entero en local (con panel, PostgREST y Realtime), usa
+el compose oficial de <https://github.com/supabase/supabase> y aplica encima
+estas migraciones: el esquema es el mismo, no depende de nada que solo exista
+en la nube.
 
 ---
 
@@ -283,8 +294,11 @@ supabase/
 │   ├── 0008_imagenes_semilla.sql  fotos del catalogo en el bucket
 │   ├── 0009_url_externa.sql       fn_url_imagen soporta URLs externas
 │   ├── 0010_actualizaciones.sql   app_config: aviso de version nueva
-│   └── 0011_carrito.sql    una confirmacion = una venta con N lineas
+│   ├── 0011_carrito.sql        una confirmacion = una venta con N lineas
+│   ├── 0012_historial_por_venta.sql  una tarjeta por venta + su detalle
+│   ├── 0013_limite_oferta_unica.sql  una sola oferta al dia por cliente
+│   └── 0014_catalogo_expansion.sql   30 productos mas, escaleras mixtas
 ├── tests/                    pruebas SQL + ejecutar.sh
-├── docker-compose.yml        PostgreSQL local
+├── docker-compose.yml        PostgreSQL local opcional (CI no lo usa)
 └── README.md
 ```

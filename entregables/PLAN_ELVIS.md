@@ -1,6 +1,15 @@
 # Plan de trabajo — Elvis
 Sistema Cierre de Ventas · Taller 1 de Desarrollo Adaptativo · UNI FIIS
 
+> ⚠️ **Documento histórico — no refleja el código actual.**
+> Plan de trabajo de la etapa en que la base de datos era SQLite local (drift) y la
+> decisión vivía en `AdaptationEngine` + `BanditOptimizer` (UCB1). Esa ruta se abandonó:
+> hoy la base es PostgreSQL compartido y la decisión es un puntero sobre una escalera de
+> ofertas.
+>
+> El estado vigente está en **[INFORME_TECNICO.md](INFORME_TECNICO.md)** y **[ARQUITECTURA.md](ARQUITECTURA.md)**.
+
+
 **Mi tramo:** base de datos completa (dueño único) + dentro del backend compartido, motor de reglas de oferta y autenticación.
 
 **Equipo:** Steven (frontend + integración con la cámara) · Juan (modelo de emociones) · Elvis (BD + reglas + autenticación). El backend es trabajo de los tres.

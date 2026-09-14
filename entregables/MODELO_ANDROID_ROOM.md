@@ -1,6 +1,14 @@
 # Modelo para Android Studio — Room / SQLite
 Sistema Cierre de Ventas · implementación del esquema corregido
 
+> ⚠️ **Documento histórico — no refleja el código actual.**
+> Traducción del esquema a Room / SQLite. Nunca se implementó en Room ni en SQLite: el
+> esquema real vive en `supabase/migrations/` sobre PostgreSQL. Se conserva porque el
+> diseño conceptual de las tablas sí pasó al esquema vigente.
+>
+> El estado vigente está en **[INFORME_TECNICO.md](INFORME_TECNICO.md)** y **[ARQUITECTURA.md](ARQUITECTURA.md)**.
+
+
 > Requiere leer antes **[ESQUEMA_CORREGIDO.md](ESQUEMA_CORREGIDO.md)** (hallazgos G1–G9, correcciones C1–C11).
 
 > **⚠️ Estado: diseño de referencia, ya implementado — pero no en Room.** El equipo decidió Flutter en vez de Android nativo (ver `PLAN_ELVIS.md §1`), así que este documento quedó como el **diseño conceptual** de las 11 tablas/vista/KPIs. La implementación real y vigente está en Dart con `drift`, traducida 1 a 1:
