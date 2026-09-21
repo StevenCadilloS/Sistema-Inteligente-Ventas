@@ -1,0 +1,39 @@
+name: Mantener activo Supabase
+
+# Supabase pausa los proyectos free-tier tras ~7 dias sin actividad. Este
+# workflow hace una lectura minima a diario para que eso nunca ocurra.
+# Usa la misma clave publica (de solo lectura) que el APK, guardada como
+# secrets del repo; ver lib/data/remote/supabase_config.dart.
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # todos los dias a las 12:00 UTC
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    name: Ping de lectura a Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Consultar una tabla publica
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "Faltan los secrets SUPABASE_URL y/o SUPABASE_PUBLISHABLE_KEY/SUPABASE_ANON_KEY" >&2
+            exit 1
+          fi
+
+          http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/categorias?select=id&limit=1" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY")
+
+          echo "HTTP $http_code"
+          if [ "$http_code" -ge 300 ]; then
+            echo "La consulta a Supabase fallo" >&2
+            exit 1
+          fi
