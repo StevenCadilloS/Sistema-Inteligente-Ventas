@@ -226,7 +226,14 @@ class CarritoHoja extends StatelessWidget {
                 Expanded(
                   child: OutlinedButton(
                     onPressed: confirmando ? null : onSeguirComprando,
-                    child: const Text('Seguir comprando'),
+                    // FittedBox en vez de dejar que el texto se parta en dos
+                    // lineas: a este ancho (la mitad de la hoja) el boton
+                    // quedaba mas alto de lo normal y desalineado con el de
+                    // al lado.
+                    child: const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text('Seguir comprando'),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -242,7 +249,10 @@ class CarritoHoja extends StatelessWidget {
                               color: Colors.white,
                             ),
                           )
-                        : const Text('Confirmar compra'),
+                        : const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text('Confirmar compra'),
+                          ),
                   ),
                 ),
               ],
