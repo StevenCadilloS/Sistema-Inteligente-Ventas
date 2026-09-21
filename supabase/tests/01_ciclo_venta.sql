@@ -279,6 +279,14 @@ begin
   perform test_cierto(v_cotizado.stock_suficiente,
     'la cotizacion avisa que hay stock');
 
+  -- Hasta 0015 estas dos columnas volvian en NULL: la funcion las declaraba
+  -- y no las asignaba. La app las usa para saber a que linea corresponde la
+  -- fila, y sin ellas avisaba de un cambio de precio en cada compra.
+  perform test_igual(v_cotizado.id_producto::text, v_lenovo::text,
+    'la cotizacion dice de que producto habla');
+  perform test_igual(v_cotizado.cantidad::text, '1',
+    'la cotizacion devuelve la cantidad que se le pidio');
+
   -- La segunda linea de la misma cotizacion: HP sin oferta.
   select * into v_cotizado
     from fn_cotizar_carrito(format('[{"id_producto":%s, "cantidad":2}]', v_hp)::jsonb)
