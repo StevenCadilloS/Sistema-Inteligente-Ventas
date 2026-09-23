@@ -119,9 +119,9 @@ frente a una pantalla suele clasificarse así.
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | ✅ 14 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | ✅ 17 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad: registro e ingreso con Supabase Auth | ✅ Cada cliente ve solo sus compras |
-| Motor de negociación (escalera de ofertas) | ✅ 158 pruebas Dart |
+| Motor de negociación (escalera de ofertas) | ✅ 181 pruebas Dart |
 | Detección facial y clasificación (Kotlin nativo) | ✅ ML Kit + TensorFlow Lite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | ✅ EventChannel, degrada donde no hay detector |
 | Pantallas: login, tienda, historial | ✅ |
@@ -165,6 +165,7 @@ id del cliente (lo saca del token).
 8. **La interacción termina** al agregar al carrito, al abandonar o al agotarse la escalera
 9. **El precio negociado se congela** al agregar al carrito; renegociar un producto que ya está dentro no se permite
 10. **Una confirmación de carrito es una venta**, aunque lleve varios productos
+11. **Si el cliente deja de mirar más de 3 s, la negociación se pausa**: no se cuentan emociones, la ventana se congela y no aparece ningún descuento nuevo. Al volver el rostro se reanuda sola, desde donde quedó
 
 ---
 
@@ -251,7 +252,7 @@ Android); las dos últimas en **Dart**.
 ├── entregables/                                  documentación del taller (ver abajo)
 ├── docs/                                         material de origen del curso (PDF, docx)
 │
-└── test/                                         158 pruebas Dart
+└── test/                                         181 pruebas Dart
 ```
 
 ---
@@ -280,7 +281,7 @@ cd Sistema-Inteligente-Ventas
 # 2. Dependencias de Flutter
 flutter pub get
 
-# 3. Backend: crear el proyecto en Supabase y aplicar las 14 migraciones
+# 3. Backend: crear el proyecto en Supabase y aplicar las 17 migraciones
 #    de supabase/migrations/ en orden (ver supabase/README.md)
 
 # 4. Credenciales: copiar env.example.json a env.json y poner ahí la URL y
@@ -328,8 +329,11 @@ La cámara se pide al iniciar la primera interacción, no al abrir la app.
 1. Entrar con una cuenta y seleccionar la **Laptop Lenovo IdeaPad** (tiene los tres escalones)
 2. Mirar la cámara con expresión neutra → la escalera avanza sola
 3. Sonreír → se queda donde está
-4. Pulsar **"No, gracias"** → avanza al siguiente escalón, igual que una cara desfavorable
+4. Pulsar **"No, gracias"** → abandona la negociación; solo la cámara avanza la escalera
 5. Seleccionar la **Laptop HP Pavilion** → no tiene ofertas, el precio no se mueve pase lo que pase
+6. **Tapar la cámara** con el popup abierto → a los ~3 s sale **NEGOCIACIÓN EN PAUSA** y la barra de la ventana se queda congelada con su porcentaje
+7. Mantenerla tapada un rato → el precio **no** cambia y la barra no se mueve
+8. **Destapar** → a ~1 s se reanuda solo, avisa "Reanudando desde donde quedó" y la barra **continúa desde el mismo punto**, no desde cero
 
 Para ver el límite diario: agregar al carrito con oferta, **confirmar la compra** y
 seleccionar otro producto.

@@ -16,6 +16,11 @@ class AppTheme {
   static const border = Color(0xFFE2E8F0);
   static const mutedText = Color(0xFF475569);
 
+  /// Ambar de "atencion, pero no error": la negociacion en pausa. Es el mismo
+  /// tono que `feliz` en EmotionStyle, a proposito — la paleta no crece por
+  /// cada estado nuevo.
+  static const warning = Color(0xFFD97706);
+
   static ThemeData get light {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: primary,

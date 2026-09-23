@@ -84,13 +84,19 @@ return desfavorable > favorable ? Respuesta.desfavorable : Respuesta.favorable;
 Cambiar `>` por `>=` hace que un empate avance la escalera. La decisión actual —empate =
 favorable— es "ante la duda no se regala margen".
 
-### F4. "Que el botón 'No, gracias' cierre la negociación"
+### F4. "Que el botón 'No, gracias' avance un escalón"
 
-**Dónde:** [`lib/ui/tienda_screen.dart:414`](../lib/ui/tienda_screen.dart#L414) (`_rechazar`)
+**Dónde:** [`lib/ui/widgets/popup_oferta.dart`](../lib/ui/widgets/popup_oferta.dart) — el botón
+llama a `onCerrar`; basta apuntarlo a `onRechazar`.
 
-Hoy hace lo mismo que una cara desfavorable: avanza un escalón. Antes cerraba todo, y era
-un error — el cliente que rechaza el precio normal es justo al que hay que ofrecerle el
-descuento.
+Hoy abandona la negociación, a propósito: un toque no es una emoción, y la escalera solo
+avanza por la lectura facial. El método que avanzaría un escalón ya existe y está probado
+(`_rechazar`, [`tienda_screen.dart:414`](../lib/ui/tienda_screen.dart#L414)); el cambio es
+de una línea.
+
+**Lo que hay que saber defender:** con `onRechazar` el cliente descubre la escalera pulsando
+un botón, y eso rompe la premisa del sistema — que el descuento se gana por no responder
+bien, no por pedirlo.
 
 ---
 
@@ -233,7 +239,7 @@ misma interfaz y empuja emociones por un `StreamController`. Ábrelo y enséñal
 
 ```
 La decisión no sabe si la emoción viene de una cámara o de una lista en una prueba.
-Por eso 158 pruebas corren sin cámara, sin emulador y sin backend.
+Por eso 181 pruebas corren sin cámara, sin emulador y sin backend.
 ```
 
 ---
@@ -277,6 +283,36 @@ derivado del rostro queda almacenado.
 
 ---
 
+## Demostrar la pausa por ausencia de rostro
+
+El reto del docente, en vivo. Con el popup de negociación abierto:
+
+| Paso | Qué se ve | Qué prueba |
+|---|---|---|
+| Tapar la cámara | A los ~3 s: cartel **NEGOCIACIÓN EN PAUSA** sobre el producto, chip del AppBar en **"Sin rostro"**, barra en **"Ventana congelada en N%"** | El umbral de 3 s y que el estado es visible |
+| Esperar tapado | El porcentaje **no se mueve** y el precio no cambia | La ventana no avanza y no se genera descuento |
+| Destapar | A ~1 s: desaparece el cartel, sale **"Reanudando desde donde quedó"** y la barra sigue **desde el mismo N%** | Reanuda sola y sin reiniciar la ventana |
+
+**Los dos números que hay que saber explicar:**
+
+- **La pausa cae a ~3,25 s**, no a 3,00. El módulo nativo tarda 5 frames (~250 ms) en
+  declarar que perdió el rostro, y el umbral de 3 s se cuenta desde ese aviso. El enunciado
+  pide "más de 3 segundos": llegar un pelo tarde lo cumple, llegar pronto no.
+- **Reanudar tarda ~1,3 s.** Al perder el rostro el buffer nativo se limpia, así que hay
+  que rehacer los 26 frames de una lectura estable. Es el mismo tiempo que tarda
+  *cualquier* lectura del sistema, no una demora añadida.
+
+**Si preguntan por qué no se mide en Kotlin:** `no_face` se emite **una sola vez** por
+episodio y luego el stream queda mudo. El silencio no se puede contar recibiendo eventos;
+hay que cronometrarlo, y eso es una decisión de política que vive en la capa de decisión,
+no en el sensor.
+
+**Si preguntan qué pasa si el cliente no vuelve nunca:** queda pausada indefinidamente con
+la cámara encendida. No hay tiempo de expiración a propósito — el enunciado pide
+reanudación automática, y un corte por tiempo la contradiría. Está anotado en LIM-05.
+
+---
+
 ## Puntos débiles conocidos (dilos tú primero)
 
 | Debilidad | Cómo presentarla |
@@ -308,7 +344,7 @@ LA FRASE
 LOS NÚMEROS
   26 frames · mayoría 45% · margen 6 · ventana 8 s · mínimo 2 votos
   16 → 7 cambios de emoción en 20 s     error "enojo" 49% → 5%
-  158 pruebas Dart · 9 JUnit · 3 suites SQL · 14 migraciones
+  181 pruebas Dart · 9 JUnit · 3 suites SQL · 17 migraciones
 
 SI NO SABES ALGO
   Di dónde lo buscarías. La arquitectura es la respuesta:

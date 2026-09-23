@@ -179,9 +179,9 @@ siguiente.
 
 | Parte | Estado |
 |---|---|
-| Backend: esquema, funciones validadas, RLS, Storage | 14 migraciones, 3 suites SQL sobre PostgreSQL real |
+| Backend: esquema, funciones validadas, RLS, Storage | 17 migraciones, 3 suites SQL sobre PostgreSQL real |
 | Identidad con Supabase Auth | Cada cliente ve solo sus compras |
-| Motor de negociación | 158 pruebas Dart |
+| Motor de negociación | 181 pruebas Dart |
 | Detección y clasificación (Kotlin) | ML Kit + TFLite, en el dispositivo |
 | Puente Flutter ↔ Kotlin | `EventChannel`, degrada donde no hay detector |
 | Pantallas | Login, tienda, carrito, historial, detalle de venta |
@@ -253,7 +253,7 @@ Preguntas capciosas probables, con la respuesta ya pensada:
 
 | Comando | Qué corre |
 |---|---|
-| `flutter test` | 158 casos Dart: clasificador, negociación, pantallas, carrito, historial |
+| `flutter test` | 181 casos Dart: clasificador, negociación, pantallas, carrito, historial |
 | `cd android && ./gradlew testDebugUnitTest` | 9 casos JUnit sobre `EmotionProcessor` |
 | `PGURL=... bash supabase/tests/ejecutar.sh` | 3 suites SQL contra un PostgreSQL real |
 
@@ -264,7 +264,7 @@ Las tres corren en CI en cada push. Dos que conviene citar por su nombre:
 - **La seguridad:** `04_seguridad.sql` falla si la clave pública puede tocar precios,
   stock, ofertas o ventas, o si un cliente puede ver lo de otro.
 
-Que las 158 pruebas Dart corran **sin cámara, sin emulador y sin backend** es la prueba
+Que las 181 pruebas Dart corran **sin cámara, sin emulador y sin backend** es la prueba
 concreta de la separación de capas, y conviene decirlo así.
 
 ---

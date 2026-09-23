@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../data/modelos/modelos.dart';
 import '../data/repositories/tienda_repository.dart';
 import '../decision/negociacion.dart';
+import '../decision/ventana_observacion.dart';
 import '../services/emotion_channel.dart';
 import '../theme/app_theme.dart';
 import 'widgets/banner_esperando.dart';
@@ -34,6 +35,8 @@ class TiendaScreen extends StatefulWidget {
     required this.tienda,
     this.clasificador = const ClasificadorRespuesta(),
     this.ventanaObservacion = const Duration(seconds: 8),
+    this.umbralSinRostro = const Duration(seconds: 3),
+    this.refrescoProgreso = const Duration(milliseconds: 100),
   });
 
   /// Que hacer al pulsar "cerrar sesion".
@@ -64,6 +67,29 @@ class TiendaScreen extends StatefulWidget {
   /// necesita para decidir por mayoria y no por casualidad.
   final Duration ventanaObservacion;
 
+  /// Cuanto puede faltar el rostro antes de dar la negociacion por pausada.
+  ///
+  /// Se mide con un temporizador y no contando lecturas porque el modulo
+  /// nativo emite `no_face` UNA sola vez, en el 5.o frame consecutivo sin cara
+  /// (~250 ms), y despues se calla: mientras el rostro siga fuera no llega
+  /// nada mas. El silencio no se puede contar, asi que hay que cronometrarlo.
+  ///
+  /// La pausa cae entonces a ~3,25 s reales de ausencia. Esos 250 ms no se
+  /// descuentan a proposito: el requisito dice "mas de 3 segundos", y llegar
+  /// un pelo tarde lo cumple; llegar pronto, no.
+  final Duration umbralSinRostro;
+
+  /// Cada cuanto se repinta la barra de progreso de la ventana.
+  ///
+  /// Es PURAMENTE cosmetico: quien decide cuando cierra la ventana es el
+  /// temporizador de [ventanaObservacion], no esto. `Duration.zero` lo apaga.
+  ///
+  /// Las pruebas TIENEN que apagarlo. Un repintado periodico deja
+  /// `hasScheduledFrame` en true para siempre, y como la negociacion reabre
+  /// ventana tras ventana, `pumpAndSettle` no asentaria nunca: los 65 usos de
+  /// la suite se convertirian en timeouts. Por eso existe este parametro.
+  final Duration refrescoProgreso;
+
   @override
   State<TiendaScreen> createState() => _TiendaScreenState();
 }
@@ -80,10 +106,35 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
 
   Negociacion? _negociacion;
   StreamSubscription<EmocionDetectada>? _emociones;
+
+  /// Cierra la ventana en curso. Se arma con lo que FALTE, no con la duracion
+  /// entera: asi reanudar despues de una pausa sigue donde se quedo.
   Timer? _ventana;
 
-  /// Lecturas de la camara en la ventana en curso. Se vacia en cada ronda.
-  final List<String> _lecturas = [];
+  /// La ronda de observacion en curso, con sus lecturas y su reloj. null
+  /// cuando no hay ninguna abierta.
+  VentanaObservacion? _observacion;
+
+  /// Cuenta atras del umbral sin rostro. Se arma con el unico `no_face` que
+  /// manda el modulo nativo y lo cancela la primera lectura valida.
+  Timer? _sinRostro;
+
+  /// Repintado periodico de la barra. Cosmetico y apagable (ver
+  /// [TiendaScreen.refrescoProgreso]).
+  Timer? _tickBarra;
+
+  /// Oculta el aviso de "reanudando" a los pocos segundos.
+  Timer? _avisoReanudar;
+
+  /// La ultima senal de la camara fue `no_face`. Sirve para que el chip diga
+  /// "Sin rostro" desde el primer momento, sin esperar a que caiga el umbral.
+  bool _sinRostroAhora = false;
+
+  /// El aviso breve de reanudacion esta en pantalla.
+  bool _reanudando = false;
+
+  /// La negociacion esta congelada por falta de rostro.
+  bool get _pausada => _observacion?.pausada ?? false;
 
   String? _emocionDetectada;
   double _confianza = 0;
@@ -131,8 +182,21 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   /// Al volver tambien se re-consulta el cupo: la oferta se renueva a
   /// medianoche y quien dejo la app abierta de un dia para otro no deberia
   /// seguir viendo el feed sin etiquetas.
+  ///
+  /// Irse a segundo plano tambien congela la negociacion. Android deja de
+  /// entregar frames, asi que el nativo no llega a mandar `no_face`, pero los
+  /// Timer de Dart siguen corriendo: sin esto la ventana expiraria y la
+  /// escalera avanzaria con el telefono en el bolsillo. Al volver NO se
+  /// reanuda a mano — lo hara la primera lectura real, que es la unica senal
+  /// honesta de que hay alguien mirando.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.inactive) {
+      _pausarVentana();
+      return;
+    }
     if (state == AppLifecycleState.resumed) {
       _refrescarCatalogo();
       _comprobarCupo();
@@ -310,20 +374,42 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
       if (!mounted) return;
 
       if (e.emotion == 'no_face') {
-        // El rostro salio de cuadro: el chip vuelve a "Leyendo..." en vez de
-        // quedarse congelado con la ultima emocion.
+        // El rostro salio de cuadro. El chip lo dice ya, pero la negociacion
+        // todavia no se pausa: hay que esperar el umbral.
+        //
+        // `??=` y no `=`: el nativo manda este evento UNA vez por episodio,
+        // pero si algun dia lo repitiera, el umbral debe contarse desde la
+        // primera perdida y no reiniciarse con cada aviso.
+        _sinRostro ??= Timer(widget.umbralSinRostro, _pausarVentana);
         setState(() {
           _emocionDetectada = null;
           _confianza = 0;
+          _sinRostroAhora = true;
         });
+        _refrescarPopup();
         return;
       }
 
-        _lecturas.add(e.emotion);
+        // Hay cara delante: se desarma el umbral pase lo que pase.
+        _sinRostro?.cancel();
+        _sinRostro = null;
+
         setState(() {
           _emocionDetectada = e.emotion;
           _confianza = e.confidence;
+          _sinRostroAhora = false;
         });
+
+        if (_pausada) {
+          // Esta lectura reanuda, pero NO vota: se cocino en parte mientras el
+          // rostro volvia (el buffer nativo se habia limpiado al perderlo), y
+          // dejarla fuera es lo que hace que "mientras este pausada no se
+          // contabilizan emociones" sea una regla exacta y no aproximada.
+          _reanudarVentana();
+          return;
+        }
+
+        _observacion?.registrar(e.emotion);
         _refrescarPopup();
       },
       // El modulo nativo avisa por aqui si no puede abrir la camara: permiso
@@ -344,16 +430,81 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   /// Abre una ventana de observacion. Al cerrarse se clasifica lo leido y se
   /// decide si mantener el precio o avanzar de escalon.
   void _abrirVentana() {
-    _lecturas.clear();
     _ventana?.cancel();
-    _ventana = Timer(widget.ventanaObservacion, _evaluarVentana);
+    _observacion = VentanaObservacion(total: widget.ventanaObservacion);
+    _ventana = Timer(_observacion!.restante, _evaluarVentana);
+    _arrancarTick();
+    _refrescarPopup();
+  }
+
+  /// Arranca el repintado de la barra. No decide nada: si esta apagado, la
+  /// ventana se cierra igual, solo que la barra se mueve a saltos.
+  void _arrancarTick() {
+    _tickBarra?.cancel();
+    _tickBarra = null;
+    if (widget.refrescoProgreso <= Duration.zero) return;
+    _tickBarra = Timer.periodic(widget.refrescoProgreso, (_) => _refrescarPopup());
+  }
+
+  /// Han pasado mas de [TiendaScreen.umbralSinRostro] sin rostro: la
+  /// negociacion se congela.
+  ///
+  /// Los tres sub-requisitos del enunciado salen de aqui: al cancelar
+  /// `_ventana` la ventana deja de avanzar y `_evaluarVentana` se vuelve
+  /// inalcanzable — que es la unica via por la que la camara puede llamar a
+  /// `avanzar()` —, y al pausar la observacion las lecturas dejan de contarse.
+  void _pausarVentana() {
+    final observacion = _observacion;
+    if (observacion == null || observacion.pausada) return;
+    if (!_negociando || !_camaraEncendida) return;
+
+    _ventana?.cancel();
+    _ventana = null;
+    _tickBarra?.cancel();
+    _tickBarra = null;
+    _sinRostro?.cancel();
+    _sinRostro = null;
+    _avisoReanudar?.cancel();
+    _avisoReanudar = null;
+
+    observacion.pausar();
+    _actualizar(() => _reanudando = false);
+    _refrescarPopup();
+  }
+
+  /// El rostro volvio: se sigue desde donde se quedo.
+  ///
+  /// El temporizador se rearma con `restante`, no con la duracion entera. Esa
+  /// linea es todo el "sin reiniciar la ventana" del enunciado.
+  void _reanudarVentana() {
+    final observacion = _observacion;
+    if (observacion == null || !observacion.pausada) return;
+
+    observacion.reanudar();
+    _ventana?.cancel();
+    _ventana = Timer(observacion.restante, _evaluarVentana);
+    _arrancarTick();
+
+    _actualizar(() => _reanudando = true);
+    _avisoReanudar?.cancel();
+    _avisoReanudar = Timer(const Duration(seconds: 2), () {
+      _avisoReanudar = null;
+      _actualizar(() => _reanudando = false);
+      _refrescarPopup();
+    });
+    _refrescarPopup();
   }
 
   void _evaluarVentana() {
     final negociacion = _negociacion;
-    if (negociacion == null || !mounted) return;
+    final observacion = _observacion;
+    if (negociacion == null || observacion == null || !mounted) return;
+    // Defensa: una ventana congelada no decide nada. No deberia llegar aqui
+    // porque `_pausarVentana` cancela el temporizador, pero si alguna vez
+    // llegara, lo correcto es no mover el precio.
+    if (observacion.pausada) return;
 
-    final respuesta = widget.clasificador.clasificar(_lecturas);
+    final respuesta = widget.clasificador.clasificar(observacion.lecturas);
 
     switch (negociacion.siguientePaso(respuesta)) {
       case PasoNegociacion.mantener:
@@ -395,7 +546,12 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
       // Lecturas estables acumuladas en la ventana en curso. Sin esto no hay
       // forma de distinguir "observando" de "colgado": el detector tarda ~1,3s
       // por lectura y no imprime nada. -1 significa que no hay camara.
-      lecturas: _camaraEncendida ? _lecturas.length : -1,
+      lecturas: _camaraEncendida ? (_observacion?.lecturas.length ?? 0) : -1,
+      // null cuando no hay ventana viva (sin camara, escalera agotada): la
+      // barra simplemente no se pinta.
+      progreso: _camaraEncendida ? _observacion?.progreso : null,
+      pausada: _pausada,
+      reanudando: _reanudando,
       onAceptar: () => _agregarAlCarrito(negociacion),
       onRechazar: () => _rechazar(negociacion),
       onCerrar: _terminarInteraccion,
@@ -475,12 +631,20 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
   void _apagarCamara() {
     _ventana?.cancel();
     _ventana = null;
+    _sinRostro?.cancel();
+    _sinRostro = null;
+    _tickBarra?.cancel();
+    _tickBarra = null;
+    _avisoReanudar?.cancel();
+    _avisoReanudar = null;
     _emociones?.cancel();
     _emociones = null;
-    _lecturas.clear();
+    _observacion = null;
     _actualizar(() {
       _emocionDetectada = null;
       _confianza = 0;
+      _sinRostroAhora = false;
+      _reanudando = false;
     });
   }
 
@@ -740,6 +904,7 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
               estilo: estilo,
               detectando: detectando,
               confianza: _confianza,
+              sinRostro: _sinRostroAhora || _pausada,
             ),
           Stack(
             alignment: Alignment.center,
@@ -839,8 +1004,16 @@ class _TiendaScreenState extends State<TiendaScreen> with WidgetsBindingObserver
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 250),
                       child: BannerEsperando(
-                        key: const ValueKey('esperando'),
+                        // La key depende del estado para que el
+                        // AnimatedSwitcher haga su transicion: con una key
+                        // fija Flutter lo trataba como el mismo hijo y el
+                        // texto cambiaba de golpe.
+                        key: ValueKey(
+                          'esperando-$_camaraEncendida-$_pausada-$detectando',
+                        ),
                         detectando: detectando,
+                        camaraActiva: _camaraEncendida,
+                        pausada: _pausada,
                       ),
                     ),
                   ),

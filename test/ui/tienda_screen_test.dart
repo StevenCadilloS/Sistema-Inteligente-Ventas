@@ -74,6 +74,7 @@ void main() {
     WidgetTester tester, {
     bool hayCamara = true,
     Duration ventana = const Duration(milliseconds: 50),
+    Duration umbral = const Duration(seconds: 3),
   }) async {
     canal = _CanalFalso(hayCamara: hayCamara);
     cerroSesion = false;
@@ -88,6 +89,12 @@ void main() {
             emotionChannel: canal,
             onCerrarSesion: () async => cerroSesion = true,
             ventanaObservacion: ventana,
+            umbralSinRostro: umbral,
+            // OBLIGATORIO en pruebas. El repintado periodico de la barra deja
+            // un frame programado siempre, y como la negociacion reabre
+            // ventana tras ventana, `pumpAndSettle` no asentaria nunca: los
+            // ~65 usos de este archivo se volverian timeouts.
+            refrescoProgreso: Duration.zero,
           ),
         },
       ),
@@ -515,11 +522,204 @@ void main() {
     });
   });
 
+  // El reto del docente: si el cliente deja de mirar por mas de 3 s, la
+  // negociacion se pausa; en pausa no se cuentan emociones, no avanza la
+  // ventana y no aparece ningun descuento nuevo; al volver el rostro se sigue
+  // desde donde se quedo.
+  //
+  // La ventana es de 10 s a proposito. Montar la pantalla consume ~800 ms de
+  // reloj virtual (pumpAndSettle bombea en pasos de 100 ms mientras haya
+  // trabajo), asi que con ventanas cortas la ronda expiraba durante el propio
+  // montaje y las cuentas no cuadraban. Con 10 s ese arranque es ruido.
+  group('pausa por falta de rostro', () {
+    const ventanaLarga = Duration(seconds: 10);
+    const umbralCorto = Duration(milliseconds: 300);
+
+    Future<void> negociar(WidgetTester tester) async {
+      await montar(tester, ventana: ventanaLarga, umbral: umbralCorto);
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+    }
+
+    PopupOferta popup(WidgetTester tester) =>
+        tester.widget<PopupOferta>(find.byType(PopupOferta));
+
+    /// Deja la negociacion pausada y devuelve lo que le quedaba a la ventana.
+    Future<Duration> pausar(WidgetTester tester) async {
+      canal.leer('no_face');
+      await tester.pump(umbralCorto + const Duration(milliseconds: 50));
+      expect(find.text('NEGOCIACION EN PAUSA'), findsOneWidget);
+
+      // El restante se lee de la propia barra en vez de calcularlo a mano:
+      // asi la prueba no depende de cuanto tiempo consumio el montaje.
+      final progreso = popup(tester).progreso!;
+      return ventanaLarga * (1 - progreso);
+    }
+
+    testWidgets('no se pausa antes del umbral, si despues', (tester) async {
+      await negociar(tester);
+
+      canal.leer('no_face');
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(find.text('NEGOCIACION EN PAUSA'), findsNothing,
+          reason: 'a los 250 ms todavia no se cumplio el umbral');
+
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('NEGOCIACION EN PAUSA'), findsOneWidget);
+      expect(find.textContaining('No detectamos tu rostro'), findsOneWidget);
+    });
+
+    testWidgets('en pausa las emociones no se contabilizan', (tester) async {
+      await negociar(tester);
+
+      canal.leer('triste');
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(popup(tester).lecturas, 1,
+          reason: 'con la ventana viva la lectura si cuenta');
+
+      await pausar(tester);
+
+      canal.leer('enojo');
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(find.text('NEGOCIACION EN PAUSA'), findsNothing,
+          reason: 'la lectura reanuda sola, sin tocar ningun boton');
+      expect(popup(tester).lecturas, 1,
+          reason: 'la lectura que devuelve el rostro reanuda pero no vota');
+    });
+
+    testWidgets('en pausa la ventana no expira ni baja el precio',
+        (tester) async {
+      await negociar(tester);
+
+      // Dos votos desfavorables listos: si la ventana llegara a cerrarse, el
+      // precio bajaria a S/2250.00.
+      canal.leer('neutral');
+      canal.leer('triste');
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await pausar(tester);
+      await tester.pump(const Duration(minutes: 1));
+
+      expect(find.text('S/2500.00'), findsWidgets,
+          reason: 'un minuto en pausa no genera ningun descuento');
+      expect(find.text('Oferta 1'), findsNothing);
+    });
+
+    testWidgets('la barra se queda congelada en el mismo porcentaje',
+        (tester) async {
+      await negociar(tester);
+      await pausar(tester);
+
+      final congelada = popup(tester).progreso;
+      expect(congelada, isNotNull);
+
+      // Un no_face extra es inocuo estando en pausa, pero fuerza el repintado
+      // del overlay para leer un valor fresco.
+      await tester.pump(const Duration(seconds: 30));
+      canal.leer('no_face');
+      await tester.pump(const Duration(milliseconds: 10));
+
+      expect(popup(tester).progreso, congelada,
+          reason: 'el progreso no se mueve mientras no haya rostro');
+      expect(find.textContaining('Ventana congelada'), findsOneWidget);
+    });
+
+    testWidgets('al volver el rostro la ventana sigue desde donde quedo',
+        (tester) async {
+      await negociar(tester);
+
+      canal.leer('neutral');
+      canal.leer('triste');
+      await tester.pump(const Duration(seconds: 2));
+
+      final restante = await pausar(tester);
+      await tester.pump(const Duration(minutes: 1)); // tiempo muerto
+
+      canal.leer('neutral'); // reanuda, no vota
+      await tester.pump(const Duration(milliseconds: 10));
+
+      await tester.pump(restante - const Duration(milliseconds: 500));
+      expect(find.text('S/2250.00'), findsNothing,
+          reason: 'faltando medio segundo la ventana sigue abierta');
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('S/2250.00'), findsWidgets,
+          reason: 'cerro al agotarse lo que quedaba, no una ventana entera');
+    });
+
+    testWidgets('reanudar avisa que se sigue desde donde quedo',
+        (tester) async {
+      await negociar(tester);
+      await pausar(tester);
+
+      canal.leer('neutral');
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(find.text('Reanudando desde donde quedo'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('Reanudando desde donde quedo'), findsNothing,
+          reason: 'el aviso es breve, no se queda pegado');
+    });
+
+    testWidgets('irse a segundo plano congela la negociacion', (tester) async {
+      await negociar(tester);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+
+      expect(find.text('NEGOCIACION EN PAUSA'), findsOneWidget,
+          reason: 'sin frames de la camara la ventana no puede seguir');
+
+      await tester.pump(const Duration(minutes: 1));
+      expect(find.text('Oferta 1'), findsNothing,
+          reason: 'la escalera no avanza con el telefono en el bolsillo');
+    });
+
+    testWidgets('el chip del AppBar dice que no hay rostro', (tester) async {
+      await negociar(tester);
+
+      canal.leer('no_face');
+      await tester.pump(const Duration(milliseconds: 10));
+
+      expect(find.text('Sin rostro'), findsOneWidget,
+          reason: 'se avisa desde el primer momento, sin esperar al umbral');
+    });
+  });
+
   group('salir de la pantalla', () {
     testWidgets('no deja timers vivos', (tester) async {
       await montar(tester, ventana: const Duration(seconds: 30));
       await tester.tap(find.text('Laptop Lenovo IdeaPad'));
       await tester.pumpAndSettle();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('salir en pausa tampoco deja timers vivos', (tester) async {
+      await montar(
+        tester,
+        ventana: const Duration(seconds: 30),
+        umbral: const Duration(milliseconds: 300),
+      );
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+
+      canal.leer('no_face');
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text('NEGOCIACION EN PAUSA'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('salir con el umbral armado tampoco los deja', (tester) async {
+      await montar(tester, ventana: const Duration(seconds: 30));
+      await tester.tap(find.text('Laptop Lenovo IdeaPad'));
+      await tester.pumpAndSettle();
+
+      canal.leer('no_face'); // deja el umbral armado con 3 s por delante
+      await tester.pump(const Duration(milliseconds: 10));
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();

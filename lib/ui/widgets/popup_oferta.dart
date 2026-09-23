@@ -13,6 +13,9 @@ class PopupOferta extends StatelessWidget {
     required this.onAceptar,
     required this.onRechazar,
     required this.onCerrar,
+    this.progreso,
+    this.pausada = false,
+    this.reanudando = false,
   });
 
   final Negociacion negociacion;
@@ -23,6 +26,18 @@ class PopupOferta extends StatelessWidget {
   /// Se muestran para que se note que el sistema esta mirando: el detector
   /// tarda ~1,3 s por lectura y sin este contador el popup parece congelado.
   final int lecturas;
+
+  /// Cuanto lleva consumido la ventana, de 0 a 1, o null si no hay ninguna
+  /// abierta. La barra que lo pinta es la prueba visible de que en pausa la
+  /// ventana no avanza: se queda quieta a media carga.
+  final double? progreso;
+
+  /// La negociacion esta congelada porque hace rato que no se ve un rostro.
+  final bool pausada;
+
+  /// El rostro acaba de volver. Dura un par de segundos y solo existe para
+  /// que se vea que la ventana sigue donde estaba, no que empieza de cero.
+  final bool reanudando;
 
   bool get _sinCamara => lecturas < 0;
   final VoidCallback onAceptar;
@@ -116,6 +131,14 @@ class PopupOferta extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (progreso != null) ...[
+                    const SizedBox(height: 12),
+                    _BarraVentana(progreso: progreso!, pausada: pausada),
+                  ],
+                  if (reanudando) ...[
+                    const SizedBox(height: 10),
+                    _AvisoReanudando(textTheme: textTheme),
+                  ],
                   const SizedBox(height: 12),
                   Text(
                     hayRebaja
@@ -132,85 +155,102 @@ class PopupOferta extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
-                  ImagenProducto(
-                    producto: producto,
-                    ancho: 120,
-                    alto: 120,
-                    radio: 12,
-                    respaldo: Container(
-                      height: 120,
-                      width: 120,
-                      color: AppTheme.success.withValues(alpha: 0.1),
-                      child: const Icon(
-                        Icons.shopping_bag_outlined,
-                        size: 40,
-                        color: AppTheme.success,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    producto.nombre,
-                    style: textTheme.titleLarge,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                  // El cartel de pausa tapa el producto y el precio, pero
+                  // NUNCA los botones: dejar al cliente sin salida mientras
+                  // esta pausado seria una trampa, y ademas duplicaria el
+                  // texto "No, gracias" que varias pruebas buscan por nombre.
+                  Stack(
                     children: [
-                      // Con descuento se muestra el precio de lista tachado
-                      // junto al final: el que se cobra y se registra en
-                      // detalleVenta es el final.
-                      if (hayRebaja) ...[
-                        Text(
-                          precio,
-                          style: textTheme.titleMedium?.copyWith(
-                            color: AppTheme.mutedText,
-                            decoration: TextDecoration.lineThrough,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      Text(
-                        precioFinal,
-                        style: textTheme.headlineMedium?.copyWith(
-                          color: AppTheme.success,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      if (hayRebaja) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppTheme.danger,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            escalon.esCombo
-                                ? escalon.nombreOferta
-                                : '-${escalon.porcentajeDescuento}%',
-                            style: textTheme.bodyMedium?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ImagenProducto(
+                            producto: producto,
+                            ancho: 120,
+                            alto: 120,
+                            radio: 12,
+                            respaldo: Container(
+                              height: 120,
+                              width: 120,
+                              color: AppTheme.success.withValues(alpha: 0.1),
+                              child: const Icon(
+                                Icons.shopping_bag_outlined,
+                                size: 40,
+                                color: AppTheme.success,
+                              ),
                             ),
                           ),
+                          const SizedBox(height: 12),
+                          Text(
+                            producto.nombre,
+                            style: textTheme.titleLarge,
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // Con descuento se muestra el precio de lista
+                              // tachado junto al final: el que se cobra y se
+                              // registra en detalleVenta es el final.
+                              if (hayRebaja) ...[
+                                Text(
+                                  precio,
+                                  style: textTheme.titleMedium?.copyWith(
+                                    color: AppTheme.mutedText,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Text(
+                                precioFinal,
+                                style: textTheme.headlineMedium?.copyWith(
+                                  color: AppTheme.success,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              if (hayRebaja) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: AppTheme.danger,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    escalon.esCombo
+                                        ? escalon.nombreOferta
+                                        : '-${escalon.porcentajeDescuento}%',
+                                    style: textTheme.bodyMedium?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            mensaje,
+                            style: textTheme.bodyMedium,
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${producto.stock} disponibles',
+                            style: textTheme.bodyMedium?.copyWith(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      if (pausada)
+                        Positioned.fill(
+                          child: _CapaPausa(textTheme: textTheme),
                         ),
-                      ],
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    mensaje,
-                    style: textTheme.bodyMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${producto.stock} disponibles',
-                    style: textTheme.bodyMedium?.copyWith(fontSize: 12),
                   ),
                   const SizedBox(height: 20),
                   Row(
@@ -257,6 +297,131 @@ class PopupOferta extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Cuanto le queda a la ventana de observacion.
+///
+/// Es la pieza que hace demostrable el requisito: al pausar, la barra y su
+/// porcentaje se quedan clavados donde estaban en vez de seguir llenandose.
+class _BarraVentana extends StatelessWidget {
+  const _BarraVentana({required this.progreso, required this.pausada});
+
+  final double progreso;
+  final bool pausada;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = pausada ? AppTheme.warning : AppTheme.success;
+    final porcentaje = (progreso * 100).round();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            // Nunca null: un indicador indeterminado anima en bucle, y eso
+            // dejaria `pumpAndSettle` sin asentar en toda la suite.
+            value: progreso,
+            minHeight: 8,
+            backgroundColor: AppTheme.border,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          pausada
+              ? 'Ventana congelada en $porcentaje%'
+              : 'Observando... $porcentaje%',
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium
+              ?.copyWith(fontSize: 11, color: color),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+}
+
+class _AvisoReanudando extends StatelessWidget {
+  const _AvisoReanudando({required this.textTheme});
+
+  final TextTheme textTheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.success.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.play_arrow, size: 16, color: AppTheme.success),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              'Reanudando desde donde quedo',
+              style: textTheme.bodyMedium?.copyWith(
+                fontSize: 12,
+                color: AppTheme.success,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// El cartel de pausa. Cubre el producto y el precio, no los botones.
+class _CapaPausa extends StatelessWidget {
+  const _CapaPausa({required this.textTheme});
+
+  final TextTheme textTheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFFFEF3C7).withValues(alpha: 0.97),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.pause_circle_filled,
+              size: 44, color: AppTheme.warning),
+          const SizedBox(height: 8),
+          Text(
+            'NEGOCIACION EN PAUSA',
+            style: textTheme.titleMedium?.copyWith(
+              color: const Color(0xFFB45309),
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
+          Flexible(
+            child: Text(
+              'No detectamos tu rostro. La ventana y las ofertas quedan '
+              'congeladas: seguimos donde lo dejaste en cuanto vuelvas a '
+              'mirar la pantalla.',
+              style: textTheme.bodyMedium?.copyWith(
+                fontSize: 12,
+                color: const Color(0xFF92400E),
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

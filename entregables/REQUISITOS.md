@@ -56,7 +56,7 @@ observación, no un botón. Está fijado por prueba automatizada en
 | AL-07 | Carrito: una confirmación es una venta con N líneas, con el precio de cada línea congelado |
 | AL-08 | Regla de negocio de una sola oportunidad de oferta por cliente y día, calculada en el servidor |
 | AL-09 | Historial de compras por venta, con pantalla de detalle línea a línea |
-| AL-10 | Suite de pruebas automatizadas: 158 casos Dart (`flutter_test`), 3 suites SQL sobre PostgreSQL real y 9 casos JUnit (JVM) |
+| AL-10 | Suite de pruebas automatizadas: 181 casos Dart (`flutter_test`), 3 suites SQL sobre PostgreSQL real y 9 casos JUnit (JVM) |
 | AL-11 | Políticas de acceso por rol (RLS) y escrituras atómicas mediante funciones `SECURITY DEFINER` |
 | AL-12 | Administración desde el panel de Supabase, sin recompilar la app |
 | AL-13 | Propagación en tiempo real (WebSocket) de cambios de catálogo, stock y ofertas |
@@ -135,8 +135,25 @@ observación, no un botón. Está fijado por prueba automatizada en
 | RF-22 | Si la escalera viene vacía —sin ofertas, ninguna vigente, o cliente sin cupo— el sistema no debe encender la cámara |
 | RF-23 | La interfaz debe mostrar en todo momento la emoción detectada vigente y su confianza |
 | RF-24 | La interfaz debe mostrar el escalón vigente ("Oferta 2") pero **no** cuántos quedan: si el cliente supiera que hay tres, esperaría al 30% y no aceptaría el 10% |
-| RF-25 | El botón "No, gracias" debe producir el mismo efecto que una cara desfavorable: avanzar un escalón, no cerrar la negociación |
+| RF-25 | El botón "No, gracias" debe **abandonar** la negociación, no avanzar la escalera: un toque no es una emoción, y solo la lectura facial decide si corresponde ofrecer el siguiente escalón |
 | RF-26 | Donde no exista módulo nativo (web, escritorio), la negociación debe quedarse en el precio normal en vez de esperar una señal que no llegará |
+
+#### Pausa por ausencia de rostro
+
+| ID | Requisito |
+|---|---|
+| RF-27 | Si pasan más de **3 segundos** sin detectar ningún rostro, la negociación debe entrar automáticamente en estado **PAUSADO** |
+| RF-28 | Mientras esté pausada, las emociones que lleguen **no deben contabilizarse** |
+| RF-29 | Mientras esté pausada, la ventana de observación **no debe avanzar**, y por tanto no puede generarse ningún descuento nuevo |
+| RF-30 | Al volver a detectarse el rostro, la negociación debe **reanudarse sola**, desde donde quedó y sin reiniciar la ventana |
+| RF-31 | El estado pausado debe ser **visible sin ambigüedad**: cartel sobre el producto, barra de la ventana congelada con su porcentaje, y el chip del AppBar en "Sin rostro" |
+| RF-32 | Irse a segundo plano debe pausar también: sin frames de la cámara la ventana no puede seguir corriendo |
+
+> El umbral se cronometra en Dart y no contando lecturas porque el módulo nativo emite
+> `no_face` **una sola vez** (5.º frame sin cara, ~250 ms) y luego calla. La pausa cae
+> entonces a ~3,25 s reales de ausencia: el requisito dice "más de 3 segundos", y llegar
+> un pelo tarde lo cumple. La reanudación tarda ~1,3 s porque el buffer nativo se limpió
+> al perder el rostro y hay que rehacer los 26 frames de la lectura estable.
 
 ### 3.5 Autenticación y sesión
 
@@ -253,7 +270,7 @@ observación, no un botón. Está fijado por prueba automatizada en
 
 | ID | Limitación |
 |---|---|
-| LIM-05 | Sin rostro visible no hay contexto: la negociación se queda en el escalón vigente |
+| LIM-05 | Sin rostro visible no hay contexto. Desde RF-27 esto deja de ser pasivo: pasados 3 s la negociación se declara PAUSADA, se congela la ventana y se avisa en pantalla. Si el cliente no vuelve nunca, queda pausada indefinidamente con la cámara encendida: no hay tiempo de expiración porque el requisito pide reanudación automática |
 | LIM-06 | La orientación está fijada en vertical de forma deliberada; en horizontal el rostro sale del encuadre |
 | LIM-07 | Requiere iluminación suficiente para que ML Kit localice el rostro |
 | LIM-08 | `neutral` como desfavorable hace que la mayoría de clientes vea avanzar la escalera. Es una decisión de producto, y el primer sitio donde mirar si la tienda regala más margen del que quiere |
@@ -276,7 +293,7 @@ observación, no un botón. Está fijado por prueba automatizada en
 
 | Qué se verifica | Cómo | Dónde |
 |---|---|---|
-| Reglas de decisión y negociación | 158 pruebas Dart, sin dispositivo ni backend | `test/` |
+| Reglas de decisión y negociación | 181 pruebas Dart, sin dispositivo ni backend | `test/` |
 | Estabilización de la emoción | 9 pruebas JUnit sobre la JVM | `android/app/src/test/` |
 | Esquema, venta atómica, ofertas y permisos | 3 suites SQL contra un PostgreSQL 16 real, en CI | `supabase/tests/` |
 | Requisito eliminatorio (la oferta avanza sola) | Prueba de widget que no toca ningún botón | `test/ui/tienda_screen_test.dart` |
@@ -289,11 +306,11 @@ Comando: `flutter test` · `cd android && ./gradlew testDebugUnitTest` ·
 
 | Concepto del curso | Requisitos que lo cubren | Verificación |
 |---|---|---|
-| Software adaptativo | RF-16, RF-18, RF-25 | Prueba automatizada del requisito eliminatorio |
+| Software adaptativo | RF-16, RF-18, RF-27 | Prueba automatizada del requisito eliminatorio |
 | Adaptación al contexto | RF-01 a RF-05 | Expresión facial como variable de entorno |
 | Procesamiento en tiempo real | RNF-01 a RNF-04 | ~30 ms/frame; emoción estable en ~1,3 s |
 | Uso de capacidades del dispositivo | RF-01 a RF-03, RNF-11 | CameraX, ML Kit y TFLite, todo local |
-| Diseño modular | RNF-19 | La decisión es Dart puro: 158 pruebas sin cámara ni red |
+| Diseño modular | RNF-19 | La decisión es Dart puro: 181 pruebas sin cámara ni red |
 | Diseño responsivo | RNF-17 | Grilla de 2 a 4 columnas con `LayoutBuilder` |
 | Datos compartidos y consistentes | RF-36, RF-42, RF-43 | Venta y stock en una transacción del servidor; `supabase/tests/01_ciclo_venta.sql` |
 | Adaptación también por decisión humana | RF-37 a RF-40 | El administrador publica; la emoción decide el ritmo. `supabase/tests/02_catalogo_y_ofertas.sql` |

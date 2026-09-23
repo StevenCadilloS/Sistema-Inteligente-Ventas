@@ -146,7 +146,7 @@ del `.tflite` fuera del repo, y los workflows de APK por rama).
 | RF-11 | Recibir la emoción estable desde Kotlin por `EventChannel` | `lib/services/emotion_channel.dart` |
 | RF-23 | Mostrar en todo momento la emoción detectada vigente y su confianza | `lib/ui/widgets/chip_emocion.dart` |
 | RF-24 | Mostrar el escalón vigente sin revelar cuántos quedan | `lib/ui/widgets/popup_oferta.dart` |
-| RF-25 | "No, gracias" avanza un escalón en vez de cerrar la negociación | `popup_oferta.dart`, `tienda_screen.dart` |
+| RF-25 | "No, gracias" abandona la negociación; la escalera solo avanza por la cámara | `popup_oferta.dart`, `tienda_screen.dart` |
 | RF-35 | Historial por venta con pantalla de detalle | `lib/ui/historial_screen.dart`, `lib/ui/detalle_venta_screen.dart` |
 | RNF-15 – RNF-17 | Adaptación sin controles que aprender, Material 3, grilla responsiva de 2 a 4 columnas | Widgets y pantallas |
 
@@ -217,12 +217,12 @@ assets/products/*.jpg                      — imágenes del catálogo
 
 | Integrante | Evidencia verificable |
 |---|---|
-| Elvis | 158 pruebas Dart en `test/` (clasificador, negociación, pantallas, carrito) y 3 suites SQL en `supabase/tests/` (ciclo de venta, catálogo y ofertas, seguridad) que corren contra un PostgreSQL 16 real en CI |
+| Elvis | 181 pruebas Dart en `test/` (clasificador, negociación, pantallas, carrito) y 3 suites SQL en `supabase/tests/` (ciclo de venta, catálogo y ofertas, seguridad) que corren contra un PostgreSQL 16 real en CI |
 | Juan | 9 pruebas JUnit sobre `EmotionProcessor`; medición del preprocesamiento (error 49% → 5%); modelo TFLite empaquetado y flujo de CI que lo descarga |
 | Steven | Aplicación ejecutándose en dispositivo físico (Xiaomi Redmi, Android 12); APK publicada automáticamente por rama; imágenes del catálogo; carrito y detalle de venta |
 
 **Verificación conjunta:** la regla eliminatoria del taller —*la oferta avanza sola, sin
 intervención manual*— está fijada por una prueba de widget que no pulsa ningún botón
 (`test/ui/tienda_screen_test.dart`), y la separación de capas está fijada por el hecho de
-que las 158 pruebas Dart corren sin cámara, sin emulador y sin backend. Detalle en
+que las 181 pruebas Dart corren sin cámara, sin emulador y sin backend. Detalle en
 [REQUISITOS.md §6](REQUISITOS.md) e [INFORME_TECNICO.md](INFORME_TECNICO.md).

@@ -103,8 +103,8 @@ no recibe el total (lo recalcula) ni el id del cliente (lo saca del token).
 | Contexto | CameraX 1.3.4 (`ImageAnalysis`, frontal) · ML Kit Face Detection 16.1.6 |
 | Clasificación | TensorFlow Lite 2.16.1 · FER-2013 (48×48, 7 clases → 5 de negocio) |
 | Puente nativo ↔ Flutter | `EventChannel` (flujo continuo) |
-| Backend | PostgreSQL vía Supabase: 11 tablas, 3 vistas, 13 funciones, RLS, 14 migraciones · Realtime · Auth |
-| Pruebas | 158 Dart (`flutter_test`) · 9 JUnit (JVM) · 3 suites SQL sobre PostgreSQL 16 |
+| Backend | PostgreSQL vía Supabase: 11 tablas, 3 vistas, 13 funciones, RLS, 17 migraciones · Realtime · Auth |
+| Pruebas | 181 Dart (`flutter_test`) · 9 JUnit (JVM) · 3 suites SQL sobre PostgreSQL 16 |
 
 ## 7. Ubicación del código relevante
 
@@ -119,7 +119,7 @@ no recibe el total (lo recalcula) ni el id del cliente (lo saca del token).
 
 ---
 
-**Verificación.** `flutter test` → **158 pruebas en verde**; `./gradlew testDebugUnitTest`
+**Verificación.** `flutter test` → **181 pruebas en verde**; `./gradlew testDebugUnitTest`
 → 9; las 3 suites SQL corren en CI contra un PostgreSQL 16 real. Una fija la regla
 eliminatoria —*la oferta avanza sola, sin intervención manual*—; otra comprueba que la
 clave del APK no pueda cambiar un precio. Probado en dispositivo real (Xiaomi Redmi,

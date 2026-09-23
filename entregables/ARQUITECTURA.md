@@ -117,7 +117,7 @@ sequenceDiagram
 | Decisión | `ClasificadorRespuesta`, `Negociacion` (`lib/decision/negociacion.dart`) | Elvis |
 | Adaptación / UI | `TiendaScreen`, `PopupOferta`, `CarritoHoja`, historial | Steven |
 | Datos / Auth | `TiendaRepository` + `SupabaseTiendaRepository`, `SesionService` | Elvis |
-| Backend | 14 migraciones en `supabase/migrations/`, RLS y funciones validadas | Elvis |
+| Backend | 17 migraciones en `supabase/migrations/`, RLS y funciones validadas | Elvis |
 
 ## Notas de arquitectura
 
@@ -139,7 +139,7 @@ sequenceDiagram
 
 - **La decisión es Dart puro.** `ClasificadorRespuesta` recibe una lista de etiquetas y
   `Negociacion` mantiene un puntero (`-1` = precio normal, `0..n-1` = escalón). Ninguno de
-  los dos conoce la cámara ni los widgets, y por eso las 158 pruebas corren sin
+  los dos conoce la cámara ni los widgets, y por eso las 181 pruebas corren sin
   dispositivo, sin emulador y sin backend.
 
 - **Dónde está el ruido, y por qué hay dos filtros.** El clasificador alterna entre clases

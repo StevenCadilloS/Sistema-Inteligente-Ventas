@@ -34,6 +34,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  clock: ^1.1.3                        # reloj inyectable: fake_async lo falsea, Stopwatch no
   google_fonts: ^6.2.1
   shared_preferences: ^2.5.5           # sesion del cliente activo (en el equipo)
   supabase_flutter: ^2.17.2            # PostgREST + Realtime contra la base compartida

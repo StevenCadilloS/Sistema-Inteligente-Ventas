@@ -7,15 +7,26 @@ class ChipEmocion extends StatelessWidget {
     required this.estilo,
     required this.detectando,
     required this.confianza,
+    this.sinRostro = false,
   });
 
   final EmotionStyle estilo;
   final bool detectando;
   final double confianza;
 
+  /// No hay cara delante de la camara. Se distingue de "todavia no hay
+  /// lectura estable" a proposito: son dos situaciones distintas y antes las
+  /// dos decian "Leyendo...", justo cuando el cliente necesita saber que le
+  /// hemos perdido de vista.
+  final bool sinRostro;
+
   @override
   Widget build(BuildContext context) {
-    final color = detectando ? estilo.color : AppTheme.mutedText;
+    final color = detectando
+        ? estilo.color
+        : sinRostro
+            ? AppTheme.warning
+            : AppTheme.mutedText;
 
     return Center(
       child: AnimatedContainer(
@@ -29,13 +40,21 @@ class ChipEmocion extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(detectando ? estilo.icon : Icons.videocam_outlined,
-                size: 16, color: color),
+            Icon(
+                detectando
+                    ? estilo.icon
+                    : sinRostro
+                        ? Icons.face_retouching_off
+                        : Icons.videocam_outlined,
+                size: 16,
+                color: color),
             const SizedBox(width: 6),
             Text(
               detectando
                   ? '${estilo.label} ${(confianza * 100).toStringAsFixed(0)}%'
-                  : 'Leyendo...',
+                  : sinRostro
+                      ? 'Sin rostro'
+                      : 'Leyendo...',
               style: Theme.of(context)
                   .textTheme
                   .bodyMedium
